@@ -1,0 +1,74 @@
+This vktrace build is based on lunarG's open source VulkanTools project, https://github.com/LunarG/VulkanTools.
+
+1. How to trace
+
+   1)  adb root
+   2)  adb shell setenforce 0
+   3)  adb shell rm -rf /data/local/debug/vulkan
+   4)  adb shell mkdir -p /data/local/debug/vulkan
+
+# Trace 32-bit Vulkan APK
+   5)  adb push android/trace_layer/armeabi-v7a/libVkLayer_vktrace_layer.so /data/local/debug/vulkan/
+# Or trace 64-bit Vulkan APK
+   5)  adb push android/trace_layer/arm64-v8a/libVkLayer_vktrace_layer.so /data/local/debug/vulkan/
+
+   6)  adb shell setprop debug.vulkan.layer.1 VK_LAYER_LUNARG_vktrace
+   7)  adb reverse localabstract:vktrace tcp:34201
+   8)  x64/bin/vktrace -v full -o <filename>.vktrace
+
+   9)  # Optional: Trim/Fast forward
+       # Suggest to set post processing trim to remove most of the redundant resources when the trim frame range is not too large.  Because this feature will cache resources in memory until trim end frame.
+       adb shell setprop VKTRACE_TRIM_POST_PROCESS 1
+       # Set trim frame range (trim start frame and trim end frame)
+       adb shell setprop VKTRACE_TRIM_TRIGGER "frames-<start_frame>-<end_frame>"
+   10) # Optional: Force using FIFO present mode in vkCreateInstance.
+       adb shell setprop VKTRACE_FORCE_FIFO 1
+
+   11) # Run the app on android to start tracing
+   12) # Shutdown the app to stop tracing
+       adb shell am force-stop <app's package name>
+       # Command "aapt dump badging <path to the APK file>" can be used to get package name from an APK.
+
+2. How to retrace
+
+   1) adb uninstall com.example.vkreplay[32]
+
+# Install 32-bit vkreplay to replay 32-bit trace file. (adb install -g <package> will automatically grants all requested permissions.)
+   2) adb install -g --abi armeabi-v7a android/retracer/vkreplay.apk
+# Or if user wants to keep both 32-bit vkreplay and 64-bit replay installed.  This will install vkreplay with package name com.example.vkreplay32
+   2) adb install -g android/retracer/vkreplay32.apk
+# Or install 64-bit vkreplay to replay 64-bit trace file
+   2) adb install -g android/retracer/vkreplay.apk
+
+   3) adb shell setprop debug.vulkan.layer.1 '""'
+   4) adb push <filename>.vktrace /sdcard/<filename>.vktrace
+
+# Replay without trace file preload (gzip compressed trace file can be replayed directly using vkreplay, supported from v1.2)
+   5) adb shell am start -a android.intent.action.MAIN -c android-intent.category.LAUNCH -n com.example.vkreplay/android.app.NativeActivity --es args '"-v full -o /sdcard/<filename>.vktrace[.gz]"'
+# Or replay with trace file preload enabled (Supported from v1.2)
+   5) adb shell am start -a android.intent.action.MAIN -c android-intent.category.LAUNCH -n com.example.vkreplay/android.app.NativeActivity --es args '"-v full -o /sdcard/<filename>.vktrace[.gz] -pltf true"'
+# Note: com.example.vkreplay in above commands need to be replaced by com.example.vkreplay32 if user wants to replay 32-bit trace file using the installed vkreplay32.apk
+
+   6) # Optional: Take screenshots
+      adb shell am start -a android.intent.action.MAIN -c android-intent.category.LAUNCH -n com.example.vkreplay/android.app.NativeActivity --es args '"-v full -o /sdcard/<filename>.vktrace[.gz] -s <string>"'
+      #     The <string> is one of following three options:
+      #         1. comma separated list of frames (e.g. 0,1,2)
+      #         2. <start_frame_index>-<count>-<interval> (e.g. 0-3-1 to take 3 screenshots for every 1 frame from frame 0)
+      #         3. "all" (take screenshot for every frame)
+      #     Note: Screenshots can be found in /sdcard/Android/ with name <frame index>.ppm
+   7) # Optional: Force stop the replayer during retracing.
+      adb shell am force-stop com.example.vkreplay
+
+3. How to retrace on arm linux
+
+   1) copy the arm_32/bin/vkreplay or arm_64/bin/vkreplay to the arm 32bit or 64bit linux system.
+   2) run "./vkreplay -o <filename>.vktrace".
+
+4. How to get info from trace file
+   1) copy the vkparser from arm_32/bin/, arm_64/bin/, x86/bin/, or x64/bin/ folder to the 32bit or 64bit linux system.
+   2) run "./vkparser -o <filename>.vktrace -s <file to save simple api dump> -f <file to save full api dump>"
+
+5. Limitation
+
+   1) The trace file generated on 32 bit platform cannot be replayed on 64 bit platform, vice versa.
+
