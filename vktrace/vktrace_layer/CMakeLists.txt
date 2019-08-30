@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 2.8)
+cmake_minimum_required(VERSION 3.10.2)
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
    if (BUILD_WSI_XCB_SUPPORT)
@@ -30,6 +30,7 @@ endif()
 set(SRC_LIST
     ${SRC_LIST}
     vktrace_lib.c
+    vktrace_lib_helpers.cpp
     vktrace_lib_pagestatusarray.cpp
     vktrace_lib_pageguardmappedmemory.cpp
     vktrace_lib_pageguardcapture.cpp

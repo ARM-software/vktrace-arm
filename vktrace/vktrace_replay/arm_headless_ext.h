@@ -18,8 +18,6 @@
 #pragma once
 
 #include <vulkan/vulkan.h>
-
-#if MALI_INCLUDE_ARM_HEADLESS_SURFACE
 #include <vulkan/vk_icd.h>
 
 #define VK_USE_PLATFORM_HEADLESS_ARM 1
@@ -58,4 +56,3 @@ vkCreateHeadlessSurfaceARM(VkInstance instance, const VkHeadlessSurfaceCreateInf
 #endif
 }
 #endif /* VK_USE_PLATFORM_HEADLESS_ARM */
-#endif /* MALI_INCLUDE_ARM_HEADLESS_SURFACE */

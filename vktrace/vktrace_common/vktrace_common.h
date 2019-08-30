@@ -72,7 +72,7 @@
 #define U_ASSERT_ONLY
 #endif
 
-static const uint32_t  INVALID_BINDING_INDEX = UINT32_MAX;
+static const uint32_t INVALID_BINDING_INDEX = UINT32_MAX;
 // Windows needs 64 bit versions of fseek and ftell
 #if defined(WIN32)
 #define Ftell _ftelli64
@@ -87,10 +87,13 @@ static const uint32_t  INVALID_BINDING_INDEX = UINT32_MAX;
 
 // Enviroment variables used by vktrace/replay
 
-// VKTRACE_PMB_ENABLE env var enables tracking of PMB if the value is 1.
+// VKTRACE_PMB_ENABLE env var enables tracking of PMB if the value is 1 or 2.
+// Currently 2 is only used to enable using external host memory extension
+// and memory write watch to capture PMB on Windows platform.
 // Other values disable PMB tracking. If this env var is undefined, PMB
 // tracking is enabled. The env var is set by the vktrace program to
 // communicate the --PMB arg value to the trace layer.
+//
 #define VKTRACE_PMB_ENABLE_ENV "VKTRACE_PMB_ENABLE"
 
 // _VKTRACE_PMB_TARGET_RANGE_SIZE env var specifies the minimum size of
@@ -148,6 +151,12 @@ static const uint32_t  INVALID_BINDING_INDEX = UINT32_MAX;
 // disabled.
 #define VKTRACE_PAGEGUARD_ENABLE_LAZY_COPY_ENV "VKTRACE_PAGEGUARD_ENABLE_LAZY_COPY"
 
+// VKTRACE_PAGEGUARD_ENABLE_SYNC_GPU_DATA_BACK_ENV env var enable the code to
+// sync the gpu changed data back to the PMB buffer.
+
+// In default, the code is disabled.
+#define VKTRACE_PAGEGUARD_ENABLE_SYNC_GPU_DATA_BACK_ENV "VKTRACE_PAGEGUARD_ENABLE_SYNC_GPU_DATA_BACK"
+
 // VKTRACE_TRIM_TRIGGER env var is set by the vktrace program to
 // communicate the --TraceTrigger command line argument to the
 // trace layer.
@@ -186,7 +195,7 @@ static const uint32_t  INVALID_BINDING_INDEX = UINT32_MAX;
 
 // _VKTRACE_VERBOSITY env var is set by the vktrace program to
 // communicate verbosity level to the trace layer. It is set to
-// one of "quiet", "errors", "warnings", "full", or "debug".
+// one of "quiet", "errors", "warnings", "full", "debug", or "max".
 #define _VKTRACE_VERBOSITY_ENV "_VKTRACE_VERBOSITY"
 
 // VKTRACE_TRIM_MAX_COMMAND_BATCH_SIZE env var is an option used only

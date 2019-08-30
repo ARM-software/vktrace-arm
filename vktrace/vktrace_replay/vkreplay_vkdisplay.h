@@ -326,7 +326,7 @@ class vkDisplay : public vktrace_replay::ReplayDisplayImp {
     VkSurfaceKHR get_surface() override { return (VkSurfaceKHR)&m_surface; };
     void set_window_handle(void *pHandle) override { return; };
     int init_disp_wsi(VkLayerInstanceDispatchTable *vkFuncs);
-    int init_headless_wsi();
+    int init_headless_wsi(const char *extension_name);
    private:
     VkIcdSurfaceDisplay m_surface;
     unsigned int m_windowWidth;

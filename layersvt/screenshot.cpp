@@ -22,7 +22,6 @@
  * Author: Tony Barbour <tony@lunarg.com>
  */
 
-#include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -36,6 +35,7 @@
 #include <vector>
 #include <fstream>
 #include <iomanip>
+#include <math.h>
 
 using namespace std;
 
@@ -57,12 +57,14 @@ static char android_env[64] = {};
 const char *env_var = "debug.vulkan.screenshot";
 const char *env_var_old = env_var;
 const char *env_var_format = "debug.vulkan.screenshot.format";
+const char *env_var_dir = "debug.vulkan.screenshot.dir";
 // /path/to/snapshots/prefix- Must contain full path and a prefix
 const char *env_var_prefix = "debug.vulkan.screenshot.prefix";
 #else  //Linux or Windows
 const char *env_var_old = "_VK_SCREENSHOT";
 const char *env_var = "VK_SCREENSHOT_FRAMES";
 const char *env_var_format = "VK_SCREENSHOT_FORMAT";
+const char *env_var_dir = "VK_SCREENSHOT_DIR";
 const char *env_var_prefix = "VK_SCREENSHOT_PREFIX";
 #endif
 const char *env_var_dump_renderpass = "VK_SCREENSHOT_DUMP_RENDERPASS";
@@ -372,7 +374,7 @@ static void populate_frame_list(const char *vk_screenshot_frames) {
         int parsingStatus = initScreenShotFrameRange(vk_screenshot_frames, &screenShotFrameRange);
         if (parsingStatus != 0) {
 #ifdef ANDROID
-            __android_log_print(ANDROID_LOG_DEBUG, "screenshot", "Screenshot range error");
+            __android_log_print(ANDROID_LOG_ERROR, "screenshot", "range error\n");
 #else
             fprintf(stderr, "Screenshot range error\n");
 #endif
@@ -847,6 +849,10 @@ static bool writePPM(const char *filename, VkImage image1) {
     if (VK_SUCCESS != err) return false;
 
     VkDevice cmdBuf = static_cast<VkDevice>(static_cast<void *>(data.commandBuffer));
+    if (deviceMap.find(cmdBuf) != deviceMap.end()) {
+        // Remove element with key cmdBuf from deviceMap so we can replace it
+        deviceMap.erase(cmdBuf);
+    }
     deviceMap.emplace(cmdBuf, devMap);
     VkLayerDispatchTable *pTableCommandBuffer;
     pTableCommandBuffer = get_dev_info(cmdBuf)->device_dispatch_table;
@@ -1296,8 +1302,17 @@ VKAPI_ATTR void VKAPI_CALL GetDeviceQueue(VkDevice device, uint32_t queueFamilyI
     if ((presentCapable == VK_TRUE) || (graphicsCapable == VK_TRUE)) {
         // Create a mapping from a device to a queue
         VkDevice que = static_cast<VkDevice>(static_cast<void *>(*pQueue));
+        if (deviceMap.find(que) != deviceMap.end()) {
+            // Remove element with key que from deviceMap so we can replace it
+            deviceMap.erase(que);
+        }
         deviceMap.emplace(que, devMap);
         devMap->queue = *pQueue;
+
+        if (queueIndexMap.find(*pQueue) != queueIndexMap.end()) {
+            // Remove element with key *pQueue from queueIndexMap so we can replace it
+            queueIndexMap.erase(*pQueue);
+        }
         queueIndexMap.emplace(*pQueue, queueFamilyIndex);
     }
 
@@ -1428,7 +1443,25 @@ VKAPI_ATTR VkResult VKAPI_CALL QueuePresentKHR(VkQueue queue, const VkPresentInf
         isInScreenShotFrameRange(g_frameNumber, &screenShotFrameRange, &inScreenShotFrameRange);
         if ((inScreenShotFrames) || (inScreenShotFrameRange)) {
             string fileName;
-            // std::to_string is not supported currently by Android
+            const char *vk_screenshot_dir = local_getenv(env_var_dir);
+
+#ifdef ANDROID
+            if (vk_screenshot_dir == NULL || strlen(vk_screenshot_dir) == 0) {
+                vk_screenshot_dir = "/sdcard/Android";
+            }
+#endif
+            if (vk_screenshot_dir == NULL || strlen(vk_screenshot_dir) == 0) {
+                fileName = to_string(g_frameNumber) + ".ppm";
+            } else {
+                fileName = vk_screenshot_dir;
+                fileName += "/" + to_string(g_frameNumber) + ".ppm";
+            }
+#ifdef ANDROID
+            __android_log_print(ANDROID_LOG_INFO, "screenshot", "Screen capture file is: %s", fileName.c_str());
+#else
+            printf("Screen Capture file is: %s \n", fileName.c_str());
+#endif
+
             char buffer[64];
             snprintf(buffer, sizeof(buffer), "%d", g_frameNumber);
             std::string base(buffer);

@@ -33,9 +33,17 @@
 #include <vulkan/vk_layer.h>
 #include <vulkan/vulkan.h>
 
-#if (!defined(VK_USE_PLATFORM_XCB_KHR) && !defined(VK_USE_PLATFORM_WIN32_KHR))
-#warning "Monitor layer only has code for XCB and Windows at this time"
+#if defined(ANDROID)
+#include <android/log.h>
 #endif
+
+#if (!defined(VK_USE_PLATFORM_ANDROID_KHR) && !defined(VK_USE_PLATFORM_XCB_KHR) && !defined(VK_USE_PLATFORM_WIN32_KHR))
+#warning "Monitor layer only has code for Android, XCB and Windows at this time"
+#endif
+
+static const VkLayerProperties global_layer = {
+    "VK_LAYER_LUNARG_monitor", VK_MAKE_VERSION(1, 0, VK_HEADER_VERSION), 1, "Layer: monitor",
+};
 
 #define TITLE_LENGTH 1000
 #define FPS_LENGTH 24
@@ -66,6 +74,15 @@ struct layer_data {
 static std::unordered_map<void *, layer_data *> layer_data_map;
 
 template layer_data *GetLayerDataPtr<layer_data>(void *data_key, std::unordered_map<void *, layer_data *> &data_map);
+
+void LogMsg(const char* format, ...) {
+    va_list args;
+    va_start(args, format);
+#if defined(ANDROID)
+    __android_log_vprint(ANDROID_LOG_INFO, "vkmonitor", format, args);
+#endif
+    va_end(args);
+}
 
 VK_LAYER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL vkCreateDevice(VkPhysicalDevice gpu, const VkDeviceCreateInfo *pCreateInfo,
                                                               const VkAllocationCallbacks *pAllocator, VkDevice *pDevice) {
@@ -166,13 +183,16 @@ VK_LAYER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL vkQueuePresentKHR(VkQueue queue, 
     float seconds = (float)difftime(now, my_data->lastTime);
 
     if (seconds > 0.5) {
-        char str[TITLE_LENGTH + FPS_LENGTH];
         char fpsstr[FPS_LENGTH];
-        layer_data *my_instance_data = GetLayerDataPtr(get_dispatch_key(my_data->gpu), layer_data_map);
         my_data->fps = (my_data->frame - my_data->lastFrame) / seconds;
         my_data->lastFrame = my_data->frame;
         my_data->lastTime = now;
         sprintf(fpsstr, "   FPS = %.2f", my_data->fps);
+#if defined(VK_USE_PLATFORM_ANDROID_KHR)
+        LogMsg("Frame %d, %s", my_data->frame, fpsstr);
+#else
+        char str[TITLE_LENGTH + FPS_LENGTH];
+        layer_data *my_instance_data = GetLayerDataPtr(get_dispatch_key(my_data->gpu), layer_data_map);
         strcpy(str, my_instance_data->base_title);
         strcat(str, fpsstr);
 #if defined(VK_USE_PLATFORM_WIN32_KHR)
@@ -183,7 +203,8 @@ VK_LAYER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL vkQueuePresentKHR(VkQueue queue, 
                                 XCB_ATOM_STRING, 8, strlen(str), str);
             xcb_flush(my_instance_data->connection);
         }
-#endif
+#endif // defined(VK_USE_PLATFORM_WIN32_KHR)
+#endif // defined(VK_USE_PLATFORM_ANDROID_KHR)
     }
     my_data->frame++;
 
@@ -235,6 +256,32 @@ VK_LAYER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL vkCreateXcbSurfaceKHR(VkInstance 
 }
 #endif
 
+VK_LAYER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL vkEnumerateInstanceLayerProperties(uint32_t *pCount, VkLayerProperties *pProperties) {
+    return util_GetLayerProperties(1, &global_layer, pCount, pProperties);
+}
+
+VK_LAYER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL vkEnumerateDeviceLayerProperties(VkPhysicalDevice physicalDevice, uint32_t *pCount,
+                                                              VkLayerProperties *pProperties) {
+    return util_GetLayerProperties(1, &global_layer, pCount, pProperties);
+}
+
+VK_LAYER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL vkEnumerateInstanceExtensionProperties(const char *pLayerName, uint32_t *pCount,
+                                                                    VkExtensionProperties *pProperties) {
+    if (pLayerName && !strcmp(pLayerName, global_layer.layerName)) return util_GetExtensionProperties(0, NULL, pCount, pProperties);
+
+    return VK_ERROR_LAYER_NOT_PRESENT;
+}
+
+VK_LAYER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL vkEnumerateDeviceExtensionProperties(VkPhysicalDevice physicalDevice, const char *pLayerName,
+                                                                  uint32_t *pCount, VkExtensionProperties *pProperties) {
+    if (pLayerName && !strcmp(pLayerName, global_layer.layerName)) return util_GetExtensionProperties(0, NULL, pCount, pProperties);
+
+    assert(physicalDevice);
+
+    VkLayerInstanceDispatchTable *pTable = instance_dispatch_table(physicalDevice);
+    return pTable->EnumerateDeviceExtensionProperties(physicalDevice, pLayerName, pCount, pProperties);
+}
+
 VK_LAYER_EXPORT VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetDeviceProcAddr(VkDevice dev, const char *funcName) {
 #define ADD_HOOK(fn) \
     if (!strncmp(#fn, funcName, sizeof(#fn))) return (PFN_vkVoidFunction)fn
@@ -242,6 +289,8 @@ VK_LAYER_EXPORT VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetDeviceProcAddr(VkD
     ADD_HOOK(vkGetDeviceProcAddr);
     ADD_HOOK(vkDestroyDevice);
     ADD_HOOK(vkQueuePresentKHR);
+    ADD_HOOK(vkEnumerateDeviceLayerProperties);
+    ADD_HOOK(vkEnumerateDeviceExtensionProperties);
 #undef ADD_HOOK
 
     if (dev == NULL) return NULL;
@@ -267,6 +316,8 @@ VK_LAYER_EXPORT VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetInstanceProcAddr(V
 #elif defined(VK_USE_PLATFORM_XCB_KHR)
     ADD_HOOK(vkCreateXcbSurfaceKHR);
 #endif
+    ADD_HOOK(vkEnumerateInstanceLayerProperties);
+    ADD_HOOK(vkEnumerateInstanceExtensionProperties);
 #undef ADD_HOOK
 
     if (instance == NULL) return NULL;

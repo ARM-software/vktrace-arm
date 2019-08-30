@@ -72,6 +72,25 @@ PVOID OPTHandler = nullptr;        // use to remove page guard handler
 uint32_t OPTHandlerRefAmount = 0;  // for persistent map and multi-threading environment, map and unmap maybe overlap, we need to
                                    // make sure remove handler after all persistent map has been unmapped.
 
+// return if user using VK_EXT_external_memory_host to disable shadow memory
+bool UseMappedExternalHostMemoryExtension() {
+    static bool use_host_memory_extension = false;
+    static bool first_time_running = true;
+    if (first_time_running) {
+        first_time_running = false;
+        const char* env_use_host_memory_extension = vktrace_get_global_var(VKTRACE_PMB_ENABLE_ENV);
+        if (env_use_host_memory_extension) {
+            int envvalue;
+            if (sscanf(env_use_host_memory_extension, "%d", &envvalue) == 1) {
+                if (envvalue == 2) {
+                    use_host_memory_extension = true;
+                }
+            }
+        }
+    }
+    return use_host_memory_extension;
+}
+
 // return if enable pageguard;
 // if enable page guard, then check if need to update target range size, page guard only work for those persistent mapped memory
 // which >= target range size.
@@ -344,32 +363,32 @@ LONG WINAPI PageGuardExceptionHandler(PEXCEPTION_POINTERS ExceptionInfo) {
 
                     pMappedMem->setMappedBlockChanged(index, true, BLOCK_FLAG_ARRAY_CHANGED);
                 } else {
-#if !defined(PAGEGUARD_ADD_PAGEGUARD_ON_REAL_MAPPED_MEMORY)
-                    if ((!pMappedMem->isMappedBlockLoaded(index)) && (getEnablePageGuardLazyCopyFlag())) {
-                        // Target app read the page which is never accessed since the
-                        // shadow memory creation in map process.
-                        // here we only set the loaded flag, we still need to do memcpy
-                        // in the following reading acess to the page,that is different
-                        // with page guard process when target app write to the page.
-                        // the loaded flag is setted here only to make sure the following
-                        // write access not to do the memcpy again. because the memcpy
-                        // in read process is to capture GPU side change which is needed
-                        // by CPU side, it is not to replace initial sync from real
-                        // mapped memory to shadow memory in map process.
+                    if (false == UseMappedExternalHostMemoryExtension()) {
+                        if ((false == pMappedMem->isMappedBlockLoaded(index)) && (getEnablePageGuardLazyCopyFlag())) {
+                            // Target app read the page which is never accessed since the
+                            // shadow memory creation in map process.
+                            // here we only set the loaded flag, we still need to do memcpy
+                            // in the following reading acess to the page,that is different
+                            // with page guard process when target app write to the page.
+                            // the loaded flag is setted here only to make sure the following
+                            // write access not to do the memcpy again. because the memcpy
+                            // in read process is to capture GPU side change which is needed
+                            // by CPU side, it is not to replace initial sync from real
+                            // mapped memory to shadow memory in map process.
 
-                        pMappedMem->setMappedBlockLoaded(index, true);
-                    }
-                    vktrace_pageguard_memcpy(pBlock,
-                                             pMappedMem->getRealMappedDataPointer() + OffsetOfAddr - OffsetOfAddr % BlockSize,
-                                             pMappedMem->getMappedBlockSize(index));
-                    pMappedMem->setMappedBlockChanged(index, true, BLOCK_FLAG_ARRAY_READ);
-                    if (getEnableReadPMBPostProcessFlag()) {
+                            pMappedMem->setMappedBlockLoaded(index, true);
+                        }
+                        vktrace_pageguard_memcpy(
+                            pBlock, pMappedMem->getRealMappedDataPointer() + (OffsetOfAddr - (OffsetOfAddr % BlockSize)),
+                            pMappedMem->getMappedBlockSize(index));
+                        pMappedMem->setMappedBlockChanged(index, true, BLOCK_FLAG_ARRAY_READ);
+                        if (getEnableReadPMBPostProcessFlag()) {
+                            pMappedMem->setMappedBlockChanged(index, true, BLOCK_FLAG_ARRAY_CHANGED);
+                        }
+
+                    } else {
                         pMappedMem->setMappedBlockChanged(index, true, BLOCK_FLAG_ARRAY_CHANGED);
                     }
-
-#else
-                    pMappedMem->setMappedBlockChanged(index, true);
-#endif
                 }
                 resultCode = EXCEPTION_CONTINUE_EXECUTION;
             }
@@ -441,7 +460,9 @@ VkResult vkFlushMappedMemoryRangesWithoutAPICall(VkDevice device, uint32_t memor
 
     // insert into packet the data that was written by CPU between the vkMapMemory call and here
     // create a temporary local ppData array and add it to the packet (to reserve the space for the array)
-    void** ppTmpData = (void**)malloc(memoryRangeCount * sizeof(void*));
+    void** ppTmpData = reinterpret_cast<void**>(vktrace_malloc(memoryRangeCount * sizeof(void*)));
+    memset(ppTmpData, 0, (size_t)memoryRangeCount * sizeof(void*));
+
     vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->ppData), sizeof(void*) * memoryRangeCount, ppTmpData);
     free(ppTmpData);
 

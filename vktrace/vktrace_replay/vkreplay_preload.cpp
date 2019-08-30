@@ -29,6 +29,7 @@ extern "C" {
 #include <condition_variable>
 
 #include "vkreplay_preload.h"
+#include "vkreplay_main.h"
 
 #define MAX_CHUNK_COUNT 16
 #define SIZE_1K         1024
@@ -73,14 +74,26 @@ struct preload_context {
     bool        exiting_thd   = false;
     std::thread thd_obj;
     simple_sem  replay_start_sem;
+    bool        exceed_preloading_range = false;
+    uint64_t    preload_waiting_time = 0;
 } g_preload_context;
+
+uint64_t get_preload_waiting_time_when_replaying()
+{
+    return g_preload_context.preload_waiting_time;
+}
 
 static uint64_t get_system_memory_size() {
     struct sysinfo si;
     if (sysinfo(&si)) {
         return 0;
     }
-    return si.totalram * si.mem_unit;
+    uint64_t result = (uint64_t)si.totalram * (uint64_t)si.mem_unit;
+    if (sizeof(void*) == 4) { // it is 32bit system
+        const uint32_t max_size_of_mem_32b = ~0;
+        result = result < max_size_of_mem_32b ? result : max_size_of_mem_32b;
+    }
+    return result;
 }
 
 static uint32_t calc_chunk_count(uint64_t sys_mem_size, uint64_t chunk_size, uint64_t file_size) {
@@ -103,6 +116,7 @@ static uint64_t get_packet_size(FileLike* file) {
 static uint64_t load_packet(FileLike* file, void* load_addr, uint64_t packet_size) {
     vktrace_trace_packet_header* pHeader = (vktrace_trace_packet_header*)load_addr;
 
+    static unsigned int frame_counter = 0;
     pHeader->size = packet_size;
     if (vktrace_FileLike_ReadRaw(file,
             (char*)pHeader + sizeof(uint64_t),
@@ -111,9 +125,21 @@ static uint64_t load_packet(FileLike* file, void* load_addr, uint64_t packet_siz
         return 0;
     }
 
+    if (pHeader->packet_id == VKTRACE_TPI_VK_vkQueuePresentKHR) {
+        ++frame_counter;
+        if (frame_counter + vktrace_replay::getStartFrame() >= vktrace_replay::getEndFrame())
+            g_preload_context.exceed_preloading_range = true;
+    }
+
     pHeader->pBody = (uintptr_t)pHeader + sizeof(vktrace_trace_packet_header);
 
     return packet_size;
+}
+
+bool preloaded_whole_range = true;
+bool preloaded_whole()
+{
+    return preloaded_whole_range;
 }
 
 static void chunk_loading() {
@@ -131,6 +157,9 @@ static void chunk_loading() {
         mem_chunk_info* cur_chunk = &g_preload_context.chunks[g_preload_context.loading_idx];
 
         if (cur_chunk->status == CHUNK_EMPTY || cur_chunk->status == CHUNK_USING) {
+            if (!first_full) {
+                preloaded_whole_range = false;
+            }
             cur_chunk->mtx.lock();
             // loading
             vktrace_LogDebug("Loading chunk %d !", g_preload_context.loading_idx);
@@ -141,6 +170,7 @@ static void chunk_loading() {
 
             while (!g_preload_context.exiting_thd
                    && g_preload_context.next_pkt_size
+                   && !g_preload_context.exceed_preloading_range
                    && (cur_chunk->current_address + g_preload_context.next_pkt_size) < boundary_addr) {
                 if (!load_packet(g_preload_context.tracefile, cur_chunk->current_address, g_preload_context.next_pkt_size)) {
                     break;
@@ -157,8 +187,8 @@ static void chunk_loading() {
             vktrace_LogWarning("Chunk loading thread: Not right, the chunk status(%d) confused !", cur_chunk->status);
         }
 
-        if (!g_preload_context.next_pkt_size) {
-            // no more packets, exiting...
+        if (!g_preload_context.next_pkt_size || g_preload_context.exceed_preloading_range) {
+            // no more packets or exceeds the preloading range, exiting...
             if (first_full) g_preload_context.replay_start_sem.notify();
             break;
         }
@@ -175,15 +205,21 @@ bool init_preload(FileLike* file) {
     uint32_t chunk_count = calc_chunk_count(system_mem_size, chunk_size, file->mFileLen);
     chunk_count = chunk_count < MAX_CHUNK_COUNT ? chunk_count : MAX_CHUNK_COUNT;
 
-    vktrace_LogAlways("Init preload: the chunk size = 0x%llX and the chunk count = %d ...", chunk_size, chunk_count);
+    char* preload_mem = (char*)vktrace_malloc(chunk_size * chunk_count);
+    while (preload_mem == nullptr && chunk_count > 1) {
+        // Allocate memory failed, then decrease the chunk count
+        chunk_count--;
+        preload_mem = (char*)vktrace_malloc(chunk_size * chunk_count);
+    }
 
     g_preload_context.chunk_count = chunk_count;
     g_preload_context.tracefile   = file;
     g_preload_context.loading_idx = chunk_count;
     g_preload_context.using_idx   = chunk_count;
 
-    char* preload_mem = (char*)vktrace_malloc(chunk_size * chunk_count);
     if (preload_mem) {
+        vktrace_LogAlways("Init preload: the chunk size = 0x%llX and the chunk count = %d ...", chunk_size, chunk_count);
+
         g_preload_context.preload_mem = preload_mem;
 
         for (uint32_t i = 0; i < chunk_count; i++) {
@@ -214,7 +250,11 @@ vktrace_trace_packet_header* preload_get_next_packet()
     mem_chunk_info* cur_chunk = &g_preload_context.chunks[g_preload_context.using_idx];
     static char* boundary_addr = 0;
     if (cur_chunk->status == CHUNK_READY || cur_chunk->status == CHUNK_LOADING) {
+        uint64_t start_time = vktrace_get_time();
         cur_chunk->mtx.lock();
+        uint64_t end_time = vktrace_get_time();
+        if (vktrace_replay::timerStarted())
+            g_preload_context.preload_waiting_time += end_time - start_time;
         assert(cur_chunk->status == CHUNK_READY);
         cur_chunk->status = CHUNK_USING;
         boundary_addr = cur_chunk->current_address;

@@ -20,33 +20,6 @@ VIA is a tool that can:
 
 <BR />
 
-
-## Versions
-
-### 1.3
-
-- Introduce concept of Linux installed SDKs using new packages.
-  - Add support for querying both "vkcube" as well as "cube" when running tests.
-- Add ability to detect driver installed implicit layers on Windows 10.
-- Re-organize code to place OS-specific items into their own classes.
-
-### 1.2
-
-- Introduce Vulkan 1.1 support
-- Use RTLD_NOW when opening DLLs
-- Add Meta-layer support
-- Cleanup HTML output
-- Add support for querying registry keys in HKEY_CURRENT_USER
-
-### 1.1
-
-- Various Fixes
-
-### 1.0
-
-- Original release
-
-
 ## Building
 Many components of the Vulkan SDK are Open Source, including VIA.  VIA is currently part of the LunarG
 [VulkanTools](https://github.com/LunarG/VulkanTools) GitHub respository.
@@ -64,7 +37,7 @@ file at the top of the source tree.
 The source for VIA can also be found in the Linux [Vulkan SDK](https://vulkan.lunarg.com/sdk/home) in the "source/via" directory.
  1. Download and install the Linux SDK
  2. Run "source setup-env.sh" in the SDK root directory
- 3. Run "./build_tools.sh"
+ 3. Run "./vulkansdk lunarg-tools"
 
 <BR />
 

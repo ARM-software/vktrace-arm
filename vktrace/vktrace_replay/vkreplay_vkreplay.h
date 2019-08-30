@@ -28,6 +28,7 @@
 #include <set>
 #include <map>
 #include <vector>
+#include <stack>
 #include <string>
 #if defined(PLATFORM_LINUX)
 #if defined(ANDROID)
@@ -104,7 +105,6 @@ extern "C" {
 #include "vkreplay_vkdisplay.h"
 #include "vkreplay_vk_objmapper.h"
 #if !defined(ANDROID) && defined(PLATFORM_LINUX)
-#define MALI_INCLUDE_ARM_HEADLESS_SURFACE 1
 #include "arm_headless_ext.h"
 #endif
 
@@ -140,6 +140,8 @@ class vkReplay {
 #if !defined(ANDROID) && defined(PLATFORM_LINUX)
     PFN_vkCreateHeadlessSurfaceARM
         m_PFN_vkCreateHeadlessSurfaceARM;  // To be removed after vkCreateHeadlessSurfaceARM being published
+    int m_headlessExtensionChoice;
+    VkResult create_headless_surface_ext(VkInstance instance, VkSurfaceKHR* pSurface);
 #endif
     VkLayerDispatchTable m_vkDeviceFuncs;
     vkReplayObjMapper m_objMapper;
@@ -295,6 +297,8 @@ class vkReplay {
     VkResult manually_replay_vkCreateIndirectCommandsLayoutNVX(packet_vkCreateIndirectCommandsLayoutNVX *pPacket);
     VkResult manually_replay_vkBindBufferMemory2KHR(packet_vkBindBufferMemory2KHR* pPacket);
     VkResult manually_replay_vkBindImageMemory2KHR(packet_vkBindImageMemory2KHR* pPacket);
+    VkResult manually_replay_vkBindBufferMemory2(packet_vkBindBufferMemory2* pPacket);
+    VkResult manually_replay_vkBindImageMemory2(packet_vkBindImageMemory2* pPacket);
     VkResult manually_replay_vkGetDisplayPlaneSupportedDisplaysKHR(packet_vkGetDisplayPlaneSupportedDisplaysKHR* pPacket);
     VkResult manually_replay_vkEnumerateDeviceExtensionProperties(packet_vkEnumerateDeviceExtensionProperties* pPacket);
     VkResult manually_replay_vkRegisterDeviceEventEXT(packet_vkRegisterDeviceEventEXT* pPacket);
@@ -376,12 +380,24 @@ class vkReplay {
 
     // Map swapchain image index to VkImage, VkImageView, VkFramebuffer, so we can replace swapchain image and frame buffer with the
     // acquired ones
-    std::unordered_map<uint32_t, VkImage> traceImageIndexToImage;
-    std::unordered_map<VkImage, uint32_t> traceImageToImageIndex;
-    std::unordered_map<uint32_t, VkImageView> traceImageIndexToImageView;
-    std::unordered_map<VkImageView, uint32_t> traceImageViewToImageIndex;
-    std::unordered_map<uint32_t, VkFramebuffer> traceImageIndexToFramebuffer;
-    std::unordered_map<VkFramebuffer, uint32_t> traceFramebufferToImageIndex;
+    struct SwapchainImageState {
+        std::unordered_map<uint32_t, VkImage> traceImageIndexToImage;
+        std::unordered_map<VkImage, uint32_t> traceImageToImageIndex;
+        std::unordered_map<uint32_t, VkImageView> traceImageIndexToImageView;
+        std::unordered_map<VkImageView, uint32_t> traceImageViewToImageIndex;
+        std::unordered_map<uint32_t, VkFramebuffer> traceImageIndexToFramebuffer;
+        std::unordered_map<VkFramebuffer, uint32_t> traceFramebufferToImageIndex;
+
+        void reset() {
+            traceImageIndexToImage.clear();
+            traceImageToImageIndex.clear();
+            traceImageIndexToImageView.clear();
+            traceImageViewToImageIndex.clear();
+            traceImageIndexToFramebuffer.clear();
+            traceFramebufferToImageIndex.clear();
+        }
+    } curSwapchainImgState;
+    std::stack<SwapchainImageState> savedSwapchainImgStates;
 
     // Map VkImage to VkMemoryRequirements
     std::unordered_map<VkImage, VkMemoryRequirements> replayGetImageMemoryRequirements;
@@ -402,6 +418,11 @@ class vkReplay {
 
     // Map VkSurfaceKHR to VkSurfaceCapabilitiesKHR
     std::unordered_map<VkSurfaceKHR, VkSurfaceCapabilitiesKHR> replaySurfaceCapabilities;
+
+    // Map VkSurfaceKHR to VkSwapchainKHR
+    std::unordered_map<VkSurfaceKHR, VkSwapchainKHR> replaySurfToSwapchain;
+    uint32_t swapchainRefCount = 0;
+    uint32_t surfRefCount = 0;
 
     bool getMemoryTypeIdx(VkDevice traceDevice, VkDevice replayDevice, uint32_t traceIdx, VkMemoryRequirements* memRequirements,
                           uint32_t* pReplayIdx);

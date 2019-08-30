@@ -31,6 +31,10 @@
 #include <jni.h>
 #endif
 
+#if defined(PLATFORM_LINUX) && !defined(ANDROID)
+#include "arm_headless_ext.h"
+#endif // #if defined(PLATFORM_LINUX) && !defined(ANDROID)
+
 #define APP_NAME "vkreplay_vk"
 #define IDI_ICON 101
 
@@ -467,7 +471,7 @@ int vkDisplay::init_disp_wsi(VkLayerInstanceDispatchTable *vkFuncs) {
     return 0;
 }
 
-int vkDisplay::init_headless_wsi() {
+int vkDisplay::init_headless_wsi(const char *extension_name) {
     uint32_t instance_extension_count = 0;
     VkResult res;
 
@@ -489,20 +493,20 @@ int vkDisplay::init_headless_wsi() {
 
     bool headless_wsi_found = false;
     for (uint32_t i = 0; i < instance_extension_count; i++) {
-        // VK_ARMX_HEADLESS_SURFACE_EXTENSION_NAME
-        if (strcmp(instance_extensions[i].extensionName, "VK_ARMX_headless_surface") == 0) {
+        if (strcmp(instance_extensions[i].extensionName, extension_name) == 0) {
             headless_wsi_found = true;
             break;
         }
     }
+
     free(instance_extensions);
 
     if (!headless_wsi_found) {
-        vktrace_LogError("Headless WSI Extension is not found !");
+        vktrace_LogWarning("Headless WSI Extension %s is not found !", extension_name);
         return VK_ERROR_EXTENSION_NOT_PRESENT;
     }
 
-    vktrace_LogAlways("Init Headless WSI Extension successfully !");
+    vktrace_LogAlways("Init Headless WSI Extension %s successfully !", extension_name);
     return 0;
 }
 #endif

@@ -31,6 +31,23 @@
 #include "vk_layer_dispatch_table.h"
 #include "vk_struct_size_helper.h"
 
+// utilities to convert API handles to uint64_t type and vice versa
+template <typename T>
+uint64_t ToHandleId(const T &handle) {
+    return reinterpret_cast<uint64_t>(handle);
+}
+
+template <>
+uint64_t ToHandleId<uint64_t>(const uint64_t &handle);
+
+template <typename T>
+T FromHandleId(uint64_t handle_id) {
+    return reinterpret_cast<T>(handle_id);
+}
+
+template <>
+uint64_t FromHandleId<uint64_t>(uint64_t handle_id);
+
 // Support for shadowing CPU mapped memory
 // TODO better handling of multiple range rather than fixed array
 typedef struct _VKAllocInfo {
@@ -262,7 +279,6 @@ static void add_create_ds_layout_to_trace_packet(vktrace_trace_packet_header *pH
                                                  const VkDescriptorSetLayoutCreateInfo **ppOut,
                                                  const VkDescriptorSetLayoutCreateInfo *pIn) {
     uint32_t i;
-    vktrace_add_buffer_to_trace_packet(pHeader, (void **)(ppOut), sizeof(VkDescriptorSetLayoutCreateInfo), pIn);
     vktrace_add_buffer_to_trace_packet(pHeader, (void **)&((*ppOut)->pBindings),
                                        sizeof(VkDescriptorSetLayoutBinding) * pIn->bindingCount, pIn->pBindings);
     for (i = 0; i < pIn->bindingCount; i++) {

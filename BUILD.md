@@ -19,11 +19,11 @@ These additional packages are needed for building the components in this repo.
 
 Ubuntu 16.04 LTS and 18.04 have been tested with this repo.
 
-Continuous integration tools use [CMake 3.12.4](https://github.com/Kitware/CMake/releases/tag/v3.12.4) for Linux
+[CMake 3.10.2](https://cmake.org/files/v3.10/cmake-3.10.2-Linux-x86_64.tar.gz) is recommended.
 
 ```
 # Dependencies from included submodule components
-sudo apt-get install git cmake build-essential bison libx11-xcb-dev libxkbcommon-dev libwayland-dev libxrandr-dev libxcb-randr0-dev
+sudo apt-get install git build-essential bison libx11-xcb-dev libxkbcommon-dev libwayland-dev libxrandr-dev libxcb-randr0-dev
 # Additional dependencies for this repo:
 sudo apt-get install wget autotools-dev libxcb-keysyms1 libxcb-keysyms1-dev libxcb-ewmh-dev
 # If performing 32-bit builds, you will also need:
@@ -42,13 +42,13 @@ sudo apt-get install qt5-default qtwebengine5-dev
 
 Fedora Core 28 and 29 were tested with this repo.
 
-Continuous integration tools use [CMake 3.12.4](https://github.com/Kitware/CMake/releases/tag/v3.12.4) for Linux
+[CMake 3.10.2](https://cmake.org/files/v3.10/cmake-3.10.2-Linux-x86_64.tar.gz) is recommended.
 
 Additional package dependencies include:
 
 ```
 # Dependencies from included submodule components
-sudo dnf install git cmake @development-tools glm-devel \
+sudo dnf install git @development-tools glm-devel \
                  libpng-devel wayland-devel libpciaccess-devel \
                  libX11-devel libXpresent libxcb xcb-util libxcb-devel libXrandr-devel \
                  xcb-util-keysyms-devel xcb-util-wm-devel
@@ -68,9 +68,6 @@ git clone --recurse-submodules git@github.com:LunarG/VulkanTools.git
 # Enter the folder containing the cloned source
 cd VulkanTools
 
-# Update the submodules that are a part of the tree:
-git submodule update --init --recursive
-
 # This will perform some initialization and ensure subcomponents are built:
 ./update_external_sources.sh    # linux
 ./update_external_sources.bat   # windows
@@ -78,7 +75,7 @@ git submodule update --init --recursive
 
 ## Updating the Repository After a Pull
 
-The VulkanTools repository contains a submodules named jsoncpp. You may occasionally have to update the source in those submodules.
+The VulkanTools repository contains a submodule named jsoncpp. You may occasionally have to update the source in that submodules.
 You will know this needs to be performed when you perform a pull, and you check the status of your tree with `git status` and something similar to the following shows:
 
 ```
@@ -185,22 +182,45 @@ directories and place them in any location.
 
 ### Building Dependent Repositories with Known-Good Revisions
 
-There is a Python utility script, `scripts/update_deps.py`, that you can use
-to gather and build the dependent repositories mentioned above. This program
-also uses information stored in the `scripts/known-good.json` file to checkout
-dependent repository revisions that are known to be compatible with the
-revision of this repository that you currently have checked out.
+There is a Python utility script, `scripts/update_deps.py`, that you can use to
+gather and build the dependent repositories mentioned above. This script uses
+information stored in the `scripts/known_good.json` file to check out dependent
+repository revisions that are known to be compatible with the revision of this
+repository that you currently have checked out. As such, this script is useful
+as a quick-start tool for common use cases and default configurations.
 
-Here is a usage example for this repository:
+For all platforms, start with:
 
-    git clone git@github.com:KhronosGroup/VulkanTools.git
+    git clone --recurse-submodules git@github.com:LunarG/VulkanTools.git
     cd VulkanTools
     mkdir build
+
+For 64-bit Linux and MacOS, continue with:
+
+    ./update_external_sources.sh
     cd build
     ../scripts/update_deps.py
     cmake -C helper.cmake ..
     cmake --build .
 
+For 64-bit Windows, continue with:
+
+    .\update_external_sources.bat
+    cd build
+    ..\scripts\update_deps.py --arch x64
+    cmake -A x64 -C helper.cmake ..
+    cmake --build .
+
+For 32-bit Windows, continue with:
+
+    .\update_external_sources.bat
+    cd build
+    ..\scripts\update_deps.py --arch Win32
+    cmake -A Win32 -C helper.cmake ..
+    cmake --build .
+
+Please see the more detailed build information later in this file if you have
+specific requirements for configuring and building these components.
 
 #### Notes
 
@@ -271,8 +291,7 @@ make -j8
 Windows 7+ with additional required software packages:
 
 - Microsoft Visual Studio 2015 Professional or 2017 Professional.  Note: it is possible that lesser/older versions may work, but not guaranteed.
-- CMake: Continuous integration tools use [CMake 3.12.2](https://github.com/Kitware/CMake/releases/tag/v3.12.2) for Windows
-  - In order to build the VkTrace tools, you need at least version 3.0.
+- [CMake 3.10.2](https://cmake.org/files/v3.10/cmake-3.10.2-win64-x64.zip) is recommended.
   - Tell the installer to "Add CMake to the system PATH" environment variable.
 - Python 3 (from https://www.python.org/downloads).  Notes:
   - Select to install the optional sub-package to add Python to the system PATH environment variable.
@@ -355,9 +374,9 @@ export PATH=$HOME/Library/Android/sdk/ndk-bundle:$PATH
 ### Additional OSX System Requirements
 Tested on OSX version 10.11.4
 
-Continuous integration tools use [CMake 3.11.3](https://github.com/Kitware/CMake/releases/tag/v3.11.3) for MacOS
+- [CMake 3.10.2](https://cmake.org/files/v3.10/cmake-3.10.2-Darwin-x86_64.tar.gz) is recommended.
 
- Setup Homebrew and components
+Setup Homebrew and components
 - Follow instructions on [brew.sh](http://brew.sh) to get homebrew installed.
 ```
 /usr/bin/ruby -e "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/master/install)"
@@ -368,7 +387,7 @@ export PATH=/usr/local/bin:$PATH
 ```
 - Add packages with the following (may need refinement)
 ```
-brew install cmake python python3 git
+brew install python python3 git
 ```
 
 ### Build steps for Android

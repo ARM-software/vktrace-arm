@@ -1,5 +1,5 @@
+cmake_minimum_required(VERSION 3.10.2)
 project(vktraceviewer)
-cmake_minimum_required(VERSION 3.0)
 
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/../)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/../)
@@ -9,8 +9,7 @@ if (${CMAKE_SYSTEM_NAME} MATCHES "Linux")
     set(OS_REPLAYER_LIBS xcb  ${LIBRARIES})
 
     # Make sure the exe directory is searched when loading libraries with dlopen
-    SET(CMAKE_EXE_LINKER_FLAGS
-        "${CMAKE_EXE_LINKER_FLAGS} -Wl,-rpath,'$ORIGIN'")
+    set(CMAKE_BUILD_RPATH $ORIGIN)
 endif()
 
 if (${CMAKE_SYSTEM_NAME} MATCHES "Windows" OR
@@ -73,6 +72,7 @@ set(SRC_LIST
     vktraceviewer_vk_qcontroller.cpp
     vktraceviewer_vk_qfile_model.cpp
     vktraceviewer_vk_qgroupframesproxymodel.cpp
+    ${SRC_DIR}/vktrace_replay/vkreplay_preload.cpp
     ${SRC_DIR}/vktrace_replay/vkreplay_seq.cpp
     ${SRC_DIR}/vktrace_replay/vkreplay_factory.cpp
     ${SRC_DIR}/vktrace_replay/vkreplay.cpp

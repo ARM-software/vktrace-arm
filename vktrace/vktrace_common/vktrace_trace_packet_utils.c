@@ -394,6 +394,10 @@ void vktrace_add_pnext_structs_to_trace_packet(vktrace_trace_packet_header* pHea
                 case VK_STRUCTURE_TYPE_PRESENT_TIMES_INFO_GOOGLE:
                     AddPointerWithCountToTracebuffer(VkPresentTimesInfoGOOGLE, VkPresentTimeGOOGLE, pTimes, swapchainCount);
                     break;
+                case VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO_EXT:
+                    AddPointerWithCountToTracebuffer(VkDescriptorSetLayoutBindingFlagsCreateInfoEXT, VkDescriptorBindingFlagsEXT,
+                                                     pBindingFlags, bindingCount);
+
                 default:
                     // The cases in this switch statement are only those pnext struct types that have
                     // pointers inside them that need to be added. The pnext list may contain
@@ -452,7 +456,8 @@ vktrace_trace_packet_header* vktrace_read_trace_packet(FileLike* pFile) {
         pHeader->size = total_packet_size;
         if (vktrace_FileLike_ReadRaw(pFile, (char*)pHeader + sizeof(uint64_t), (size_t)total_packet_size - sizeof(uint64_t)) ==
             FALSE) {
-            vktrace_LogError("Failed to read trace packet with size of %llu.", total_packet_size);
+            vktrace_LogError("Failed to read trace packet with size of %ju from %s source.", (intmax_t)total_packet_size,
+                             FILELIKE_MODE_NAME(pFile->mMode));
             return NULL;
         }
 
@@ -542,7 +547,7 @@ void add_VkDeviceCreateInfo_to_packet(vktrace_trace_packet_header* pHeader, VkDe
                                        pInStruct->queueCreateInfoCount * sizeof(VkDeviceQueueCreateInfo),
                                        pInStruct->pQueueCreateInfos);
     for (i = 0; i < pInStruct->queueCreateInfoCount; i++) {
-        vktrace_add_pnext_structs_to_trace_packet(pHeader, (void**)&(*ppStruct)->pQueueCreateInfos[i].pQueuePriorities,
+        vktrace_add_pnext_structs_to_trace_packet(pHeader, (void*)&(*ppStruct)->pQueueCreateInfos[i],
                                                   (void*)&pInStruct->pQueueCreateInfos[i]);
         vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(*ppStruct)->pQueueCreateInfos[i].pQueuePriorities,
                                            pInStruct->pQueueCreateInfos[i].queueCount * sizeof(float),
@@ -794,6 +799,9 @@ void vkreplay_interpret_pnext_pointers(vktrace_trace_packet_header* pHeader, voi
                 }
 #endif
                 InterpretPointerInPNext(VkPresentTimesInfoGOOGLE, VkPresentTimeGOOGLE, pTimes);
+                break;
+            case VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO_EXT:
+                InterpretPointerInPNext(VkDescriptorSetLayoutBindingFlagsCreateInfoEXT, VkDescriptorBindingFlagsEXT, pBindingFlags);
                 break;
             default:
                 // The cases in this switch statement are only those pnext struct types that have

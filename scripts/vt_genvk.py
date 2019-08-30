@@ -118,10 +118,14 @@ def makeGenOpts(args):
     # Defaults for generating re-inclusion protection wrappers (or not)
     protectFeature = protect
 
+    # An API style convention object
+    conventions = VulkanConventions()
+
     # Options for Vulkan Layer Factory header
     genOpts['layer_factory.h'] = [
           LayerFactoryOutputGenerator,
           LayerFactoryGeneratorOptions(
+            conventions       = conventions,
             filename          = 'layer_factory.h',
             directory         = directory,
             apiname           = 'vulkan',
@@ -145,6 +149,7 @@ def makeGenOpts(args):
     genOpts['layer_factory.cpp'] = [
           LayerFactoryOutputGenerator,
           LayerFactoryGeneratorOptions(
+            conventions       = conventions,
             filename          = 'layer_factory.cpp',
             directory         = directory,
             apiname           = 'vulkan',
@@ -168,6 +173,7 @@ def makeGenOpts(args):
     genOpts['api_dump.cpp'] = [
         ApiDumpOutputGenerator,
         ApiDumpGeneratorOptions(
+            conventions       = conventions,
             input             = COMMON_CODEGEN,
             filename          = 'api_dump.cpp',
             apiname           = 'vulkan',
@@ -195,6 +201,7 @@ def makeGenOpts(args):
     genOpts['api_dump_text.h'] = [
         ApiDumpOutputGenerator,
         ApiDumpGeneratorOptions(
+            conventions       = conventions,
             input             = TEXT_CODEGEN,
             filename          = 'api_dump_text.h',
             apiname           = 'vulkan',
@@ -218,12 +225,41 @@ def makeGenOpts(args):
             expandEnumerants  = False)
     ]
 
-     # API dump generator options for api_dump_html.h
+    # API dump generator options for api_dump_html.h
     genOpts['api_dump_html.h'] = [
         ApiDumpOutputGenerator,
         ApiDumpGeneratorOptions(
+            conventions       = conventions,
             input             = HTML_CODEGEN,
             filename          = 'api_dump_html.h',
+            apiname           = 'vulkan',
+            profile           = None,
+            versions          = featuresPat,
+            emitversions      = featuresPat,
+            defaultExtensions = 'vulkan',
+            addExtensions     = addExtensionsPat,
+            removeExtensions  = removeExtensionsPat,
+            emitExtensions    = emitExtensionsPat,
+            prefixText        = prefixStrings + vkPrefixStrings,
+            genFuncPointers   = True,
+            protectFile       = protect,
+            protectFeature    = False,
+            protectProto      = None,
+            protectProtoStr   = 'VK_NO_PROTOTYPES',
+            apicall           = 'VKAPI_ATTR ',
+            apientry          = 'VKAPI_CALL ',
+            apientryp         = 'VKAPI_PTR *',
+            alignFuncParam    = 48,
+            expandEnumerants  = False)
+    ]
+
+    # API dump generator options for api_dump_json.h
+    genOpts['api_dump_json.h'] = [
+        ApiDumpOutputGenerator,
+        ApiDumpGeneratorOptions(
+            conventions       = conventions,
+            input             = JSON_CODEGEN,
+            filename          = 'api_dump_json.h',
             apiname           = 'vulkan',
             profile           = None,
             versions          = featuresPat,
@@ -249,6 +285,7 @@ def makeGenOpts(args):
     genOpts['vkreplay_vk_objmapper.h'] = [
           VkTraceFileOutputGenerator,
           VkTraceFileOutputGeneratorOptions(
+            conventions       = conventions,
             filename          = 'vkreplay_vk_objmapper.h',
             directory         = directory,
             apiname           = 'vulkan',
@@ -272,6 +309,7 @@ def makeGenOpts(args):
     genOpts['vkreplay_vk_func_ptrs.h'] = [
           VkTraceFileOutputGenerator,
           VkTraceFileOutputGeneratorOptions(
+            conventions       = conventions,
             filename          = 'vkreplay_vk_func_ptrs.h',
             directory         = directory,
             apiname           = 'vulkan',
@@ -295,6 +333,7 @@ def makeGenOpts(args):
     genOpts['vkreplay_vk_replay_gen.cpp'] = [
           VkTraceFileOutputGenerator,
           VkTraceFileOutputGeneratorOptions(
+            conventions       = conventions,
             filename          = 'vkreplay_vk_replay_gen.cpp',
             directory         = directory,
             apiname           = 'vulkan',
@@ -318,6 +357,7 @@ def makeGenOpts(args):
     genOpts['vktracedump_vk_dump_gen.cpp'] = [
           VkTraceFileOutputGenerator,
           VkTraceFileOutputGeneratorOptions(
+            conventions       = conventions,
             filename          = 'vktracedump_vk_dump_gen.cpp',
             directory         = directory,
             apiname           = 'vulkan',
@@ -344,6 +384,7 @@ def makeGenOpts(args):
     genOpts['vktrace_vk_packet_id.h'] = [
           VkTraceFileOutputGenerator,
           VkTraceFileOutputGeneratorOptions(
+            conventions       = conventions,
             filename          = 'vktrace_vk_packet_id.h',
             directory         = directory,
             apiname           = 'vulkan',
@@ -367,6 +408,7 @@ def makeGenOpts(args):
     genOpts['vktrace_vk_vk.h'] = [
           VkTraceFileOutputGenerator,
           VkTraceFileOutputGeneratorOptions(
+            conventions       = conventions,
             filename          = 'vktrace_vk_vk.h',
             directory         = directory,
             apiname           = 'vulkan',
@@ -390,6 +432,7 @@ def makeGenOpts(args):
     genOpts['vktrace_vk_vk.cpp'] = [
           VkTraceFileOutputGenerator,
           VkTraceFileOutputGeneratorOptions(
+            conventions       = conventions,
             filename          = 'vktrace_vk_vk.cpp',
             directory         = directory,
             apiname           = 'vulkan',
@@ -414,6 +457,7 @@ def makeGenOpts(args):
     genOpts['vktrace_vk_vk_packets.h'] = [
           VkTraceFileOutputGenerator,
           VkTraceFileOutputGeneratorOptions(
+            conventions       = conventions,
             filename          = 'vktrace_vk_vk_packets.h',
             directory         = directory,
             apiname           = 'vulkan',
@@ -439,6 +483,7 @@ def makeGenOpts(args):
     genOpts['vk_struct_size_helper.h'] = [
           ToolHelperFileOutputGenerator,
           ToolHelperFileOutputGeneratorOptions(
+            conventions       = conventions,
             filename          = 'vk_struct_size_helper.h',
             directory         = directory,
             apiname           = 'vulkan',
@@ -462,6 +507,7 @@ def makeGenOpts(args):
     genOpts['vk_struct_size_helper.c'] = [
           ToolHelperFileOutputGenerator,
           ToolHelperFileOutputGeneratorOptions(
+            conventions       = conventions,
             filename          = 'vk_struct_size_helper.c',
             directory         = directory,
             apiname           = 'vulkan',
@@ -481,6 +527,32 @@ def makeGenOpts(args):
             helper_file_type  = 'struct_size_source')
         ]
 
+    # API cost generator options for api_cost.cpp
+    genOpts['api_cost.cpp'] = [
+        ApiDumpOutputGenerator,
+        ApiDumpGeneratorOptions(
+            input             = APICOST_CODEGEN,
+            filename          = 'api_cost.cpp',
+            apiname           = 'vulkan',
+            profile           = None,
+            versions          = featuresPat,
+            emitversions      = featuresPat,
+            defaultExtensions = 'vulkan',
+            addExtensions     = addExtensionsPat,
+            removeExtensions  = removeExtensionsPat,
+            emitExtensions    = emitExtensionsPat,
+            prefixText        = prefixStrings + vkPrefixStrings,
+            genFuncPointers   = True,
+            protectFile       = protect,
+            protectFeature    = False,
+            protectProto      = None,
+            protectProtoStr   = 'VK_NO_PROTOTYPES',
+            apicall           = 'VKAPI_ATTR ',
+            apientry          = 'VKAPI_CALL ',
+            apientryp         = 'VKAPI_PTR *',
+            alignFuncParam    = 48,
+            expandEnumerants = False)
+        ]
 # Generate a target based on the options in the matching genOpts{} object.
 # This is encapsulated in a function so it can be profiled and/or timed.
 # The args parameter is an parsed argument object containing the following
@@ -590,9 +662,11 @@ if __name__ == '__main__':
 
     # VulkanTools generator additions
     from tool_helper_file_generator import ToolHelperFileOutputGenerator, ToolHelperFileOutputGeneratorOptions
-    from api_dump_generator import ApiDumpGeneratorOptions, ApiDumpOutputGenerator, COMMON_CODEGEN, TEXT_CODEGEN, HTML_CODEGEN
+    from api_dump_generator import ApiDumpGeneratorOptions, ApiDumpOutputGenerator, COMMON_CODEGEN, TEXT_CODEGEN, HTML_CODEGEN, JSON_CODEGEN
     from vktrace_file_generator import VkTraceFileOutputGenerator, VkTraceFileOutputGeneratorOptions
     from layer_factory_generator import LayerFactoryGeneratorOptions, LayerFactoryOutputGenerator
+    from vkconventions import VulkanConventions
+    from api_cost_generator import ApiCostGeneratorOptions, ApiCostOutputGenerator, APICOST_CODEGEN
 
     # This splits arguments which are space-separated lists
     args.feature = [name for arg in args.feature for name in arg.split()]

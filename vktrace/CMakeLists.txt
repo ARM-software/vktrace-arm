@@ -1,5 +1,3 @@
-PROJECT(vktrace_project)
-
 #
 # cmake -DCMAKE_BUILD_TYPE=Debug ..
 #
@@ -8,7 +6,8 @@ PROJECT(vktrace_project)
 #   http://clang.llvm.org/docs/LanguageExtensions.html
 #
 #
-cmake_minimum_required(VERSION 2.8)
+cmake_minimum_required(VERSION 3.10.2)
+PROJECT(vktrace_project)
 
 file(STRINGS ${CMAKE_CURRENT_SOURCE_DIR}/../vktrace_version VKTRACE_RELEASE_VERSION)
 set(VKTRACE_RELEASE_TYPE "dev unofficial")
@@ -555,13 +554,6 @@ else()
 endif()
 
 option(BUILD_VKTRACEVIEWER "Build VkTraceViewer" ON)
-
-if (BUILD_VKTRACEVIEWER)
-    # We need CMake version 3.0+ in order to "find_package(Qt5)":
-    cmake_minimum_required(VERSION 3.0)
-else ()
-    cmake_minimum_required(VERSION 2.8.11)
-endif()
 
 set(SRC_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
 

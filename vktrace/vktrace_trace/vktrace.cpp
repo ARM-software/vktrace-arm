@@ -32,6 +32,7 @@ extern "C" {
 #include "vktrace_trace_packet_utils.h"
 }
 
+#include <inttypes.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include "screenshot_parsing.h"
@@ -102,7 +103,7 @@ vktrace_SettingInfo g_settings_info[] = {
      {&g_default_settings.verbosity},
      TRUE,
      "Verbosity mode. Modes are \"quiet\", \"errors\", \"warnings\", \"full\", "
-     "\"debug\"."},
+     "\"max\", \"debug\"."},
 #else
     {"v",
      "Verbosity",
@@ -111,7 +112,7 @@ vktrace_SettingInfo g_settings_info[] = {
      {&g_default_settings.verbosity},
      TRUE,
      "Verbosity mode. Modes are \"quiet\", \"errors\", \"warnings\", "
-     "\"full\"."},
+     "\"full\", \"max\"."},
 #endif
 
     {"tr",
@@ -458,7 +459,7 @@ int main(int argc, char* argv[]) {
     // set trim max commands batched size env var that communicates with the layer
     if (g_settings.trimCmdBatchSizeStr != NULL) {
         uint64_t trimMaxCmdBatchSzValue = 0;
-        if (sscanf(g_settings.trimCmdBatchSizeStr, "%d", &trimMaxCmdBatchSzValue) == 1) {
+        if (sscanf(g_settings.trimCmdBatchSizeStr, "%" PRIu64, &trimMaxCmdBatchSzValue) == 1) {
             if (trimMaxCmdBatchSzValue > 0) {
                 vktrace_set_global_var(VKTRACE_TRIM_MAX_COMMAND_BATCH_SIZE_ENV, g_settings.trimCmdBatchSizeStr);
                 vktrace_LogVerbose(

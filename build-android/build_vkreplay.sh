@@ -54,6 +54,7 @@ do
     mkdir -p $LAYER_BUILD_DIR/vkreplay/bin/libs/lib/${abi}
     cp $LAYER_BUILD_DIR/libs/${abi}/libvkreplay.so $LAYER_BUILD_DIR/vkreplay/bin/libs/lib/${abi}/libvkreplay.so
     cp $LAYER_BUILD_DIR/libs/${abi}/libVkLayer_screenshot.so $LAYER_BUILD_DIR/vkreplay/bin/libs/lib/${abi}/libVkLayer_screenshot.so
+    cp $LAYER_BUILD_DIR/libs/${abi}/libVkLayer_monitor.so $LAYER_BUILD_DIR/vkreplay/bin/libs/lib/${abi}/libVkLayer_monitor.so
 done
 create_APK vkreplay
 popd
@@ -69,6 +70,7 @@ abi='armeabi-v7a'
 mkdir -p $LAYER_BUILD_DIR/vkreplay/bin/libs/lib/${abi}
 cp $LAYER_BUILD_DIR/libs/${abi}/libvkreplay.so $LAYER_BUILD_DIR/vkreplay/bin/libs/lib/${abi}/libvkreplay.so
 cp $LAYER_BUILD_DIR/libs/${abi}/libVkLayer_screenshot.so $LAYER_BUILD_DIR/vkreplay/bin/libs/lib/${abi}/libVkLayer_screenshot.so
+cp $LAYER_BUILD_DIR/libs/${abi}/libVkLayer_monitor.so $LAYER_BUILD_DIR/vkreplay/bin/libs/lib/${abi}/libVkLayer_monitor.so
 sed -i 's/com.example.vkreplay/com.example.vkreplay32/' AndroidManifest.xml
 create_APK vkreplay32
 popd

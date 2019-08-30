@@ -17,9 +17,12 @@
 
 #ifndef _VKTRACE_PRELOAD_H_
 #define _VKTRACE_PRELOAD_H_
+#include <cinttypes>
 
 bool init_preload(FileLike* file);
 vktrace_trace_packet_header* preload_get_next_packet();
 void exit_preload();
+uint64_t get_preload_waiting_time_when_replaying();
+bool preloaded_whole();
 
 #endif /* _VKTRACE_PRELOAD_H_ */

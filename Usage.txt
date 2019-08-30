@@ -23,16 +23,18 @@ This vktrace build is based on lunarG's open source VulkanTools project, https:/
        adb shell setprop VKTRACE_TRIM_TRIGGER "frames-<start_frame>-<end_frame>"
    10) # Optional: Force using FIFO present mode in vkCreateInstance.
        adb shell setprop VKTRACE_FORCE_FIFO 1
+   11) # Optional: Sync the GPU data back to the PMB buffer
+       adb shell setprop VKTRACE_PAGEGUARD_ENABLE_SYNC_GPU_DATA_BACK 1
 
-   11) # Run the app on android to start tracing
-   12) # Shutdown the app to stop tracing
+   12) # Run the app on android to start tracing
+   13) # Shutdown the app to stop tracing
        adb shell am force-stop <app's package name>
        # Command "aapt dump badging <path to the APK file>" can be used to get package name from an APK.
 
 2. How to retrace
 
    1) adb uninstall com.example.vkreplay[32]
-
+      
 # Install 32-bit vkreplay to replay 32-bit trace file. (adb install -g <package> will automatically grants all requested permissions.)
    2) adb install -g --abi armeabi-v7a android/retracer/vkreplay.apk
 # Or if user wants to keep both 32-bit vkreplay and 64-bit replay installed.  This will install vkreplay with package name com.example.vkreplay32
@@ -42,13 +44,13 @@ This vktrace build is based on lunarG's open source VulkanTools project, https:/
 
    3) adb shell setprop debug.vulkan.layer.1 '""'
    4) adb push <filename>.vktrace /sdcard/<filename>.vktrace
-
+   
 # Replay without trace file preload (gzip compressed trace file can be replayed directly using vkreplay, supported from v1.2)
    5) adb shell am start -a android.intent.action.MAIN -c android-intent.category.LAUNCH -n com.example.vkreplay/android.app.NativeActivity --es args '"-v full -o /sdcard/<filename>.vktrace[.gz]"'
 # Or replay with trace file preload enabled (Supported from v1.2)
    5) adb shell am start -a android.intent.action.MAIN -c android-intent.category.LAUNCH -n com.example.vkreplay/android.app.NativeActivity --es args '"-v full -o /sdcard/<filename>.vktrace[.gz] -pltf true"'
 # Note: com.example.vkreplay in above commands need to be replaced by com.example.vkreplay32 if user wants to replay 32-bit trace file using the installed vkreplay32.apk
-
+   
    6) # Optional: Take screenshots
       adb shell am start -a android.intent.action.MAIN -c android-intent.category.LAUNCH -n com.example.vkreplay/android.app.NativeActivity --es args '"-v full -o /sdcard/<filename>.vktrace[.gz] -s <string>"'
       #     The <string> is one of following three options:

@@ -41,10 +41,16 @@ typedef struct vkreplayer_settings {
     BOOL vsyncOff;
     BOOL headless;
     BOOL selfManageMemAllocation;
+    BOOL forceSingleWindow;
 } vkreplayer_settings;
 
 #include <vector>
 extern std::vector<uintptr_t> portabilityTablePackets;
 extern FileLike* traceFile;
+namespace vktrace_replay {
+    bool timerStarted();
+    uint64_t getStartFrame();
+    uint64_t getEndFrame();
+}
 
 #endif  // VKREPLAY__MAIN_H

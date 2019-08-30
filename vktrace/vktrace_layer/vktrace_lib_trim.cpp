@@ -184,7 +184,14 @@ void deleteImageSubResourceSizes(VkImage image) {
 VkDeviceSize getImageSize(VkImage image) {
     std::vector<VkDeviceSize> subResourceSizes;
     getImageSubResourceSizes(image, &subResourceSizes);
-    return subResourceSizes[0];
+    // Note: the image to subsresource map is created for
+    // VK_IMAGE_TILING_OPTIMAL image difference fix, the vector
+    // might be empty for other image tiling
+    if (subResourceSizes.size() > 0) {
+        return subResourceSizes[0];
+    } else {
+        return 0;
+    }
 }
 
 VkDeviceSize getImageSubResourceOffset(VkImage image, uint32_t mipLevel) {
@@ -3256,13 +3263,13 @@ bool UpdateInvalidDescriptors(const VkWriteDescriptorSet *pDescriptorWrites) {
     // note: By Doc, the descriptor at a binding location can be invalid
     // (just get vkAllocateDescriptorSets or corresponding object has been
     // destroied) but any descriptor info in update call must be valid.
-    uint32_t validDescriptorIndex = getValidDescriptorIndexFromWriteDescriptorSet(pDescriptorWrites);
+    int32_t validDescriptorIndex = getValidDescriptorIndexFromWriteDescriptorSet(pDescriptorWrites);
     if ((validDescriptorIndex != -1) || (pDescriptorWrites->descriptorCount == 0)) {
         // if we can remove all invalid descriptor info or pDescriptorWrites
         // don't have any descriptors, the function return true.
         removeInvalidDescriptorsFlag = true;
 
-        for (int i = 0; i < pDescriptorWrites->descriptorCount; i++) {
+        for (unsigned i = 0; i < pDescriptorWrites->descriptorCount; i++) {
             if (!isValidDescriptorIndex(pDescriptorWrites, i)) {
                 copyDescriptorByIndex(pDescriptorWrites, i, validDescriptorIndex);
             }
@@ -4410,7 +4417,7 @@ void recreate_descriptor_sets(StateTracker &stateTracker) {
                 // so here, before we generate the update call, we check every
                 // descriptor in pDescriptorWrites and remove all invalid descriptors.
                 std::vector<uint32_t> descriptorCountsBackup(descriptorWriteCount);
-                for (int i = 0; i < descriptorWriteCount; i++) {
+                for (unsigned i = 0; i < descriptorWriteCount; i++) {
                     descriptorCountsBackup[i] = pDescriptorWrites[i].descriptorCount;
                 }
                 UpdateInvalidDescriptors(descriptorWriteCount, pDescriptorWrites);
@@ -4419,7 +4426,7 @@ void recreate_descriptor_sets(StateTracker &stateTracker) {
                                                      descriptorCopyCount, pDescriptorCopies);
                 vktrace_write_trace_packet(pHeader, vktrace_trace_get_trace_file());
                 vktrace_delete_trace_packet(&pHeader);
-                for (int i = 0; i < descriptorWriteCount; i++) {
+                for (unsigned i = 0; i < descriptorWriteCount; i++) {
                     pDescriptorWrites[i].descriptorCount = descriptorCountsBackup[i];
                 }
             }
@@ -4464,8 +4471,24 @@ void recreate_fences(StateTracker &stateTracker) {
 }
 
 void recreate_events(StateTracker &stateTracker) {
+    VkResult result = VK_EVENT_RESET;
+    vktrace_trace_packet_header *pheader = nullptr;
     for (auto obj = stateTracker.createdEvents.begin(); obj != stateTracker.createdEvents.end(); obj++) {
         vktrace_write_trace_packet(obj->second.ObjectInfo.Event.pCreatePacket, vktrace_trace_get_trace_file());
+        auto eventobject = obj->second.vkObject;
+        result = mdd(reinterpret_cast<void *>(obj->second.belongsToDevice))
+                     ->devTable.GetEventStatus(obj->second.belongsToDevice, FromHandleId<VkEvent>(eventobject));
+        switch (result) {
+            case VK_EVENT_SET:
+                pheader = generate::vkSetEvent(false, obj->second.belongsToDevice, FromHandleId<VkEvent>(eventobject));
+                break;
+            default:
+                break;
+        }
+        if (pheader != nullptr) {
+            vktrace_write_trace_packet(pheader, vktrace_trace_get_trace_file());
+            vktrace_delete_trace_packet_no_lock(&(pheader));
+        }
         vktrace_delete_trace_packet_no_lock(&(obj->second.ObjectInfo.Event.pCreatePacket));
     }
 }

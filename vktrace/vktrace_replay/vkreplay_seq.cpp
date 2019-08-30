@@ -20,6 +20,7 @@
  * Author: Jon Ashburn <jon@lunarg.com>
  **************************************************************************/
 #include "vkreplay_seq.h"
+#include "vkreplay_main.h"
 
 extern "C" {
 #include "vktrace_trace_packet_utils.h"
@@ -30,11 +31,18 @@ namespace vktrace_replay {
 
 vktrace_trace_packet_header *Sequencer::get_next_packet() {
     if (!m_pFile) return (NULL);
-    if (!m_chunkEnabled) {
+    if (!m_chunkEnabled) {  // do not use preload
         vktrace_delete_trace_packet_no_lock(&m_lastPacket);
         m_lastPacket = vktrace_read_trace_packet(m_pFile);
     } else {
-        m_lastPacket = preload_get_next_packet();
+        if (timerStarted()) // preload, and already in the preloading range
+        {
+            m_lastPacket = preload_get_next_packet();
+        }
+        else {              // preload, but not in the preloading range
+            vktrace_delete_trace_packet_no_lock(&m_lastPacket);
+            m_lastPacket = vktrace_read_trace_packet(m_pFile);
+        }
     }
     return (m_lastPacket);
 }

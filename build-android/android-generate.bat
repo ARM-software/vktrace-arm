@@ -70,7 +70,12 @@ echo ********
 py -3 %VT_SCRIPTS%\vt_genvk.py -registry %REGISTRY% -scripts %REGISTRY_PATH% api_dump.cpp
 py -3 %VT_SCRIPTS%\vt_genvk.py -registry %REGISTRY% -scripts %REGISTRY_PATH% api_dump_text.h
 py -3 %VT_SCRIPTS%\vt_genvk.py -registry %REGISTRY% -scripts %REGISTRY_PATH% api_dump_html.h
- 
+
+REM apicost
+echo Generating VT apicost header/source files
+echo ********
+py -3 %VT_SCRIPTS%\vt_genvk.py -registry %REGISTRY% -scripts %REGISTRY_PATH% api_cost.cpp
+
 REM vktrace
 echo Generating VT vktrace header/source files
 echo ********

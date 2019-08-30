@@ -86,7 +86,6 @@ typedef struct _DeviceMemory {
 
 std::unordered_map<VkCommandBuffer, std::list<VkBuffer>> g_cmdBufferToBuffers;
 std::unordered_map<VkBuffer, DeviceMemory> g_bufferToDeviceMemory;
-std::unordered_map<VkFence, std::list<VkCommandBuffer>> g_fenceToCommandBuffers;
 std::unordered_map<VkCommandBuffer, std::list<VkCommandBuffer>> g_commandBufferToCommandBuffers;
 #endif
 
@@ -173,6 +172,26 @@ bool getForceFifoEnableFlag() {
     return EnableForceFifo;
 }
 
+bool getPMBSyncGPUDataBackEnableFlag() {
+    static bool EnableSyncBack = false;
+    static bool FirstTimeRun = true;
+    if (FirstTimeRun) {
+        FirstTimeRun = false;
+        const char* env_syncBack = vktrace_get_global_var(VKTRACE_PAGEGUARD_ENABLE_SYNC_GPU_DATA_BACK_ENV);
+        if (env_syncBack) {
+            int envvalue;
+            if (sscanf(env_syncBack, "%d", &envvalue) == 1) {
+                if (envvalue == 1) {
+                    EnableSyncBack = true;
+                } else {
+                    EnableSyncBack = false;
+                }
+            }
+        }
+    }
+    return EnableSyncBack;
+}
+
 /*
  * This function will return the pNext pointer of any
  * CreateInfo extensions that are not loader extensions.
@@ -197,9 +216,67 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkAllocateMemory(VkDevic
     VkResult result;
     vktrace_trace_packet_header* pHeader;
     packet_vkAllocateMemory* pPacket = NULL;
+
+    // If user disable using shadow memory, we'll use host memory through
+    // VK_EXT_external_memory_host extension. If user enable using shadow
+    // memory, there's no need to handle vkAllocateMemory because we don't
+    // need to decide using the extension or not through memory property
+    // flag.
+    if (UseMappedExternalHostMemoryExtension()) {
+        pageguardEnter();
+    }
+
     size_t packetSize = get_struct_chain_size((void*)pAllocateInfo) + sizeof(VkAllocationCallbacks) + sizeof(VkDeviceMemory) * 2;
     CREATE_TRACE_PACKET(vkAllocateMemory, packetSize);
+
+    VkImportMemoryHostPointerInfoEXT importMemoryHostPointerInfo = {};
+    void* pNextOriginal = const_cast<void*>(pAllocateInfo->pNext);
+    void* pHostPointer = nullptr;
+    if (UseMappedExternalHostMemoryExtension()) {
+        VkMemoryPropertyFlags propertyFlags =
+            getPageGuardControlInstance().getMemoryPropertyFlags(device, pAllocateInfo->memoryTypeIndex);
+        if ((propertyFlags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) != 0) {
+            // host visible memory, enable extension
+            if (pAllocateInfo->pNext != nullptr) {
+                // Todo: add checking process to detect if the extension we
+                //      use here is compatible with the existing pNext chain,
+                //      and output warning message if not compatible.
+                assert(false);
+            }
+
+            // we insert our extension struct into the pNext chain.
+            void** ppNext = const_cast<void**>(&(pAllocateInfo->pNext));
+            *ppNext = &importMemoryHostPointerInfo;
+            reinterpret_cast<VkImportMemoryHostPointerInfoEXT*>(*ppNext)->sType =
+                VK_STRUCTURE_TYPE_IMPORT_MEMORY_HOST_POINTER_INFO_EXT;
+            reinterpret_cast<VkImportMemoryHostPointerInfoEXT*>(*ppNext)->handleType =
+                VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT;
+            reinterpret_cast<VkImportMemoryHostPointerInfoEXT*>(*ppNext)->pNext = pNextOriginal;
+            // provide the title host memory pointer which is already added
+            // memory write watch.
+            reinterpret_cast<VkImportMemoryHostPointerInfoEXT*>(*ppNext)->pHostPointer =
+                pageguardAllocateMemory(pAllocateInfo->allocationSize);
+            pHostPointer = reinterpret_cast<VkImportMemoryHostPointerInfoEXT*>(*ppNext)->pHostPointer;
+        }
+    }
+
     result = mdd(device)->devTable.AllocateMemory(device, pAllocateInfo, pAllocator, pMemory);
+    if (UseMappedExternalHostMemoryExtension()) {
+        if (result == VK_SUCCESS) {
+            getPageGuardControlInstance().vkAllocateMemoryPageGuardHandle(device, pAllocateInfo, pAllocator, pMemory, pHostPointer);
+            void** ppNext = const_cast<void**>(&(pAllocateInfo->pNext));
+            // after allocation, we restore the original pNext. the extension
+            // we insert here should not appear during playback.
+            *ppNext = pNextOriginal;
+        } else {
+            if (pHostPointer) {
+                pageguardFreeMemory(pHostPointer);
+                pHostPointer = nullptr;
+                assert(false);
+            }
+        }
+    }
+
     vktrace_set_packet_entrypoint_end_time(pHeader);
     pPacket = interpret_body_as_vkAllocateMemory(pHeader);
     pPacket->device = device;
@@ -238,6 +315,10 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkAllocateMemory(VkDevic
     // begin custom code
     add_new_handle_to_mem_info(*pMemory, pAllocateInfo->memoryTypeIndex, pAllocateInfo->allocationSize, NULL);
     // end custom code
+    if (UseMappedExternalHostMemoryExtension()) {
+        // only needed if user enable using VK_EXT_external_memory_host.
+        pageguardExit();
+    }
     return result;
 }
 
@@ -316,6 +397,10 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkMapMemory(VkDevice dev
             //
             // So here we make trim to use real memory pointer to avoid change
             // the pageguard status when PMB enabled.
+            // Note:we'll have to change here if adding pageguard on real
+            //      mapped memory in future, because the pointer here may
+            //      already have page guard protection before trim dump its
+            //      content.
             pInfo->ObjectInfo.DeviceMemory.mappedAddress = pRealMappedData;
         }
         if (g_trimIsInTrim) {
@@ -414,10 +499,16 @@ VKTRACER_EXPORT VKAPI_ATTR void VKAPI_CALL __HOOKED_vkFreeMemory(VkDevice device
             pageguardFreeMemory(PageGuardMappedData);
         }
     }
+    getPageGuardControlInstance().vkFreeMemoryPageGuardHandle(device, memory, pAllocator);
     pageguardExit();
 #endif
     CREATE_TRACE_PACKET(vkFreeMemory, sizeof(VkAllocationCallbacks));
     mdd(device)->devTable.FreeMemory(device, memory, pAllocator);
+    if (UseMappedExternalHostMemoryExtension()) {
+        pageguardEnter();
+        getPageGuardControlInstance().vkFreeMemoryPageGuardHandle(device, memory, pAllocator);
+        pageguardExit();
+    }
     vktrace_set_packet_entrypoint_end_time(pHeader);
     pPacket = interpret_body_as_vkFreeMemory(pHeader);
     pPacket->device = device;
@@ -455,7 +546,11 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkInvalidateMappedMemory
 
 #if defined(USE_PAGEGUARD_SPEEDUP)
     pageguardEnter();
-    resetAllReadFlagAndPageGuard();
+    if (!UseMappedExternalHostMemoryExtension()) {
+        // If enable external host memory extension, there will be no shadow
+        // memory, so we don't need any read pageguard handling.
+        resetAllReadFlagAndPageGuard();
+    }
 #endif
 
     // determine sum of sizes of memory ranges and pNext structures
@@ -606,9 +701,9 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkFlushMappedMemoryRange
     for (iter = 0; iter < memoryRangeCount; iter++) {
         VkMappedMemoryRange* pRange = (VkMappedMemoryRange*)&pMemoryRanges[iter];
 
-        if (flushed_mem.find(pRange->memory) != flushed_mem.end())
-            continue;
+        if (flushed_mem.find(pRange->memory) != flushed_mem.end()) continue;
         flushed_mem.insert(pRange->memory);
+
 
         VKAllocInfo* pEntry = find_mem_info_entry(pRange->memory);
 
@@ -839,10 +934,8 @@ VkLayerDeviceCreateInfo* get_chain_info(const VkDeviceCreateInfo* pCreateInfo, V
     return chain_info;
 }
 
-VKTRACER_EXPORT VKAPI_ATTR void VKAPI_CALL __HOOKED_vkGetPhysicalDeviceProperties(
-    VkPhysicalDevice physicalDevice,
-    VkPhysicalDeviceProperties* pProperties)
-{
+VKTRACER_EXPORT VKAPI_ATTR void VKAPI_CALL __HOOKED_vkGetPhysicalDeviceProperties(VkPhysicalDevice physicalDevice,
+                                                                                  VkPhysicalDeviceProperties* pProperties) {
     trim::TraceLock<std::mutex> lock(g_mutex_trace);
     vktrace_trace_packet_header* pHeader;
     packet_vkGetPhysicalDeviceProperties* pPacket = NULL;
@@ -945,6 +1038,11 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkCreateDevice(VkPhysica
     if (result != VK_SUCCESS) {
         return result;
     }
+#ifdef USE_PAGEGUARD_SPEEDUP
+    pageguardEnter();
+    getPageGuardControlInstance().vkCreateDevice(physicalDevice, pCreateInfo, pAllocator, pDevice);
+    pageguardExit();
+#endif
 
     initDeviceData(*pDevice, fpGetDeviceProcAddr, g_deviceDataMap);
     // Setup device dispatch table for extensions
@@ -2199,7 +2297,11 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkQueueSubmit(VkQueue qu
 #if defined(USE_PAGEGUARD_SPEEDUP)
     pageguardEnter();
     flushAllChangedMappedMemory(&vkFlushMappedMemoryRangesWithoutAPICall);
-    resetAllReadFlagAndPageGuard();
+    if (!UseMappedExternalHostMemoryExtension()) {
+        // If enable external host memory extension, there will be no shadow
+        // memory, so we don't need any read pageguard handling.
+        resetAllReadFlagAndPageGuard();
+    }
     pageguardExit();
 #endif
     VkResult result;
@@ -2214,14 +2316,44 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkQueueSubmit(VkQueue qu
     result = mdd(queue)->devTable.QueueSubmit(queue, submitCount, pSubmits, fence);
     vktrace_set_packet_entrypoint_end_time(pHeader);
 #if defined(USE_PAGEGUARD_SPEEDUP) && !defined(PAGEGUARD_ADD_PAGEGUARD_ON_REAL_MAPPED_MEMORY)
-    if (fence != VK_NULL_HANDLE) {
-        if (g_fenceToCommandBuffers.find(fence) != g_fenceToCommandBuffers.end()) {
-            g_fenceToCommandBuffers[fence].clear();
-        }
-
-        for (uint32_t i = 0; i < submitCount; ++i) {
-            for (uint32_t j = 0; j < pSubmits[i].commandBufferCount; ++j) {
-                g_fenceToCommandBuffers[fence].push_back(pSubmits[i].pCommandBuffers[j]);
+    if (!UseMappedExternalHostMemoryExtension() && getPMBSyncGPUDataBackEnableFlag()) {
+        if (fence != VK_NULL_HANDLE) {
+            std::list<const std::list<VkBuffer>*> dstBuffers;
+            for (uint32_t i = 0; i < submitCount; ++i) {
+                for (uint32_t j = 0; j < pSubmits[i].commandBufferCount; ++j) {
+                    if (g_commandBufferToCommandBuffers.find(pSubmits[i].pCommandBuffers[j]) != g_commandBufferToCommandBuffers.end()) {
+                        std::list<VkCommandBuffer>& secondaryCmdBufs = g_commandBufferToCommandBuffers[pSubmits[i].pCommandBuffers[j]];
+                        for (auto it = secondaryCmdBufs.begin(); it != secondaryCmdBufs.end(); it++) {
+                            if (g_cmdBufferToBuffers.find(*it) != g_cmdBufferToBuffers.end()) {
+                                dstBuffers.push_front(&g_cmdBufferToBuffers[*it]);
+                            }
+                        }
+                    } else {
+                        if (g_cmdBufferToBuffers.find(pSubmits[i].pCommandBuffers[j]) != g_cmdBufferToBuffers.end()) {
+                            dstBuffers.push_front(&g_cmdBufferToBuffers[pSubmits[i].pCommandBuffers[j]]);
+                        }
+                    }
+                }
+            }
+            if (!dstBuffers.empty()) {
+                vktrace_LogWarning("Copy image to dest buffer occurs !");
+                result = mdd(queue)->devTable.QueueWaitIdle(queue);
+                pageguardEnter();
+                for (auto iterBufferList = dstBuffers.begin();
+                     iterBufferList != dstBuffers.end(); ++iterBufferList) {
+                    for (auto iterBuffer = (*iterBufferList)->begin();
+                         iterBuffer != (*iterBufferList)->end(); iterBuffer++) {
+                        VkBuffer buffer = *iterBuffer;
+                        if (g_bufferToDeviceMemory.find(buffer) != g_bufferToDeviceMemory.end()) {
+                            // Sync real mapped memory (recorded in __HOOKED_vkBindBufferMemory) for the dest buffer
+                            // (recorded in __HOOKED_vkCmdCopyImageToBuffer) back to the copy of that memory
+                            VkDevice device = g_bufferToDeviceMemory[buffer].device;
+                            VkDeviceMemory memory = g_bufferToDeviceMemory[buffer].memory;
+                            getPageGuardControlInstance().SyncRealMappedMemoryToMemoryCopyHandle(device, memory);
+                        }
+                    }
+                }
+                pageguardExit();
             }
         }
     }
@@ -2681,12 +2813,14 @@ VKTRACER_EXPORT VKAPI_ATTR void VKAPI_CALL __HOOKED_vkCmdExecuteCommands(VkComma
     mdd(commandBuffer)->devTable.CmdExecuteCommands(commandBuffer, commandBufferCount, pCommandBuffers);
     vktrace_set_packet_entrypoint_end_time(pHeader);
 #if defined(USE_PAGEGUARD_SPEEDUP) && !defined(PAGEGUARD_ADD_PAGEGUARD_ON_REAL_MAPPED_MEMORY)
-    if (g_commandBufferToCommandBuffers.find(commandBuffer) != g_commandBufferToCommandBuffers.end()) {
-        g_commandBufferToCommandBuffers[commandBuffer].clear();
-    }
-    g_commandBufferToCommandBuffers[commandBuffer].push_back(commandBuffer);
-    for (uint32_t i = 0; i < commandBufferCount; ++i) {
-        g_commandBufferToCommandBuffers[commandBuffer].push_back(pCommandBuffers[i]);
+    if (!UseMappedExternalHostMemoryExtension()) {
+        if (g_commandBufferToCommandBuffers.find(commandBuffer) != g_commandBufferToCommandBuffers.end()) {
+            g_commandBufferToCommandBuffers[commandBuffer].clear();
+        }
+        g_commandBufferToCommandBuffers[commandBuffer].push_back(commandBuffer);
+        for (uint32_t i = 0; i < commandBufferCount; ++i) {
+            g_commandBufferToCommandBuffers[commandBuffer].push_back(pCommandBuffers[i]);
+        }
     }
 #endif
     pPacket = interpret_body_as_vkCmdExecuteCommands(pHeader);
@@ -2726,7 +2860,9 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkGetPipelineCacheData(V
     result = mdd(device)->devTable.GetPipelineCacheData(device, pipelineCache, pDataSize, pData);
     endTime = vktrace_get_time();
     assert(pDataSize);
-    CREATE_TRACE_PACKET(vkGetPipelineCacheData, sizeof(size_t) + ROUNDUP_TO_4(*pDataSize));
+    // Currently do not capture payload in vkGetPipelineCacheData() API.
+    // So we won't reserve spaces for pDataSize and pData in the buffer for now.
+    CREATE_TRACE_PACKET(vkGetPipelineCacheData, 0);
     pHeader->vktrace_begin_time = vktraceStartTime;
     pHeader->entrypoint_begin_time = startTime;
     pHeader->entrypoint_end_time = endTime;
@@ -2734,8 +2870,9 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkGetPipelineCacheData(V
     pPacket = interpret_body_as_vkGetPipelineCacheData(pHeader);
     pPacket->device = device;
     pPacket->pipelineCache = pipelineCache;
-    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pDataSize), sizeof(size_t), pDataSize);
-    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pData), *pDataSize, pData);
+    // Currently do not capture payload in vkGetPipelineCacheData() API.
+    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pDataSize), 0, NULL);
+    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pData), 0, NULL);
     pPacket->result = result;
     vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pDataSize));
     vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pData));
@@ -2967,8 +3104,10 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkCreatePipelineCache(Vk
     VkResult result;
     vktrace_trace_packet_header* pHeader;
     packet_vkCreatePipelineCache* pPacket = NULL;
+    // Currently do not capture payload in vkCreatePipelineCache() API.
+    // So we won't reserve spaces for pCreateInfo->pInitialData in the buffer for now.
     CREATE_TRACE_PACKET(vkCreatePipelineCache, get_struct_chain_size((void*)pCreateInfo) +
-                                                   ROUNDUP_TO_4(pCreateInfo->initialDataSize) + sizeof(VkAllocationCallbacks) +
+                                                   sizeof(VkAllocationCallbacks) +
                                                    sizeof(VkPipelineCache));
     result = mdd(device)->devTable.CreatePipelineCache(device, pCreateInfo, pAllocator, pPipelineCache);
     vktrace_set_packet_entrypoint_end_time(pHeader);
@@ -2976,8 +3115,8 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkCreatePipelineCache(Vk
     pPacket->device = device;
     vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pCreateInfo), sizeof(VkPipelineCacheCreateInfo), pCreateInfo);
     if (pCreateInfo) vktrace_add_pnext_structs_to_trace_packet(pHeader, (void*)pPacket->pCreateInfo, pCreateInfo);
-    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pCreateInfo->pInitialData),
-                                       pPacket->pCreateInfo->initialDataSize, pCreateInfo->pInitialData);
+    // Currently do not capture payload in vkCreatePipelineCache() API.
+    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pCreateInfo->pInitialData), 0, NULL);
     vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pAllocator), sizeof(VkAllocationCallbacks), NULL);
     vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pPipelineCache), sizeof(VkPipelineCache), pPipelineCache);
     pPacket->result = result;
@@ -3287,8 +3426,11 @@ VKTRACER_EXPORT VKAPI_ATTR void VKAPI_CALL __HOOKED_vkDestroyBuffer(VkDevice dev
     mdd(device)->devTable.DestroyBuffer(device, buffer, pAllocator);
     vktrace_set_packet_entrypoint_end_time(pHeader);
 #if defined(USE_PAGEGUARD_SPEEDUP) && !defined(PAGEGUARD_ADD_PAGEGUARD_ON_REAL_MAPPED_MEMORY)
-    if (g_bufferToDeviceMemory.find(buffer) != g_bufferToDeviceMemory.end() && g_bufferToDeviceMemory[buffer].device == device) {
-        g_bufferToDeviceMemory.erase(buffer);
+    if (!UseMappedExternalHostMemoryExtension()) {
+        if (g_bufferToDeviceMemory.find(buffer) != g_bufferToDeviceMemory.end() &&
+            g_bufferToDeviceMemory[buffer].device == device) {
+            g_bufferToDeviceMemory.erase(buffer);
+        }
     }
 #endif
     pPacket = interpret_body_as_vkDestroyBuffer(pHeader);
@@ -3320,10 +3462,12 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkBindBufferMemory(VkDev
     result = mdd(device)->devTable.BindBufferMemory(device, buffer, memory, memoryOffset);
     vktrace_set_packet_entrypoint_end_time(pHeader);
 #if defined(USE_PAGEGUARD_SPEEDUP) && !defined(PAGEGUARD_ADD_PAGEGUARD_ON_REAL_MAPPED_MEMORY)
-    DeviceMemory deviceMemory = {};
-    deviceMemory.device = device;
-    deviceMemory.memory = memory;
-    g_bufferToDeviceMemory[buffer] = deviceMemory;
+    if (!UseMappedExternalHostMemoryExtension()) {
+        DeviceMemory deviceMemory = {};
+        deviceMemory.device = device;
+        deviceMemory.memory = memory;
+        g_bufferToDeviceMemory[buffer] = deviceMemory;
+    }
 #endif
     pPacket = interpret_body_as_vkBindBufferMemory(pHeader);
     pPacket->device = device;
@@ -3573,8 +3717,10 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkGetSwapchainImagesKHR(
         }
 
         if (g_trimIsInTrim) {
-            for (uint32_t i = 0; i < *pSwapchainImageCount; i++) {
-                trim::mark_Image_reference(pSwapchainImages[i]);
+            if ((pSwapchainImageCount != nullptr) && (pSwapchainImages != nullptr)) {
+                for (uint32_t i = 0; i < *pSwapchainImageCount; i++) {
+                    trim::mark_Image_reference(pSwapchainImages[i]);
+                }
             }
             trim::write_packet(pHeader);
         } else {
@@ -4094,14 +4240,7 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkCreateAndroidSurfaceKH
 }
 #endif
 
-VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkCreateDescriptorUpdateTemplate(
-    VkDevice device, const VkDescriptorUpdateTemplateCreateInfo* pCreateInfo, const VkAllocationCallbacks* pAllocator,
-    VkDescriptorUpdateTemplate* pDescriptorUpdateTemplate) {
-    return __HOOKED_vkCreateDescriptorUpdateTemplateKHR(device, pCreateInfo, pAllocator, pDescriptorUpdateTemplate);
-}
-
-static std::unordered_map<VkDescriptorUpdateTemplateKHR, VkDescriptorUpdateTemplateCreateInfoKHR*>
-    descriptorUpdateTemplateCreateInfo;
+static std::unordered_map<VkDescriptorUpdateTemplate, VkDescriptorUpdateTemplateCreateInfo*> descriptorUpdateTemplateCreateInfo;
 static vktrace_sem_id descriptorUpdateTemplateCreateInfo_sem_id;
 static bool descriptorUpdateTemplateCreateInfo_success = vktrace_sem_create(&descriptorUpdateTemplateCreateInfo_sem_id, 1);
 
@@ -4114,6 +4253,113 @@ void lockDescriptorUpdateTemplateCreateInfo() {
 
 void unlockDescriptorUpdateTemplateCreateInfo() { vktrace_sem_post(descriptorUpdateTemplateCreateInfo_sem_id); }
 
+void FinalizeTrimCreateDescriptorUpdateTemplate(vktrace_trace_packet_header* pHeader, VkDevice device,
+                                                const VkDescriptorUpdateTemplateCreateInfo* pCreateInfo,
+                                                const VkAllocationCallbacks* pAllocator,
+                                                VkDescriptorUpdateTemplate* pDescriptorUpdateTemplate) {
+    vktrace_finalize_trace_packet(pHeader);
+    trim::ObjectInfo& info = trim::add_DescriptorUpdateTemplate_object(*pDescriptorUpdateTemplate);
+    info.belongsToDevice = device;
+    info.ObjectInfo.DescriptorUpdateTemplate.pCreatePacket = trim::copy_packet(pHeader);
+    info.ObjectInfo.DescriptorUpdateTemplate.flags = pCreateInfo->flags;
+    info.ObjectInfo.DescriptorUpdateTemplate.descriptorUpdateEntryCount = pCreateInfo->descriptorUpdateEntryCount;
+    if ((pCreateInfo->descriptorUpdateEntryCount != 0) && (pCreateInfo->pDescriptorUpdateEntries != nullptr)) {
+        info.ObjectInfo.DescriptorUpdateTemplate.pDescriptorUpdateEntries =
+            VKTRACE_NEW_ARRAY(VkDescriptorUpdateTemplateEntry, pCreateInfo->descriptorUpdateEntryCount);
+        assert(info.ObjectInfo.DescriptorUpdateTemplate.pDescriptorUpdateEntries != nullptr);
+        memcpy(reinterpret_cast<void*>(
+                   const_cast<VkDescriptorUpdateTemplateEntry*>(info.ObjectInfo.DescriptorUpdateTemplate.pDescriptorUpdateEntries)),
+               reinterpret_cast<const void*>(const_cast<VkDescriptorUpdateTemplateEntry*>(pCreateInfo->pDescriptorUpdateEntries)),
+               pCreateInfo->descriptorUpdateEntryCount * sizeof(VkDescriptorUpdateTemplateEntry));
+    }
+    info.ObjectInfo.DescriptorUpdateTemplate.templateType = pCreateInfo->templateType;
+    info.ObjectInfo.DescriptorUpdateTemplate.descriptorSetLayout = pCreateInfo->descriptorSetLayout;
+    info.ObjectInfo.DescriptorUpdateTemplate.pipelineBindPoint = pCreateInfo->pipelineBindPoint;
+    info.ObjectInfo.DescriptorUpdateTemplate.pipelineLayout = pCreateInfo->pipelineLayout;
+    info.ObjectInfo.DescriptorUpdateTemplate.set = pCreateInfo->set;
+
+    if (pAllocator != NULL) {
+        info.ObjectInfo.DescriptorUpdateTemplate.pAllocator = pAllocator;
+        trim::add_Allocator(pAllocator);
+    }
+
+    if (g_trimIsInTrim) {
+        trim::write_packet(pHeader);
+    } else {
+        vktrace_delete_trace_packet(&pHeader);
+    }
+}
+
+VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkCreateDescriptorUpdateTemplate(
+    VkDevice device, const VkDescriptorUpdateTemplateCreateInfo* pCreateInfo, const VkAllocationCallbacks* pAllocator,
+    VkDescriptorUpdateTemplate* pDescriptorUpdateTemplate) {
+    trim::TraceLock<std::mutex> lock(g_mutex_trace);
+    VkResult result;
+    vktrace_trace_packet_header* pHeader;
+    packet_vkCreateDescriptorUpdateTemplate* pPacket = NULL;
+
+    CREATE_TRACE_PACKET(
+        vkCreateDescriptorUpdateTemplate,
+        get_struct_chain_size(reinterpret_cast<void*>(const_cast<VkDescriptorUpdateTemplateCreateInfo*>(pCreateInfo))) +
+            sizeof(VkAllocationCallbacks) + sizeof(VkDescriptorUpdateTemplate) +
+            sizeof(VkDescriptorUpdateTemplateEntry) * pCreateInfo->descriptorUpdateEntryCount);
+    result = mdd(device)->devTable.CreateDescriptorUpdateTemplate(device, pCreateInfo, pAllocator, pDescriptorUpdateTemplate);
+    vktrace_set_packet_entrypoint_end_time(pHeader);
+
+    lockDescriptorUpdateTemplateCreateInfo();
+    descriptorUpdateTemplateCreateInfo[*pDescriptorUpdateTemplate] =
+        reinterpret_cast<VkDescriptorUpdateTemplateCreateInfo*>(malloc(sizeof(VkDescriptorUpdateTemplateCreateInfo)));
+    memcpy(descriptorUpdateTemplateCreateInfo[*pDescriptorUpdateTemplate], pCreateInfo,
+           sizeof(VkDescriptorUpdateTemplateCreateInfo));
+    descriptorUpdateTemplateCreateInfo[*pDescriptorUpdateTemplate]->pDescriptorUpdateEntries =
+        reinterpret_cast<VkDescriptorUpdateTemplateEntry*>(
+            malloc(sizeof(VkDescriptorUpdateTemplateEntry) * pCreateInfo->descriptorUpdateEntryCount));
+    memcpy(reinterpret_cast<void*>(const_cast<VkDescriptorUpdateTemplateEntry*>(
+               descriptorUpdateTemplateCreateInfo[*pDescriptorUpdateTemplate]->pDescriptorUpdateEntries)),
+           pCreateInfo->pDescriptorUpdateEntries,
+           sizeof(VkDescriptorUpdateTemplateEntry) * pCreateInfo->descriptorUpdateEntryCount);
+    unlockDescriptorUpdateTemplateCreateInfo();
+
+    pPacket = interpret_body_as_vkCreateDescriptorUpdateTemplate(pHeader);
+    pPacket->device = device;
+
+    vktrace_add_buffer_to_trace_packet(
+        pHeader, reinterpret_cast<void**>(const_cast<VkDescriptorUpdateTemplateCreateInfo**>(&(pPacket->pCreateInfo))),
+        sizeof(VkDescriptorUpdateTemplateCreateInfo), pCreateInfo);
+
+    if (nullptr != pCreateInfo) {
+        vktrace_add_pnext_structs_to_trace_packet(
+            pHeader, reinterpret_cast<void*>(const_cast<VkDescriptorUpdateTemplateCreateInfo*>(pPacket->pCreateInfo)), pCreateInfo);
+    }
+
+    vktrace_add_buffer_to_trace_packet(
+        pHeader,
+        reinterpret_cast<void**>(const_cast<VkDescriptorUpdateTemplateEntry**>(&(pPacket->pCreateInfo->pDescriptorUpdateEntries))),
+        sizeof(VkDescriptorUpdateTemplateEntry) * pCreateInfo->descriptorUpdateEntryCount, pCreateInfo->pDescriptorUpdateEntries);
+    vktrace_add_buffer_to_trace_packet(pHeader,
+                                       reinterpret_cast<void**>(const_cast<VkAllocationCallbacks**>(&(pPacket->pAllocator))),
+                                       sizeof(VkAllocationCallbacks), NULL);
+    vktrace_add_buffer_to_trace_packet(
+        pHeader, reinterpret_cast<void**>(const_cast<VkDescriptorUpdateTemplate**>(&(pPacket->pDescriptorUpdateTemplate))),
+        sizeof(VkDescriptorUpdateTemplate), pDescriptorUpdateTemplate);
+    pPacket->result = result;
+    vktrace_finalize_buffer_address(
+        pHeader,
+        reinterpret_cast<void**>(const_cast<VkDescriptorUpdateTemplateEntry**>(&(pPacket->pCreateInfo->pDescriptorUpdateEntries))));
+    vktrace_finalize_buffer_address(
+        pHeader, reinterpret_cast<void**>(const_cast<VkDescriptorUpdateTemplateCreateInfo**>(&(pPacket->pCreateInfo))));
+    vktrace_finalize_buffer_address(pHeader, reinterpret_cast<void**>(const_cast<VkAllocationCallbacks**>(&(pPacket->pAllocator))));
+    vktrace_finalize_buffer_address(
+        pHeader, reinterpret_cast<void**>(const_cast<VkDescriptorUpdateTemplate**>(&(pPacket->pDescriptorUpdateTemplate))));
+    if (!g_trimEnabled) {
+        FINISH_TRACE_PACKET();
+    } else {
+        FinalizeTrimCreateDescriptorUpdateTemplate(pHeader, device, pCreateInfo, pAllocator, pDescriptorUpdateTemplate);
+    }
+
+    return result;
+}
+
 VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkCreateDescriptorUpdateTemplateKHR(
     VkDevice device, const VkDescriptorUpdateTemplateCreateInfoKHR* pCreateInfo, const VkAllocationCallbacks* pAllocator,
     VkDescriptorUpdateTemplateKHR* pDescriptorUpdateTemplate) {
@@ -4122,22 +4368,24 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkCreateDescriptorUpdate
     vktrace_trace_packet_header* pHeader;
     packet_vkCreateDescriptorUpdateTemplateKHR* pPacket = NULL;
 
-    CREATE_TRACE_PACKET(vkCreateDescriptorUpdateTemplate,
-                        get_struct_chain_size((void*)pCreateInfo) + sizeof(VkAllocationCallbacks) +
-                            sizeof(VkDescriptorUpdateTemplateKHR) +
-                            sizeof(VkDescriptorUpdateTemplateEntryKHR) * pCreateInfo->descriptorUpdateEntryCount);
+    CREATE_TRACE_PACKET(
+        vkCreateDescriptorUpdateTemplateKHR,
+        get_struct_chain_size(reinterpret_cast<void*>(const_cast<VkDescriptorUpdateTemplateCreateInfoKHR*>(pCreateInfo))) +
+            sizeof(VkAllocationCallbacks) + sizeof(VkDescriptorUpdateTemplateKHR) +
+            sizeof(VkDescriptorUpdateTemplateEntryKHR) * pCreateInfo->descriptorUpdateEntryCount);
     result = mdd(device)->devTable.CreateDescriptorUpdateTemplateKHR(device, pCreateInfo, pAllocator, pDescriptorUpdateTemplate);
     vktrace_set_packet_entrypoint_end_time(pHeader);
 
     lockDescriptorUpdateTemplateCreateInfo();
     descriptorUpdateTemplateCreateInfo[*pDescriptorUpdateTemplate] =
-        (VkDescriptorUpdateTemplateCreateInfoKHR*)malloc(sizeof(VkDescriptorUpdateTemplateCreateInfoKHR));
+        reinterpret_cast<VkDescriptorUpdateTemplateCreateInfoKHR*>(malloc(sizeof(VkDescriptorUpdateTemplateCreateInfoKHR)));
     memcpy(descriptorUpdateTemplateCreateInfo[*pDescriptorUpdateTemplate], pCreateInfo,
            sizeof(VkDescriptorUpdateTemplateCreateInfoKHR));
     descriptorUpdateTemplateCreateInfo[*pDescriptorUpdateTemplate]->pDescriptorUpdateEntries =
-        (VkDescriptorUpdateTemplateEntryKHR*)malloc(sizeof(VkDescriptorUpdateTemplateEntryKHR) *
-                                                    pCreateInfo->descriptorUpdateEntryCount);
-    memcpy((void*)descriptorUpdateTemplateCreateInfo[*pDescriptorUpdateTemplate]->pDescriptorUpdateEntries,
+        reinterpret_cast<VkDescriptorUpdateTemplateEntryKHR*>(
+            malloc(sizeof(VkDescriptorUpdateTemplateEntryKHR) * pCreateInfo->descriptorUpdateEntryCount));
+    memcpy(reinterpret_cast<void*>(const_cast<VkDescriptorUpdateTemplateEntry*>(
+               descriptorUpdateTemplateCreateInfo[*pDescriptorUpdateTemplate]->pDescriptorUpdateEntries)),
            pCreateInfo->pDescriptorUpdateEntries,
            sizeof(VkDescriptorUpdateTemplateEntryKHR) * pCreateInfo->descriptorUpdateEntryCount);
     unlockDescriptorUpdateTemplateCreateInfo();
@@ -4145,55 +4393,38 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkCreateDescriptorUpdate
     pPacket = interpret_body_as_vkCreateDescriptorUpdateTemplateKHR(pHeader);
     pPacket->device = device;
 
-    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pCreateInfo), sizeof(VkDescriptorUpdateTemplateCreateInfoKHR),
-                                       pCreateInfo);
-    if (pCreateInfo) vktrace_add_pnext_structs_to_trace_packet(pHeader, (void*)pPacket->pCreateInfo, pCreateInfo);
-    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pCreateInfo->pDescriptorUpdateEntries),
-                                       sizeof(VkDescriptorUpdateTemplateEntryKHR) * pCreateInfo->descriptorUpdateEntryCount,
-                                       pCreateInfo->pDescriptorUpdateEntries);
-    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pAllocator), sizeof(VkAllocationCallbacks), NULL);
-    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pDescriptorUpdateTemplate),
-                                       sizeof(VkDescriptorUpdateTemplateKHR), pDescriptorUpdateTemplate);
+    vktrace_add_buffer_to_trace_packet(
+        pHeader, reinterpret_cast<void**>(const_cast<VkDescriptorUpdateTemplateCreateInfo**>(&(pPacket->pCreateInfo))),
+        sizeof(VkDescriptorUpdateTemplateCreateInfoKHR), pCreateInfo);
+    if (nullptr != pCreateInfo) {
+        vktrace_add_pnext_structs_to_trace_packet(
+            pHeader, reinterpret_cast<void*>(const_cast<VkDescriptorUpdateTemplateCreateInfo*>(pPacket->pCreateInfo)), pCreateInfo);
+    }
+
+    vktrace_add_buffer_to_trace_packet(
+        pHeader,
+        reinterpret_cast<void**>(const_cast<VkDescriptorUpdateTemplateEntry**>(&(pPacket->pCreateInfo->pDescriptorUpdateEntries))),
+        sizeof(VkDescriptorUpdateTemplateEntryKHR) * pCreateInfo->descriptorUpdateEntryCount,
+        pCreateInfo->pDescriptorUpdateEntries);
+    vktrace_add_buffer_to_trace_packet(pHeader,
+                                       reinterpret_cast<void**>(const_cast<VkAllocationCallbacks**>(&(pPacket->pAllocator))),
+                                       sizeof(VkAllocationCallbacks), NULL);
+    vktrace_add_buffer_to_trace_packet(
+        pHeader, reinterpret_cast<void**>(const_cast<VkDescriptorUpdateTemplate**>(&(pPacket->pDescriptorUpdateTemplate))),
+        sizeof(VkDescriptorUpdateTemplateKHR), pDescriptorUpdateTemplate);
     pPacket->result = result;
-    vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pCreateInfo->pDescriptorUpdateEntries));
-    vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pCreateInfo));
-    vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pAllocator));
-    vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pDescriptorUpdateTemplate));
+    vktrace_finalize_buffer_address(
+        pHeader,
+        reinterpret_cast<void**>(const_cast<VkDescriptorUpdateTemplateEntry**>(&(pPacket->pCreateInfo->pDescriptorUpdateEntries))));
+    vktrace_finalize_buffer_address(
+        pHeader, reinterpret_cast<void**>(const_cast<VkDescriptorUpdateTemplateCreateInfo**>(&(pPacket->pCreateInfo))));
+    vktrace_finalize_buffer_address(pHeader, reinterpret_cast<void**>(const_cast<VkAllocationCallbacks**>(&(pPacket->pAllocator))));
+    vktrace_finalize_buffer_address(
+        pHeader, reinterpret_cast<void**>(const_cast<VkDescriptorUpdateTemplate**>(&(pPacket->pDescriptorUpdateTemplate))));
     if (!g_trimEnabled) {
         FINISH_TRACE_PACKET();
     } else {
-        vktrace_finalize_trace_packet(pHeader);
-        trim::ObjectInfo& info = trim::add_DescriptorUpdateTemplate_object(*pDescriptorUpdateTemplate);
-        info.belongsToDevice = device;
-        info.ObjectInfo.DescriptorUpdateTemplate.pCreatePacket = trim::copy_packet(pHeader);
-        info.ObjectInfo.DescriptorUpdateTemplate.flags = pCreateInfo->flags;
-        info.ObjectInfo.DescriptorUpdateTemplate.descriptorUpdateEntryCount = pCreateInfo->descriptorUpdateEntryCount;
-        if ((pCreateInfo->descriptorUpdateEntryCount != 0) && (pCreateInfo->pDescriptorUpdateEntries != nullptr)) {
-            info.ObjectInfo.DescriptorUpdateTemplate.pDescriptorUpdateEntries =
-                VKTRACE_NEW_ARRAY(VkDescriptorUpdateTemplateEntry, pCreateInfo->descriptorUpdateEntryCount);
-            assert(info.ObjectInfo.DescriptorUpdateTemplate.pDescriptorUpdateEntries != nullptr);
-            memcpy(
-                reinterpret_cast<void*>(const_cast<VkDescriptorUpdateTemplateEntry*>(
-                    info.ObjectInfo.DescriptorUpdateTemplate.pDescriptorUpdateEntries)),
-                reinterpret_cast<const void*>(const_cast<VkDescriptorUpdateTemplateEntry*>(pCreateInfo->pDescriptorUpdateEntries)),
-                pCreateInfo->descriptorUpdateEntryCount * sizeof(VkDescriptorUpdateTemplateEntry));
-        }
-        info.ObjectInfo.DescriptorUpdateTemplate.templateType = pCreateInfo->templateType;
-        info.ObjectInfo.DescriptorUpdateTemplate.descriptorSetLayout = pCreateInfo->descriptorSetLayout;
-        info.ObjectInfo.DescriptorUpdateTemplate.pipelineBindPoint = pCreateInfo->pipelineBindPoint;
-        info.ObjectInfo.DescriptorUpdateTemplate.pipelineLayout = pCreateInfo->pipelineLayout;
-        info.ObjectInfo.DescriptorUpdateTemplate.set = pCreateInfo->set;
-
-        if (pAllocator != NULL) {
-            info.ObjectInfo.DescriptorUpdateTemplate.pAllocator = pAllocator;
-            trim::add_Allocator(pAllocator);
-        }
-
-        if (g_trimIsInTrim) {
-            trim::write_packet(pHeader);
-        } else {
-            vktrace_delete_trace_packet(&pHeader);
-        }
+        FinalizeTrimCreateDescriptorUpdateTemplate(pHeader, device, pCreateInfo, pAllocator, pDescriptorUpdateTemplate);
     }
 
     return result;
@@ -4271,7 +4502,7 @@ VKTRACER_EXPORT VKAPI_ATTR void VKAPI_CALL __HOOKED_vkDestroyDescriptorUpdateTem
     unlockDescriptorUpdateTemplateCreateInfo();
 }
 
-static size_t getDescriptorSetDataSize(VkDescriptorUpdateTemplateKHR descriptorUpdateTemplate) {
+static size_t getDescriptorSetDataSize(VkDescriptorUpdateTemplate descriptorUpdateTemplate) {
     size_t dataSize = 0;
     lockDescriptorUpdateTemplateCreateInfo();
     for (uint32_t i = 0; i < descriptorUpdateTemplateCreateInfo[descriptorUpdateTemplate]->descriptorUpdateEntryCount; i++) {
@@ -4316,44 +4547,19 @@ static size_t getDescriptorSetDataSize(VkDescriptorUpdateTemplateKHR descriptorU
     return dataSize;
 }
 
-VKTRACER_EXPORT VKAPI_ATTR void VKAPI_CALL __HOOKED_vkUpdateDescriptorSetWithTemplate(
-    VkDevice device, VkDescriptorSet descriptorSet, VkDescriptorUpdateTemplate descriptorUpdateTemplate, const void* pData) {
-    __HOOKED_vkUpdateDescriptorSetWithTemplateKHR(device, descriptorSet, descriptorUpdateTemplate, pData);
-}
+void FinalizeTrimUpdateDescriptorSetWithTemplate(vktrace_trace_packet_header* pHeader, VkDescriptorSet descriptorSet,
+                                                 VkDescriptorUpdateTemplate descriptorUpdateTemplate, const void* pData) {
+    vktrace_finalize_trace_packet(pHeader);
+    lockDescriptorUpdateTemplateCreateInfo();
 
-VKTRACER_EXPORT VKAPI_ATTR void VKAPI_CALL __HOOKED_vkUpdateDescriptorSetWithTemplateKHR(
-    VkDevice device, VkDescriptorSet descriptorSet, VkDescriptorUpdateTemplateKHR descriptorUpdateTemplate, const void* pData) {
-    trim::TraceLock<std::mutex> lock(g_mutex_trace);
-    vktrace_trace_packet_header* pHeader;
-    packet_vkUpdateDescriptorSetWithTemplateKHR* pPacket = NULL;
-    size_t dataSize;
-
-    // TODO: We're saving all the data, from pData to the end of the last item, including data before offset and skipped data.
-    // This could be optimized to save only the data chunks that are actually needed.
-    dataSize = getDescriptorSetDataSize(descriptorUpdateTemplate);
-
-    CREATE_TRACE_PACKET(vkUpdateDescriptorSetWithTemplateKHR, dataSize);
-    mdd(device)->devTable.UpdateDescriptorSetWithTemplateKHR(device, descriptorSet, descriptorUpdateTemplate, pData);
-    vktrace_set_packet_entrypoint_end_time(pHeader);
-    pPacket = interpret_body_as_vkUpdateDescriptorSetWithTemplateKHR(pHeader);
-    pPacket->device = device;
-    pPacket->descriptorSet = descriptorSet;
-    pPacket->descriptorUpdateTemplate = descriptorUpdateTemplate;
-    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pData), dataSize, pData);
-    vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pData));
-    if (!g_trimEnabled) {
-        FINISH_TRACE_PACKET();
-    } else {
-        vktrace_finalize_trace_packet(pHeader);
-        lockDescriptorUpdateTemplateCreateInfo();
-
-        // Trim keep tracking all descriptorsets from beginning, include all
-        // descriptors in the descriptorset. If any function change any
-        // descriptor of it, the track info of that descriptorset should
-        // also be changed. The following source code update the descriptorset
-        // trackinfo to make sure the track info reflect current descriptorset
-        // state after the function update its descriptors.
-        //
+    // Trim keep tracking all descriptorsets from beginning, include all
+    // descriptors in the descriptorset. If any function change any
+    // descriptor of it, the track info of that descriptorset should
+    // also be changed. The following source code update the descriptorset
+    // trackinfo to make sure the track info reflect current descriptorset
+    // state after the function update its descriptors.
+    //
+    if (VK_NULL_HANDLE != descriptorUpdateTemplate) {
         for (uint32_t i = 0; i < descriptorUpdateTemplateCreateInfo[descriptorUpdateTemplate]->descriptorUpdateEntryCount; i++) {
             const VkDescriptorUpdateTemplateEntry* pDescriptorUpdateEntry =
                 &(descriptorUpdateTemplateCreateInfo[descriptorUpdateTemplate]->pDescriptorUpdateEntries[i]);
@@ -4391,11 +4597,17 @@ VKTRACER_EXPORT VKAPI_ATTR void VKAPI_CALL __HOOKED_vkUpdateDescriptorSetWithTem
             for (trim::DescriptorIterator descriptor_iterator(pInfo, bindingIndex, bindingDescriptorInfoArrayWriteIndex,
                                                               pDescriptorUpdateEntry->descriptorCount);
                  !descriptor_iterator.IsEnd(); descriptor_iterator++, j++) {
+                // update writeDescriptorCount accordingly with the number of binding
+                // the descriptorset has been updated by chekcing the binding index.
+                if (descriptor_iterator.GetCurrentBindingIndex() >= pInfo->ObjectInfo.DescriptorSet.writeDescriptorCount) {
+                    pInfo->ObjectInfo.DescriptorSet.writeDescriptorCount = descriptor_iterator.GetCurrentBindingIndex() + 1;
+                }
+
                 // First get the descriptor data pointer, Doc provide the
                 // following formula to calculate the pointer for every
                 // array element:
                 const char* pDescriptorRawData =
-                    (const char*)pData + pDescriptorUpdateEntry->offset + j * pDescriptorUpdateEntry->stride;
+                    reinterpret_cast<const char*>(pData) + pDescriptorUpdateEntry->offset + j * pDescriptorUpdateEntry->stride;
 
                 // The following code update the descriptorset track info
                 // with the descriptor data.
@@ -4425,13 +4637,68 @@ VKTRACER_EXPORT VKAPI_ATTR void VKAPI_CALL __HOOKED_vkUpdateDescriptorSetWithTem
                 }
             }
         }
-        unlockDescriptorUpdateTemplateCreateInfo();
-        if (g_trimIsInTrim) {
-            trim::mark_DescriptorSet_reference(descriptorSet);
-            trim::write_packet(pHeader);
-        } else {
-            vktrace_delete_trace_packet(&pHeader);
-        }
+    }
+
+    unlockDescriptorUpdateTemplateCreateInfo();
+    if (g_trimIsInTrim) {
+        trim::mark_DescriptorSet_reference(descriptorSet);
+        trim::write_packet(pHeader);
+    } else {
+        vktrace_delete_trace_packet(&pHeader);
+    }
+}
+
+VKTRACER_EXPORT VKAPI_ATTR void VKAPI_CALL __HOOKED_vkUpdateDescriptorSetWithTemplate(
+    VkDevice device, VkDescriptorSet descriptorSet, VkDescriptorUpdateTemplate descriptorUpdateTemplate, const void* pData) {
+    trim::TraceLock<std::mutex> lock(g_mutex_trace);
+    vktrace_trace_packet_header* pHeader;
+    packet_vkUpdateDescriptorSetWithTemplate* pPacket = NULL;
+    size_t dataSize;
+
+    // TODO: We're saving all the data, from pData to the end of the last item, including data before offset and skipped data.
+    // This could be optimized to save only the data chunks that are actually needed.
+    dataSize = getDescriptorSetDataSize(descriptorUpdateTemplate);
+
+    CREATE_TRACE_PACKET(vkUpdateDescriptorSetWithTemplate, dataSize);
+    mdd(device)->devTable.UpdateDescriptorSetWithTemplate(device, descriptorSet, descriptorUpdateTemplate, pData);
+    vktrace_set_packet_entrypoint_end_time(pHeader);
+    pPacket = interpret_body_as_vkUpdateDescriptorSetWithTemplate(pHeader);
+    pPacket->device = device;
+    pPacket->descriptorSet = descriptorSet;
+    pPacket->descriptorUpdateTemplate = descriptorUpdateTemplate;
+    vktrace_add_buffer_to_trace_packet(pHeader, const_cast<void**>(&(pPacket->pData)), dataSize, pData);
+    vktrace_finalize_buffer_address(pHeader, const_cast<void**>(&(pPacket->pData)));
+    if (!g_trimEnabled) {
+        FINISH_TRACE_PACKET();
+    } else {
+        FinalizeTrimUpdateDescriptorSetWithTemplate(pHeader, descriptorSet, descriptorUpdateTemplate, pData);
+    }
+}
+
+VKTRACER_EXPORT VKAPI_ATTR void VKAPI_CALL __HOOKED_vkUpdateDescriptorSetWithTemplateKHR(
+    VkDevice device, VkDescriptorSet descriptorSet, VkDescriptorUpdateTemplateKHR descriptorUpdateTemplate, const void* pData) {
+    trim::TraceLock<std::mutex> lock(g_mutex_trace);
+    vktrace_trace_packet_header* pHeader;
+    packet_vkUpdateDescriptorSetWithTemplateKHR* pPacket = NULL;
+    size_t dataSize;
+
+    // TODO: We're saving all the data, from pData to the end of the last item, including data before offset and skipped data.
+    // This could be optimized to save only the data chunks that are actually needed.
+    dataSize = getDescriptorSetDataSize(descriptorUpdateTemplate);
+
+    CREATE_TRACE_PACKET(vkUpdateDescriptorSetWithTemplateKHR, dataSize);
+    mdd(device)->devTable.UpdateDescriptorSetWithTemplateKHR(device, descriptorSet, descriptorUpdateTemplate, pData);
+    vktrace_set_packet_entrypoint_end_time(pHeader);
+    pPacket = interpret_body_as_vkUpdateDescriptorSetWithTemplateKHR(pHeader);
+    pPacket->device = device;
+    pPacket->descriptorSet = descriptorSet;
+    pPacket->descriptorUpdateTemplate = descriptorUpdateTemplate;
+    vktrace_add_buffer_to_trace_packet(pHeader, const_cast<void**>(&(pPacket->pData)), dataSize, pData);
+    vktrace_finalize_buffer_address(pHeader, const_cast<void**>(&(pPacket->pData)));
+    if (!g_trimEnabled) {
+        FINISH_TRACE_PACKET();
+    } else {
+        FinalizeTrimUpdateDescriptorSetWithTemplate(pHeader, descriptorSet, descriptorUpdateTemplate, pData);
     }
 }
 
@@ -4591,7 +4858,9 @@ VKTRACER_EXPORT VKAPI_ATTR void VKAPI_CALL __HOOKED_vkCmdCopyImageToBuffer(VkCom
     mdd(commandBuffer)->devTable.CmdCopyImageToBuffer(commandBuffer, srcImage, srcImageLayout, dstBuffer, regionCount, pRegions);
     vktrace_set_packet_entrypoint_end_time(pHeader);
 #if defined(USE_PAGEGUARD_SPEEDUP) && !defined(PAGEGUARD_ADD_PAGEGUARD_ON_REAL_MAPPED_MEMORY)
-    g_cmdBufferToBuffers[commandBuffer].push_back(dstBuffer);
+    if (!UseMappedExternalHostMemoryExtension()) {
+        g_cmdBufferToBuffers[commandBuffer].push_back(dstBuffer);
+    }
 #endif
     pPacket = interpret_body_as_vkCmdCopyImageToBuffer(pHeader);
     pPacket->commandBuffer = commandBuffer;
@@ -4623,92 +4892,11 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkWaitForFences(VkDevice
     VkResult result;
     vktrace_trace_packet_header* pHeader;
     packet_vkWaitForFences* pPacket = NULL;
-#if defined(USE_PAGEGUARD_SPEEDUP) && !defined(PAGEGUARD_ADD_PAGEGUARD_ON_REAL_MAPPED_MEMORY)
-    pageguardEnter();
-#endif
     CREATE_TRACE_PACKET(vkWaitForFences, fenceCount * sizeof(VkFence));
     result = mdd(device)->devTable.WaitForFences(device, fenceCount, pFences, waitAll, timeout);
     vktrace_set_packet_entrypoint_end_time(pHeader);
-#if defined(USE_PAGEGUARD_SPEEDUP) && !defined(PAGEGUARD_ADD_PAGEGUARD_ON_REAL_MAPPED_MEMORY)
-    // Sync real mapped memory back to the copy of that memory after vkCmdCopyImageToBuffer being executed.
-    // * The real mapped memory is bound with the destination buffer in vkCmdCopyImageToBuffer.
-    // * Do the sync when a fence from vkQueueSubmit is signaled and the command buffer submitted contains vkCmdCopyImageToBuffer
-    // command.
-    //
-    // It workarounds a known issue of pageguard on Linux and Android:
-    //      The default configuration of vktrace is not able to know there's a read to a mapped memory on Linux and Android
-    //      platforms. Which means it is not going to sync data back from the real mapped memory mapped via vkMapMemory to the copy
-    //      of that memory for Vulkan application to read.
-    //      This is the default behavior when PAGEGUARD_ADD_PAGEGUARD_ON_REAL_MAPPED_MEMORY is disabled in
-    //      vktrace/vktrace_layer/vktrace_lib_pageguardcapture.h.
-    //      And it will cause problem when tracing an app which needs to read back rendering results for environment probes.
-    //
-    // TODO:
-    // Find a way to fully resolve the memory read not detectable issue in pageguard on Linux and Android.
-    // Because current solution won't solve memory read problem when a linear image's memory is mapped to CPU memory and application
-    // wants to read from that CPU memory. It only works for applications which always read from buffers instead of images.
-    for (uint32_t i = 0; i < fenceCount; ++i) {
-        if (g_fenceToCommandBuffers.find(pFences[i]) != g_fenceToCommandBuffers.end()) {
-            // Iterate command buffers related to a fence (from the mapping created in __HOOKED_vkQueueSubmit)
-            for (auto iterPrim = g_fenceToCommandBuffers[pFences[i]].begin(); iterPrim != g_fenceToCommandBuffers[pFences[i]].end();
-                 ++iterPrim) {
-                VkCommandBuffer primaryCmdBuffer = *iterPrim;
-                if (g_commandBufferToCommandBuffers.find(primaryCmdBuffer) != g_commandBufferToCommandBuffers.end()) {
-                    // Iterate secondary command buffers and their primary command buffer (from the mapping created in
-                    // __HOOKED_vkCmdExecuteCommands)
-                    for (auto iter = g_commandBufferToCommandBuffers[primaryCmdBuffer].begin();
-                         iter != g_commandBufferToCommandBuffers[primaryCmdBuffer].end(); ++iter) {
-                        VkCommandBuffer cmdBuffer = *iter;
-                        if (g_cmdBufferToBuffers.find(cmdBuffer) != g_cmdBufferToBuffers.end()) {
-                            // Iterate buffers (from the mapping created in __HOOKED_vkCmdCopyImageToBuffer)
-                            for (auto iterBuffer = g_cmdBufferToBuffers[cmdBuffer].begin();
-                                 iterBuffer != g_cmdBufferToBuffers[cmdBuffer].end(); ++iterBuffer) {
-                                VkBuffer buffer = *iterBuffer;
-                                if (g_bufferToDeviceMemory.find(buffer) != g_bufferToDeviceMemory.end()) {
-                                    // Sync real mapped memory (recorded in __HOOKED_vkBindBufferMemory) for the dest buffer
-                                    // (recorded in __HOOKED_vkCmdCopyImageToBuffer) back to the copy of that memory
-                                    VkDevice device = g_bufferToDeviceMemory[buffer].device;
-                                    VkDeviceMemory memory = g_bufferToDeviceMemory[buffer].memory;
-                                    getPageGuardControlInstance().SyncRealMappedMemoryToMemoryCopyHandle(device, memory);
-                                }
-                            }
-                            // Assuming the command buffer which has vkCmdCopyImageToBuffer will not be re-used.
-                            if (g_cmdBufferToBuffers.find(cmdBuffer) != g_cmdBufferToBuffers.end()) {
-                                g_cmdBufferToBuffers[cmdBuffer].clear();
-                            }
-                            g_cmdBufferToBuffers.erase(cmdBuffer);
-                        }
-                    }
-                    g_commandBufferToCommandBuffers[primaryCmdBuffer].clear();
-                    g_commandBufferToCommandBuffers.erase(primaryCmdBuffer);
-                } else {
-                    // There's no secondary command buffer so no need to iterate.
-                    if (g_cmdBufferToBuffers.find(primaryCmdBuffer) != g_cmdBufferToBuffers.end()) {
-                        // Iterate buffers (from the mapping created in __HOOKED_vkCmdCopyImageToBuffer)
-                        for (auto iterBuffer = g_cmdBufferToBuffers[primaryCmdBuffer].begin();
-                             iterBuffer != g_cmdBufferToBuffers[primaryCmdBuffer].end(); ++iterBuffer) {
-                            VkBuffer buffer = *iterBuffer;
-                            if (g_bufferToDeviceMemory.find(buffer) != g_bufferToDeviceMemory.end()) {
-                                // Sync real mapped memory (recorded in __HOOKED_vkBindBufferMemory) for the dest buffer (recorded
-                                // in __HOOKED_vkCmdCopyImageToBuffer) back to the copy of that memory
-                                VkDevice device = g_bufferToDeviceMemory[buffer].device;
-                                VkDeviceMemory memory = g_bufferToDeviceMemory[buffer].memory;
-                                getPageGuardControlInstance().SyncRealMappedMemoryToMemoryCopyHandle(device, memory);
-                            }
-                        }
-                        // Assuming the command buffer which has vkCmdCopyImageToBuffer will not be re-used.
-                        if (g_cmdBufferToBuffers.find(primaryCmdBuffer) != g_cmdBufferToBuffers.end()) {
-                            g_cmdBufferToBuffers[primaryCmdBuffer].clear();
-                        }
-                        g_cmdBufferToBuffers.erase(primaryCmdBuffer);
-                    }
-                }
-            }
-            g_fenceToCommandBuffers[pFences[i]].clear();
-            g_fenceToCommandBuffers.erase(pFences[i]);
-        }
+    if (!UseMappedExternalHostMemoryExtension()) {
     }
-#endif
     pPacket = interpret_body_as_vkWaitForFences(pHeader);
     pPacket->device = device;
     pPacket->fenceCount = fenceCount;
@@ -4727,18 +4915,13 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkWaitForFences(VkDevice
             vktrace_delete_trace_packet(&pHeader);
         }
     }
-#if defined(USE_PAGEGUARD_SPEEDUP) && !defined(PAGEGUARD_ADD_PAGEGUARD_ON_REAL_MAPPED_MEMORY)
-    pageguardExit();
-#endif
     return result;
 }
 
-VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkCreateObjectTableNVX(
-     VkDevice                                    device,
-     const VkObjectTableCreateInfoNVX*           pCreateInfo,
-     const VkAllocationCallbacks*                pAllocator,
-     VkObjectTableNVX*                           pObjectTable)
-{
+VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkCreateObjectTableNVX(VkDevice device,
+                                                                               const VkObjectTableCreateInfoNVX* pCreateInfo,
+                                                                               const VkAllocationCallbacks* pAllocator,
+                                                                               VkObjectTableNVX* pObjectTable) {
     trim::TraceLock<std::mutex> lock(g_mutex_trace);
     VkResult result;
     vktrace_trace_packet_header* pHeader;
@@ -4791,10 +4974,8 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkCreateObjectTableNVX(
     return result;
 }
 
-VKTRACER_EXPORT VKAPI_ATTR void VKAPI_CALL __HOOKED_vkCmdProcessCommandsNVX(
-    VkCommandBuffer commandBuffer,
-    const VkCmdProcessCommandsInfoNVX* pProcessCommandsInfo)
-{
+VKTRACER_EXPORT VKAPI_ATTR void VKAPI_CALL
+__HOOKED_vkCmdProcessCommandsNVX(VkCommandBuffer commandBuffer, const VkCmdProcessCommandsInfoNVX* pProcessCommandsInfo) {
     trim::TraceLock<std::mutex> lock(g_mutex_trace);
     vktrace_trace_packet_header* pHeader;
     packet_vkCmdProcessCommandsNVX* pPacket;
@@ -4836,11 +5017,8 @@ VKTRACER_EXPORT VKAPI_ATTR void VKAPI_CALL __HOOKED_vkCmdProcessCommandsNVX(
 }
 
 VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkCreateIndirectCommandsLayoutNVX(
-    VkDevice device,
-    const VkIndirectCommandsLayoutCreateInfoNVX* pCreateInfo,
-    const VkAllocationCallbacks* pAllocator,
-    VkIndirectCommandsLayoutNVX* pIndirectCommandsLayout)
-{
+    VkDevice device, const VkIndirectCommandsLayoutCreateInfoNVX* pCreateInfo, const VkAllocationCallbacks* pAllocator,
+    VkIndirectCommandsLayoutNVX* pIndirectCommandsLayout) {
     trim::TraceLock<std::mutex> lock(g_mutex_trace);
     VkResult result;
     vktrace_trace_packet_header* pHeader;
@@ -4967,7 +5145,6 @@ VKTRACER_EXPORT VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vktraceGetDeviceProcAdd
 
 /* GDPA with no trace packet creation */
 VKTRACER_EXPORT VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL __HOOKED_vkGetDeviceProcAddr(VkDevice device, const char* funcName) {
-    trim::TraceLock<std::mutex> lock(g_mutex_trace);
     if (!strcmp("vkGetDeviceProcAddr", funcName)) {
         if (gMessageStream != NULL) {
             return (PFN_vkVoidFunction)vktraceGetDeviceProcAddr;
@@ -5188,5 +5365,6 @@ VK_LAYER_EXPORT VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL VK_LAYER_LUNARG_vktrace
 
 VK_LAYER_EXPORT VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL VK_LAYER_LUNARG_vktraceGetDeviceProcAddr(VkDevice device,
                                                                                                   const char* funcName) {
+    trim::TraceLock<std::mutex> lock(g_mutex_trace);
     return __HOOKED_vkGetDeviceProcAddr(device, funcName);
 }
