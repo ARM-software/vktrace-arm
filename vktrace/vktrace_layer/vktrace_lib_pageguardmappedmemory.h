@@ -54,6 +54,7 @@ typedef class PageGuardMappedMemory {
     VkDeviceSize StartingAddressOffset;  /// the offset relative to the beginning of a system page where the starting address of the
                                          /// mapped memory (returned to target title) located.
     uint64_t PageGuardAmount;
+    bool NoGuard;
 
    public:
     PageGuardMappedMemory();
@@ -72,6 +73,8 @@ typedef class PageGuardMappedMemory {
     VkDeviceSize &getMappedSize();  /// get the size of range
 
     bool isUseCopyForRealMappedMemory();
+
+    bool noGuard() { return NoGuard; }
 
     /// get head addr and size for a block which is located by a given index
     bool getChangedRangeByIndex(uint64_t index, PBYTE *paddr, VkDeviceSize *pBlockSize);

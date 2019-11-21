@@ -24,29 +24,13 @@
 #ifndef VKREPLAY__MAIN_H
 #define VKREPLAY__MAIN_H
 
-typedef struct vkreplayer_settings {
-    char* pTraceFilePath;
-    unsigned int numLoops;
-    unsigned int loopStartFrame;
-    unsigned int loopEndFrame;
-    bool compatibilityMode;
-    bool exitOnAnyError;
-    const char* screenshotList;
-    const char* screenshotColorFormat;
-    const char* screenshotPrefix;
-    const char* verbosity;
-    const char* displayServer;
-    BOOL preloadTraceFile;
-    BOOL enablePortabilityTable;
-    BOOL vsyncOff;
-    BOOL headless;
-    BOOL selfManageMemAllocation;
-    BOOL forceSingleWindow;
-} vkreplayer_settings;
-
 #include <vector>
+#include "vkreplay_settings.h"
+
 extern std::vector<uintptr_t> portabilityTablePackets;
 extern FileLike* traceFile;
+extern vkreplayer_settings replaySettings;
+
 namespace vktrace_replay {
     bool timerStarted();
     uint64_t getStartFrame();

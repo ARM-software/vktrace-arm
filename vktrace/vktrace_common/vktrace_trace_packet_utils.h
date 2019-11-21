@@ -46,21 +46,34 @@ const char* get_endianess_string(uint64_t endianess);
 uint64_t get_arch();
 uint64_t get_os();
 
-static FILE* vktrace_open_trace_file(vktrace_process_info* pProcInfo) {
+char* find_available_filename(const char* originalFilename, BOOL bForceOverwrite);
+static FILE* vktrace_open_trace_file(vktrace_process_capture_trace_thread_info* trace_thread_info) {
     FILE* tracefp = NULL;
-    assert(pProcInfo != NULL);
+    assert(trace_thread_info != NULL);
 
     // open trace file
-    tracefp = fopen(pProcInfo->traceFilename, "w+b");
+    if (trace_thread_info->pProcessInfo->traceFileCriticalSectionCreated)
+    {
+        char* process_trace_file_name = find_available_filename(trace_thread_info->pProcessInfo->traceFilename, true);
+        assert(process_trace_file_name != NULL);
+        tracefp = fopen(process_trace_file_name, "w+b");
+        vktrace_free(process_trace_file_name);
+    } else {
+        tracefp = fopen(trace_thread_info->pProcessInfo->traceFilename, "w+b");
+    }
+
     if (tracefp == NULL) {
-        vktrace_LogError("Cannot open trace file for writing %s.", pProcInfo->traceFilename);
+        vktrace_LogError("Cannot open trace file for writing %s.", trace_thread_info->pProcessInfo->traceFilename);
         return tracefp;
     } else {
-        vktrace_LogDebug("Creating trace file: '%s'", pProcInfo->traceFilename);
+        vktrace_LogDebug("Creating trace file: '%s'", trace_thread_info->pProcessInfo->traceFilename);
     }
 
     // create critical section
-    vktrace_create_critical_section(&pProcInfo->traceFileCriticalSection);
+    if (!trace_thread_info->pProcessInfo->traceFileCriticalSectionCreated) {
+        vktrace_create_critical_section(&trace_thread_info->pProcessInfo->traceFileCriticalSection);
+        trace_thread_info->pProcessInfo->traceFileCriticalSectionCreated = TRUE;
+    }
 
     return tracefp;
 };
@@ -135,7 +148,7 @@ VkDeviceGroupDeviceCreateInfo* interpret_VkDeviceGroupDeviceCreateInfoKHX(vktrac
                                                                           intptr_t ptr_variable);
 // converts the Vulkan struct pnext chain that is currently byte offsets into pointers
 void vkreplay_interpret_pnext_pointers(vktrace_trace_packet_header* pHeader, void* struct_ptr);
-
+void check_devicefeature(VkSamplerCreateInfo* createInfo);
 //=============================================================================
 // trace packet message
 // Interpretting a trace_packet_message should be done only when:

@@ -22,6 +22,7 @@
 #pragma once
 
 #include "vktrace_common.h"
+#include <stdbool.h>
 
 typedef enum VKTRACE_SETTING_TYPE {
     VKTRACE_SETTING_STRING,
@@ -58,6 +59,29 @@ typedef struct vktrace_SettingGroup {
     unsigned int numSettings;
     vktrace_SettingInfo* pSettings;
 } vktrace_SettingGroup;
+
+typedef struct vkreplayer_settings {
+    char* pTraceFilePath;
+    unsigned int numLoops;
+    unsigned int loopStartFrame;
+    unsigned int loopEndFrame;
+    bool compatibilityMode;
+    bool exitOnAnyError;
+    const char* screenshotList;
+    const char* screenshotColorFormat;
+    const char* screenshotPrefix;
+    const char* verbosity;
+    const char* displayServer;
+    BOOL preloadTraceFile;
+    BOOL enablePortabilityTable;
+    BOOL vsyncOff;
+    BOOL headless;
+    BOOL selfManageMemAllocation;
+    BOOL forceSingleWindow;
+    BOOL forceDisableAF;
+    BOOL forceEXTASTCDecodeMode;
+    unsigned int memoryPercentage;
+} vkreplayer_settings;
 
 int vktrace_SettingGroup_init(vktrace_SettingGroup* pSettingGroup, FILE* pSettingsFile, int argc, char* argv[],
                               const char** ppOut_remaining_args);

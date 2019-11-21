@@ -63,6 +63,17 @@ void SafeCloseHandle(HANDLE& _handle) {
 static int rval;
 #endif
 // ------------------------------------------------------------------------------------------------
+bool GetServerRequestsTerminationFlag(vktrace_process_info* pProcInfo) {
+    bool get_server_requests_termination_flag = true;
+    for (int i = 0; i < pProcInfo->currentCaptureThreadsCount; i++) {
+        if (pProcInfo->pCaptureThreads[i].serverRequestsTermination == false) {
+            get_server_requests_termination_flag = false;
+            break;
+        }
+    }
+    return get_server_requests_termination_flag;
+}
+// ------------------------------------------------------------------------------------------------
 VKTRACE_THREAD_ROUTINE_RETURN_TYPE Process_RunWatchdogThread(LPVOID _procInfoPtr) {
     vktrace_process_info* pProcInfo = (vktrace_process_info*)_procInfoPtr;
 
@@ -71,7 +82,7 @@ VKTRACE_THREAD_ROUTINE_RETURN_TYPE Process_RunWatchdogThread(LPVOID _procInfoPtr
     DWORD processExitCode = 0;
     DWORD waitingResult = WAIT_FAILED;
     while (WAIT_TIMEOUT == (waitingResult = WaitForSingleObject(pProcInfo->hProcess, kWatchDogPollTime))) {
-        if (pProcInfo->serverRequestsTermination) {
+        if (GetServerRequestsTerminationFlag(pProcInfo)) {
             vktrace_LogVerbose("Vktrace has requested exit.");
             return 0;
         }
@@ -122,7 +133,9 @@ VKTRACE_THREAD_ROUTINE_RETURN_TYPE Process_RunWatchdogThread(LPVOID _procInfoPtr
     vktrace_LogVerbose("Child process has terminated.");
     GetExitCodeProcess(pProcInfo->hProcess, &processExitCode);
     PostThreadMessage(pProcInfo->parentThreadId, VKTRACE_WM_COMPLETE, processExitCode, 0);
-    pProcInfo->serverRequestsTermination = TRUE;
+    for (int i = 0; i < pProcInfo->currentCaptureThreadsCount; i++) {
+        pProcInfo->pCaptureThreads[i].serverRequestsTermination = true;
+    }
     return 0;
 
 #elif defined(PLATFORM_LINUX) || defined(PLATFORM_OSX)
@@ -161,6 +174,42 @@ VKTRACE_THREAD_ROUTINE_RETURN_TYPE Process_RunWatchdogThread(LPVOID _procInfoPtr
 bool terminationSignalArrived = false;
 void terminationSignalHandler(int sig) { terminationSignalArrived = true; }
 
+// There are multiple processes be created and their running time have overlap
+// when start some titles such as some steam titles. These processes all call
+// vulkan API and trace layer already got loaded, so we only need to take care
+// how to handle their connection request and receive their packet data.
+//
+// Every process in the case will be a client and the server side need to
+// accept their connections within system timeout. Because both side also
+// need to keep the connection for a relatively long time for trace file
+// recording, so multiple threads are needed to response to multiple clients.
+// Here the function is used to create these additional recording threads.
+bool CreateAdditionalRecordTraceThread(vktrace_process_info* pInfo) {
+    bool create_additional_record_trace_thread = true;
+    assert(pInfo != nullptr);
+    // prepare data for capture threads
+    uint32_t new_thread_trace_file_index = pInfo->currentCaptureThreadsCount;
+    if (new_thread_trace_file_index < pInfo->maxCaptureThreadsNumber) {
+        pInfo->pCaptureThreads[new_thread_trace_file_index].pProcessInfo = pInfo;
+        pInfo->pCaptureThreads[new_thread_trace_file_index].recordingThread = VKTRACE_NULL_THREAD;
+        pInfo->pCaptureThreads[new_thread_trace_file_index].traceFileThreadIdx = new_thread_trace_file_index;
+        // create thread to record trace packets from the tracer
+        pInfo->pCaptureThreads[new_thread_trace_file_index].recordingThread =
+            vktrace_platform_create_thread(Process_RunRecordTraceThread, &(pInfo->pCaptureThreads[new_thread_trace_file_index]));
+        if (pInfo->pCaptureThreads[new_thread_trace_file_index].recordingThread == VKTRACE_NULL_THREAD) {
+            vktrace_LogError("Failed to create additional trace recording thread.");
+            create_additional_record_trace_thread = false;
+        } else {
+            pInfo->currentCaptureThreadsCount++;
+        }
+    } else {
+        vktrace_LogError(
+            "Unable to create additional trace recording thread because the trace recording threads number reach the limit.");
+        create_additional_record_trace_thread = false;
+    }
+    return create_additional_record_trace_thread;
+}
+
 // ------------------------------------------------------------------------------------------------
 VKTRACE_THREAD_ROUTINE_RETURN_TYPE Process_RunRecordTraceThread(LPVOID _threadInfo) {
     vktrace_process_capture_trace_thread_info* pInfo = (vktrace_process_capture_trace_thread_info*)_threadInfo;
@@ -178,16 +227,39 @@ VKTRACE_THREAD_ROUTINE_RETURN_TYPE Process_RunRecordTraceThread(LPVOID _threadIn
     sig_t rval __attribute__((unused));
 #endif
 
-    MessageStream* pMessageStream = vktrace_MessageStream_create(TRUE, "", VKTRACE_BASE_PORT + pInfo->tracerId);
+    MessageStream* pMessageStream = nullptr;
+    if (pInfo->pProcessInfo->messageStream == nullptr) {
+        pMessageStream = vktrace_MessageStream_create(TRUE, "", VKTRACE_BASE_PORT + pInfo->tracerId);
+
+        // listen socket is shared by all recording threads. So except
+        // this thread, other thread just need to reuse it.
+        pInfo->pProcessInfo->messageStream = VKTRACE_NEW(MessageStream);
+        *pInfo->pProcessInfo->messageStream = *pMessageStream;
+    } else {
+        pMessageStream = VKTRACE_NEW(MessageStream);
+        *pMessageStream = *pInfo->pProcessInfo->messageStream;
+        vktrace_MessageStream_SetupHostSocket(pMessageStream);
+    }
+
     if (pMessageStream == NULL) {
         vktrace_LogError("Thread_CaptureTrace() cannot create message stream.");
         return 1;
+    } else {
+        // Now we get a valid pMessageStream which mean a connection
+        // request from a client already be accepted and a private socket
+        // will be used to record the following API packets in the current
+        // thread until the trace file recording be terminated. So we
+        // create another thread to serve other possible clients.
+        if (false == CreateAdditionalRecordTraceThread(pInfo->pProcessInfo)) {
+          vktrace_LogError(
+              "Some process of the title will not be captured into trace file due to failure on creating record thread!");
+        }
     }
 
     // create trace file
-    pInfo->pProcessInfo->pTraceFile = vktrace_open_trace_file(pInfo->pProcessInfo);
+    pInfo->pTraceFile = vktrace_open_trace_file(pInfo);
 
-    if (pInfo->pProcessInfo->pTraceFile == NULL) {
+    if (pInfo->pTraceFile == NULL) {
         // open of trace file generated an error, no sense in continuing.
         vktrace_LogError("Error cannot create trace file.");
         return 1;
@@ -213,15 +285,15 @@ VKTRACE_THREAD_ROUTINE_RETURN_TYPE Process_RunRecordTraceThread(LPVOID _threadIn
     vktrace_enter_critical_section(&pInfo->pProcessInfo->traceFileCriticalSection);
 
     // Write the trace file header to the file
-    bytes_written = fwrite(&file_header, 1, sizeof(file_header), pInfo->pProcessInfo->pTraceFile);
+    bytes_written = fwrite(&file_header, 1, sizeof(file_header), pInfo->pTraceFile);
 
     // Read and write the gpu_info structs
     struct_gpuinfo gpuinfo;
     for (uint64_t i = 0; i < file_header.n_gpuinfo; i++) {
         vktrace_FileLike_ReadRaw(fileLikeSocket, &gpuinfo, sizeof(struct_gpuinfo));
-        bytes_written += fwrite(&gpuinfo, 1, sizeof(struct_gpuinfo), pInfo->pProcessInfo->pTraceFile);
+        bytes_written += fwrite(&gpuinfo, 1, sizeof(struct_gpuinfo), pInfo->pTraceFile);
     }
-    fflush(pInfo->pProcessInfo->pTraceFile);
+    fflush(pInfo->pTraceFile);
     vktrace_leave_critical_section(&pInfo->pProcessInfo->traceFileCriticalSection);
 
     if (bytes_written != sizeof(file_header) + file_header.n_gpuinfo * sizeof(struct_gpuinfo)) {
@@ -242,7 +314,7 @@ VKTRACE_THREAD_ROUTINE_RETURN_TYPE Process_RunRecordTraceThread(LPVOID _threadIn
     assert(rval != SIG_ERR);
 #endif
 
-    while (!terminationSignalArrived && pInfo->pProcessInfo->serverRequestsTermination == FALSE) {
+    while (!terminationSignalArrived && pInfo->serverRequestsTermination == FALSE) {
         // get a packet
         // vktrace_LogDebug("Waiting for a packet...");
 
@@ -274,16 +346,16 @@ VKTRACE_THREAD_ROUTINE_RETURN_TYPE Process_RunRecordTraceThread(LPVOID _threadIn
             }
 
             if (pHeader->packet_id == VKTRACE_TPI_MARKER_TERMINATE_PROCESS) {
-                pInfo->pProcessInfo->serverRequestsTermination = true;
+                pInfo->serverRequestsTermination = true;
                 vktrace_delete_trace_packet_no_lock(&pHeader);
                 vktrace_LogVerbose("Thread_CaptureTrace is exiting.");
                 break;
             }
 
-            if (pInfo->pProcessInfo->pTraceFile != NULL) {
+            if (pInfo->pTraceFile != NULL) {
                 vktrace_enter_critical_section(&pInfo->pProcessInfo->traceFileCriticalSection);
-                bytes_written = fwrite(pHeader, 1, (size_t)pHeader->size, pInfo->pProcessInfo->pTraceFile);
-                fflush(pInfo->pProcessInfo->pTraceFile);
+                bytes_written = fwrite(pHeader, 1, (size_t)pHeader->size, pInfo->pTraceFile);
+                fflush(pInfo->pTraceFile);
                 vktrace_leave_critical_section(&pInfo->pProcessInfo->traceFileCriticalSection);
                 if (bytes_written != pHeader->size) {
                     vktrace_LogError("Failed to write the packet for packet_id = %hu", pHeader->packet_id);
@@ -294,6 +366,8 @@ VKTRACE_THREAD_ROUTINE_RETURN_TYPE Process_RunRecordTraceThread(LPVOID _threadIn
                     pHeader->packet_id == VKTRACE_TPI_VK_vkBindBufferMemory ||
                     pHeader->packet_id == VKTRACE_TPI_VK_vkBindImageMemory2KHR ||
                     pHeader->packet_id == VKTRACE_TPI_VK_vkBindBufferMemory2KHR ||
+                    pHeader->packet_id == VKTRACE_TPI_VK_vkBindImageMemory2 ||
+                    pHeader->packet_id == VKTRACE_TPI_VK_vkBindBufferMemory2 ||
                     pHeader->packet_id == VKTRACE_TPI_VK_vkAllocateMemory || pHeader->packet_id == VKTRACE_TPI_VK_vkDestroyImage ||
                     pHeader->packet_id == VKTRACE_TPI_VK_vkDestroyBuffer || pHeader->packet_id == VKTRACE_TPI_VK_vkFreeMemory ||
                     pHeader->packet_id == VKTRACE_TPI_VK_vkCreateBuffer || pHeader->packet_id == VKTRACE_TPI_VK_vkCreateImage) {
@@ -312,9 +386,13 @@ VKTRACE_THREAD_ROUTINE_RETURN_TYPE Process_RunRecordTraceThread(LPVOID _threadIn
         vktrace_delete_trace_packet_no_lock(&pHeader);
     }
 
+    vktrace_appendPortabilityPacket(pInfo->pTraceFile);
+
 #if defined(WIN32)
     PostThreadMessage(pInfo->pProcessInfo->parentThreadId, VKTRACE_WM_COMPLETE, 0, 0);
 #endif
+
+    fclose(pInfo->pTraceFile);
 
     VKTRACE_DELETE(fileLikeSocket);
     vktrace_MessageStream_destroy(&pMessageStream);

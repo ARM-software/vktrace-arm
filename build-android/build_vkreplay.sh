@@ -55,6 +55,7 @@ do
     cp $LAYER_BUILD_DIR/libs/${abi}/libvkreplay.so $LAYER_BUILD_DIR/vkreplay/bin/libs/lib/${abi}/libvkreplay.so
     cp $LAYER_BUILD_DIR/libs/${abi}/libVkLayer_screenshot.so $LAYER_BUILD_DIR/vkreplay/bin/libs/lib/${abi}/libVkLayer_screenshot.so
     cp $LAYER_BUILD_DIR/libs/${abi}/libVkLayer_monitor.so $LAYER_BUILD_DIR/vkreplay/bin/libs/lib/${abi}/libVkLayer_monitor.so
+    cp $LAYER_BUILD_DIR/libs/${abi}/libVkLayer_offscreenrender.so $LAYER_BUILD_DIR/vkreplay/bin/libs/lib/${abi}/libVkLayer_offscreenrender.so
 done
 create_APK vkreplay
 popd
@@ -71,6 +72,7 @@ mkdir -p $LAYER_BUILD_DIR/vkreplay/bin/libs/lib/${abi}
 cp $LAYER_BUILD_DIR/libs/${abi}/libvkreplay.so $LAYER_BUILD_DIR/vkreplay/bin/libs/lib/${abi}/libvkreplay.so
 cp $LAYER_BUILD_DIR/libs/${abi}/libVkLayer_screenshot.so $LAYER_BUILD_DIR/vkreplay/bin/libs/lib/${abi}/libVkLayer_screenshot.so
 cp $LAYER_BUILD_DIR/libs/${abi}/libVkLayer_monitor.so $LAYER_BUILD_DIR/vkreplay/bin/libs/lib/${abi}/libVkLayer_monitor.so
+cp $LAYER_BUILD_DIR/libs/${abi}/libVkLayer_offscreenrender.so $LAYER_BUILD_DIR/vkreplay/bin/libs/lib/${abi}/libVkLayer_offscreenrender.so
 sed -i 's/com.example.vkreplay/com.example.vkreplay32/' AndroidManifest.xml
 create_APK vkreplay32
 popd

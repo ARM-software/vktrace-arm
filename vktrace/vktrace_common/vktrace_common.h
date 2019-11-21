@@ -28,6 +28,8 @@
 #include <stdint.h>
 #include <stdlib.h>
 
+#include "vulkan/vulkan.h"
+
 #include "vktrace_platform.h"
 
 #include "vktrace_memory.h"
@@ -83,6 +85,62 @@ static const uint32_t INVALID_BINDING_INDEX = UINT32_MAX;
 #else
 #define Ftell ftello
 #define Fseek fseeko
+#endif
+
+typedef struct vulkan_struct_header {
+    VkStructureType sType;
+    struct vulkan_struct_header *pNext;
+} vulkan_struct_header;
+
+static void print_ext_struct(const vulkan_struct_header* first) {
+    const vulkan_struct_header* entry = first;
+    while (entry) {
+        vktrace_LogAlways("ext strut: type = %u", entry->sType);
+        entry = entry->pNext;
+    }
+}
+
+static const vulkan_struct_header* find_ext_struct(const vulkan_struct_header* first, VkStructureType stype) {
+    const vulkan_struct_header* entry = first;
+    while (entry && entry->sType != stype) entry = entry->pNext;
+    return entry;
+}
+
+#if defined(ANDROID)
+#include <android/hardware_buffer_jni.h>
+static uint32_t getAHardwareBufBPP(uint32_t fmt) {
+    uint32_t bpp = 1;
+    switch(fmt) {
+    case AHARDWAREBUFFER_FORMAT_R16G16B16A16_FLOAT:
+        bpp = 8;
+        break;
+    case AHARDWAREBUFFER_FORMAT_D32_FLOAT_S8_UINT:
+        bpp = 5;
+        break;
+    case AHARDWAREBUFFER_FORMAT_R8G8B8A8_UNORM:
+    case AHARDWAREBUFFER_FORMAT_R8G8B8X8_UNORM:
+    case AHARDWAREBUFFER_FORMAT_R10G10B10A2_UNORM:
+    case AHARDWAREBUFFER_FORMAT_D32_FLOAT:
+    case AHARDWAREBUFFER_FORMAT_D24_UNORM_S8_UINT:
+        bpp = 4;
+        break;
+    case AHARDWAREBUFFER_FORMAT_R8G8B8_UNORM:
+    ///case AHARDWAREBUFFER_FORMAT_Y8Cb8Cr8_420:
+    case AHARDWAREBUFFER_FORMAT_D24_UNORM:
+        bpp = 3;
+        break;
+    case AHARDWAREBUFFER_FORMAT_R5G6B5_UNORM:
+    case AHARDWAREBUFFER_FORMAT_D16_UNORM:
+        bpp = 2;
+        break;
+    case AHARDWAREBUFFER_FORMAT_S8_UINT:
+        bpp = 1;
+        break;
+    default:
+        break;
+    }
+    return bpp;
+}
 #endif
 
 // Enviroment variables used by vktrace/replay

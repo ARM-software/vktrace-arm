@@ -26,6 +26,7 @@
 #include "vktrace_interconnect.h"
 #include "vktrace_filelike.h"
 #include "vktrace_pageguard_memorycopy.h"
+#include "vktrace_settings.h"
 
 #if defined(WIN32)
 #include <rpc.h>
@@ -46,6 +47,7 @@
 #include "vk_struct_size_helper.c"
 #include "vktrace_pageguard_memorycopy.h"
 
+vkreplayer_settings *g_pReplaySettings = NULL;
 static VKTRACE_CRITICAL_SECTION s_packet_index_lock;
 static VKTRACE_CRITICAL_SECTION s_trace_lock;
 
@@ -183,6 +185,54 @@ uint64_t get_os() {
     strncpy((char*)&rval, "Windows", sizeof(uint64_t));
 #endif
     return rval;
+}
+
+char* append_index_to_filename(const char* base, uint32_t index, const char* extension) {
+    char num[17];
+#if defined(PLATFORM_LINUX)
+    snprintf(num, 17, "-%u", index);
+#elif defined(WIN32)
+    _snprintf_s(num, 17, _TRUNCATE, "-%u", index);
+#endif
+    return vktrace_copy_and_append(base, num, extension);
+}
+
+static uint32_t s_fileIndex = 0;
+char* find_available_filename(const char* originalFilename, BOOL bForceOverwrite) {
+    char* pOutputFilename = NULL;
+
+    if (bForceOverwrite) {
+        if (s_fileIndex == 0) {
+            pOutputFilename = vktrace_allocate_and_copy(originalFilename);
+        } else {
+            const char* pExtension = strrchr(originalFilename, '.');
+            char* basename = vktrace_allocate_and_copy_n(
+                originalFilename,
+                (int)((pExtension == NULL) ? strlen(originalFilename) : pExtension - originalFilename));
+            pOutputFilename = append_index_to_filename(basename, s_fileIndex, pExtension);
+            vktrace_free(basename);
+        }
+    } else  // don't overwrite
+    {
+        const char* pExtension = strrchr(originalFilename, '.');
+        char* basename = vktrace_allocate_and_copy_n(
+            originalFilename,
+            (int)((pExtension == NULL) ? strlen(originalFilename) : pExtension - originalFilename));
+        pOutputFilename = vktrace_allocate_and_copy(originalFilename);
+        FILE* pFile = NULL;
+        while ((pFile = fopen(pOutputFilename, "rb")) != NULL) {
+            fclose(pFile);
+            ++s_fileIndex;
+
+            vktrace_free(pOutputFilename);
+            pOutputFilename = append_index_to_filename(basename, s_fileIndex, pExtension);
+        }
+        vktrace_free(basename);
+    }
+
+    // increment to the next available fileIndex to prep for the next trace file
+    ++s_fileIndex;
+    return pOutputFilename;
 }
 
 //=============================================================================
@@ -810,5 +860,14 @@ void vkreplay_interpret_pnext_pointers(vktrace_trace_packet_header* pHeader, voi
                 break;
         }
         struct_ptr = (VkApplicationInfo*)((VkApplicationInfo*)struct_ptr)->pNext;
+    }
+}
+
+void check_devicefeature(VkSamplerCreateInfo* pCreateInfo)
+{
+    if (NULL == pCreateInfo || NULL == g_pReplaySettings) return;
+    if (g_pReplaySettings->forceDisableAF && pCreateInfo->anisotropyEnable) {
+        pCreateInfo->anisotropyEnable = VK_FALSE;
+        pCreateInfo->maxAnisotropy = 1.0f;
     }
 }

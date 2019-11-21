@@ -113,18 +113,22 @@ BOOL vktrace_process_spawn(vktrace_process_info* pInfo) {
 }
 
 void vktrace_process_info_delete(vktrace_process_info* pInfo) {
-    if (pInfo->pCaptureThreads != NULL) {
-        vktrace_platform_delete_thread(&(pInfo->pCaptureThreads[0].recordingThread));
-        VKTRACE_DELETE(pInfo->pCaptureThreads);
-    }
-
 #if defined(WIN32)
     vktrace_platform_delete_thread(&(pInfo->watchdogThread));
 #endif
+    if (pInfo->pCaptureThreads) {
+        uint32_t i;
+        for (i = 0; i < pInfo->currentCaptureThreadsCount; i++) {
+            vktrace_platform_delete_thread(&(pInfo->pCaptureThreads[i].recordingThread));
+            if (pInfo->pCaptureThreads[i].pTraceFile != NULL) {
+                vktrace_LogDebug("Closing trace file: '%s'", pInfo->traceFilename);
+                fclose(pInfo->pCaptureThreads[i].pTraceFile);
+            }
+        }
+    }
 
-    if (pInfo->pTraceFile != NULL) {
-        vktrace_LogDebug("Closing trace file: '%s'", pInfo->traceFilename);
-        fclose(pInfo->pTraceFile);
+    if (pInfo->pCaptureThreads != NULL) {
+        VKTRACE_DELETE(pInfo->pCaptureThreads);
     }
 
     VKTRACE_DELETE(pInfo->traceFilename);

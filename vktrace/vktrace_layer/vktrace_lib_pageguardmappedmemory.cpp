@@ -53,7 +53,8 @@ PageGuardMappedMemory::PageGuardMappedMemory()
       BlockConflictError(false),
       PageSizeLeft(0),
       StartingAddressOffset(0),
-      PageGuardAmount(0) {}
+      PageGuardAmount(0),
+      NoGuard(false) {}
 
 PageGuardMappedMemory::~PageGuardMappedMemory() {}
 
@@ -275,6 +276,9 @@ bool PageGuardMappedMemory::setAllPageGuardAndFlag(bool bSetPageGuard, bool bSet
     // check write counts of pages.
 
     bool setSuccessfully = true;
+    if (NoGuard) {
+        return setSuccessfully;
+    }
 #if defined(WIN32)
     DWORD dwMemSetting = bSetPageGuard ? (PAGE_READWRITE | PAGE_GUARD) : PAGE_READWRITE;
 #else
@@ -345,12 +349,21 @@ bool PageGuardMappedMemory::vkMapMemoryPageGuardHandle(VkDevice device, VkDevice
     MappedDevice = device;
     MappedMemory = memory;
     MappedOffset = offset;
+    MappedSize = size;
 
     // Whatever the shadow memory for pageguard/write-watch enabled or not,
     // pRealMappedData always point to the mapped memory which is returned
     // by vkMapMemory, even if we are using external host memory extension
     // for current memory object.
     pRealMappedData = (PBYTE)*ppData;
+
+#if defined(PAGEGUARD_TARGET_RANGE_SIZE_CONTROL)
+    if (size < ref_target_range_size()) {
+        NoGuard = true;
+        pMappedData = pRealMappedData;
+        return true;
+    }
+#endif
 
     if (false == UseMappedExternalHostMemoryExtension()) {
         pMappedData = (PBYTE)pageguardAllocateMemory(size);
@@ -373,7 +386,6 @@ bool PageGuardMappedMemory::vkMapMemoryPageGuardHandle(VkDevice device, VkDevice
         StartingAddressOffset = (pMappedData - reinterpret_cast<PBYTE>(pExternalHostMemory)) % PageGuardSize;
     }
 
-    MappedSize = size;
     bool setPageGuard = !UseMappedExternalHostMemoryExtension();
     if (setPageGuard) {
         setPageGuardExceptionHandler();
@@ -395,15 +407,21 @@ bool PageGuardMappedMemory::vkMapMemoryPageGuardHandle(VkDevice device, VkDevice
 
 void PageGuardMappedMemory::vkUnmapMemoryPageGuardHandle(VkDevice device, VkDeviceMemory memory, void **MappedData) {
     if ((memory == MappedMemory) && (device == MappedDevice)) {
-        setAllPageGuardAndFlag(false, false);
-        if (!UseMappedExternalHostMemoryExtension()) {
-            removePageGuardExceptionHandler();
-        }
-        clearChangedDataPackage();
-        if (!UseMappedExternalHostMemoryExtension()) {
-            if (MappedData == nullptr) {
+        if (!NoGuard) {
+            setAllPageGuardAndFlag(false, false);
+            if (!UseMappedExternalHostMemoryExtension()) {
+                removePageGuardExceptionHandler();
+            }
+            clearChangedDataPackage();
+
+            if (!UseMappedExternalHostMemoryExtension() && MappedData == nullptr) {
                 pageguardFreeMemory(pMappedData);
-            } else {
+            }
+            delete pPageStatus;
+            pPageStatus = nullptr;
+        }
+        if (!UseMappedExternalHostMemoryExtension()) {
+            if (MappedData != nullptr) {
                 *MappedData = pMappedData;
             }
             pRealMappedData = nullptr;
@@ -415,10 +433,9 @@ void PageGuardMappedMemory::vkUnmapMemoryPageGuardHandle(VkDevice device, VkDevi
                 *MappedData = nullptr;
             }
         }
-        delete pPageStatus;
-        pPageStatus = nullptr;
         MappedMemory = (VkDeviceMemory) nullptr;
         MappedSize = 0;
+        NoGuard = false;
     }
 }
 
@@ -573,6 +590,10 @@ bool PageGuardMappedMemory::vkFlushMappedMemoryRangePageGuardHandle(VkDevice dev
                                                                     VkDeviceSize *pDataPackageSize, PBYTE *ppChangedDataPackage) {
     bool handleSuccessfully = false;
     uint64_t dwSaveSize, InfoSize;
+
+    if (NoGuard) {
+        return true;
+    }
 
     backupBlockChangedArraySnapshot();
     getChangedBlockInfo(offset, size, &dwSaveSize, &InfoSize, nullptr, 0,

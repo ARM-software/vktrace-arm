@@ -655,6 +655,8 @@ class VkTraceFileOutputGenerator(OutputGenerator):
                                  'CreateIndirectCommandsLayoutNVX',
                                  'BindBufferMemory2KHR',
                                  'BindImageMemory2KHR',
+                                 'BindBufferMemory2',
+                                 'BindImageMemory2',
                                  'GetDisplayPlaneSupportedDisplaysKHR',
                                  'EnumerateDeviceExtensionProperties',
                                  'CreateSampler'
@@ -781,6 +783,16 @@ class VkTraceFileOutputGenerator(OutputGenerator):
                         replay_gen_source += '            if (createInfo.image == VK_NULL_HANDLE && pPacket->pCreateInfo->image != VK_NULL_HANDLE) {\n'
                         replay_gen_source += '                vktrace_LogError("Error detected in vkCreateImageView() due to invalid remapped VkImage.");\n'
                         replay_gen_source += '                return vktrace_replay::VKTRACE_REPLAY_ERROR;\n'
+                        replay_gen_source += '            }\n'
+                        replay_gen_source += '            if (g_pReplaySettings && g_pReplaySettings->forceEXTASTCDecodeMode) {\n'
+                        replay_gen_source += '                if (VK_FORMAT_ASTC_4x4_UNORM_BLOCK <= createInfo.format && VK_FORMAT_ASTC_12x12_SRGB_BLOCK >= createInfo.format) {\n'
+                        replay_gen_source += '                    VkImageViewASTCDecodeModeEXT decodeMode = {\n'
+                        replay_gen_source += '                        VK_STRUCTURE_TYPE_IMAGE_VIEW_ASTC_DECODE_MODE_EXT, // sType\n'
+                        replay_gen_source += '                        NULL, // pNext\n'
+                        replay_gen_source += '                        VK_FORMAT_R8G8B8A8_UNORM // decode mode\n'
+                        replay_gen_source += '                    };\n'
+                        replay_gen_source += '                    createInfo.pNext = &decodeMode;\n'
+                        replay_gen_source += '                }\n'
                         replay_gen_source += '            }\n'
                     replay_gen_source += '            %s local_%s;\n' % (params[-1].type.strip('*').replace('const ', ''), params[-1].name)
                 elif create_func: # Declare local var to store created handle into
@@ -1043,10 +1055,6 @@ class VkTraceFileOutputGenerator(OutputGenerator):
                     if ret_value:
                         replay_gen_source += '            }\n'
                 elif cmdname in do_while_dict:
-                    if cmdname == 'GetFenceStatus':
-                        replay_gen_source += '            if (pPacket->result != VK_NOT_READY && replayResult == VK_NOT_READY) {\n'
-                        replay_gen_source += '            replayResult = m_vkDeviceFuncs.WaitForFences(remappeddevice, 1, &remappedfence, false, 1000);\n'
-                        replay_gen_source += '            }\n'
                     replay_gen_source += '            } while (%s);\n' % do_while_dict[cmdname]
                     replay_gen_source += '            if (pPacket->result != VK_NOT_READY || replayResult != VK_SUCCESS)\n'
             if ret_value:
@@ -3844,6 +3852,8 @@ class VkTraceFileOutputGenerator(OutputGenerator):
                             trace_pkt_hdr += '    if (pPacket->%s != NULL) {\n' % p.name
                             trace_pkt_hdr += '        vkreplay_process_pnext_structs(pHeader, (void *)pPacket->%s);\n' % p.name
                             trace_pkt_hdr += '    }\n'
+                            if "vkCreateSampler" == proto.name:
+                                trace_pkt_hdr += '    check_devicefeature(const_cast<VkSamplerCreateInfo *>(pPacket->%s));\n' % p.name
                 if 'UnmapMemory' in proto.name:
                     trace_pkt_hdr += '    pPacket->pData = (void*)vktrace_trace_packet_interpret_buffer_pointer(pHeader, (intptr_t)pPacket->pData);\n'
                 elif 'FlushMappedMemoryRanges' in proto.name or 'InvalidateMappedMemoryRanges' in proto.name:

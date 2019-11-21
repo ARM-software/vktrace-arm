@@ -28,6 +28,11 @@
 #include <unordered_map>
 #include <vector>
 #include <list>
+
+#if defined(ANDROID)
+#include <android/hardware_buffer_jni.h>
+#endif
+
 #include "vktrace_vk_vk.h"
 #include "vulkan/vulkan.h"
 #include "vulkan/vk_layer.h"
@@ -152,22 +157,28 @@ static layer_device_data* initDeviceData(VkDevice device, const PFN_vkGetDeviceP
 
 static const bool FIFO_ENABLE_DEFAULT = false;
 
+bool getBoolOption(const char* name, bool def) {
+    bool ret = def;
+    const char* env_value_str = vktrace_get_global_var(name);
+    if (env_value_str) {
+        int envvalue;
+        if (sscanf(env_value_str, "%d", &envvalue) == 1) {
+            if (envvalue == 1) {
+                ret = true;
+            } else {
+                ret = false;
+            }
+        }
+    }
+    return ret;
+}
+
 bool getForceFifoEnableFlag() {
     static bool EnableForceFifo = FIFO_ENABLE_DEFAULT;
     static bool FirstTimeRun = true;
     if (FirstTimeRun) {
         FirstTimeRun = false;
-        const char* env_forceFifo = vktrace_get_global_var(VKTRACE_FORCE_FIFO_ENV);
-        if (env_forceFifo) {
-            int envvalue;
-            if (sscanf(env_forceFifo, "%d", &envvalue) == 1) {
-                if (envvalue == 1) {
-                    EnableForceFifo = true;
-                } else {
-                    EnableForceFifo = false;
-                }
-            }
-        }
+        EnableForceFifo = getBoolOption(VKTRACE_FORCE_FIFO_ENV, FIFO_ENABLE_DEFAULT);
     }
     return EnableForceFifo;
 }
@@ -177,17 +188,7 @@ bool getPMBSyncGPUDataBackEnableFlag() {
     static bool FirstTimeRun = true;
     if (FirstTimeRun) {
         FirstTimeRun = false;
-        const char* env_syncBack = vktrace_get_global_var(VKTRACE_PAGEGUARD_ENABLE_SYNC_GPU_DATA_BACK_ENV);
-        if (env_syncBack) {
-            int envvalue;
-            if (sscanf(env_syncBack, "%d", &envvalue) == 1) {
-                if (envvalue == 1) {
-                    EnableSyncBack = true;
-                } else {
-                    EnableSyncBack = false;
-                }
-            }
-        }
+        EnableSyncBack = getBoolOption(VKTRACE_PAGEGUARD_ENABLE_SYNC_GPU_DATA_BACK_ENV, false);
     }
     return EnableSyncBack;
 }
@@ -214,6 +215,26 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkAllocateMemory(VkDevic
                                                                          VkDeviceMemory* pMemory) {
     trim::TraceLock<std::mutex> lock(g_mutex_trace);
     VkResult result;
+    size_t additional_size = 0;
+#if defined(ANDROID)
+    vulkan_struct_header* pvkst_header = (vulkan_struct_header*)pAllocateInfo;
+    uint32_t import_buf_size           = 0;
+    void*    hwbuf_cpu_ptr             = NULL;
+    VkImportAndroidHardwareBufferInfoANDROID* pImportAHWBuf = NULL;
+    AHardwareBuffer_Desc ahwbuf_desc;
+    pvkst_header = (vulkan_struct_header*)find_ext_struct(pvkst_header, VK_STRUCTURE_TYPE_IMPORT_ANDROID_HARDWARE_BUFFER_INFO_ANDROID);
+    if (pvkst_header) {
+        pImportAHWBuf = (VkImportAndroidHardwareBufferInfoANDROID*)pvkst_header;
+        AHardwareBuffer_describe(pImportAHWBuf->buffer, &ahwbuf_desc);
+        int ret = AHardwareBuffer_lock(pImportAHWBuf->buffer, AHARDWAREBUFFER_USAGE_CPU_READ_RARELY, -1, NULL, &hwbuf_cpu_ptr);
+        if (ret) {
+            vktrace_LogError("AM: Lock the hardware buffer failed !");
+        } else {
+            import_buf_size = ahwbuf_desc.stride * ahwbuf_desc.height * getAHardwareBufBPP(ahwbuf_desc.format);
+            additional_size = sizeof(AHardwareBuffer_Desc) + import_buf_size;
+        }
+    }
+#endif
     vktrace_trace_packet_header* pHeader;
     packet_vkAllocateMemory* pPacket = NULL;
 
@@ -227,7 +248,7 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkAllocateMemory(VkDevic
     }
 
     size_t packetSize = get_struct_chain_size((void*)pAllocateInfo) + sizeof(VkAllocationCallbacks) + sizeof(VkDeviceMemory) * 2;
-    CREATE_TRACE_PACKET(vkAllocateMemory, packetSize);
+    CREATE_TRACE_PACKET(vkAllocateMemory, (packetSize + additional_size));
 
     VkImportMemoryHostPointerInfoEXT importMemoryHostPointerInfo = {};
     void* pNextOriginal = const_cast<void*>(pAllocateInfo->pNext);
@@ -278,6 +299,15 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkAllocateMemory(VkDevic
     }
 
     vktrace_set_packet_entrypoint_end_time(pHeader);
+#if defined(ANDROID)
+    if (import_buf_size > 0 && hwbuf_cpu_ptr) {
+        PBYTE pdest_addr = (PBYTE)pHeader->pBody + ROUNDUP_TO_8(sizeof(packet_vkAllocateMemory)) + packetSize;
+        memcpy(pdest_addr, &ahwbuf_desc, sizeof(AHardwareBuffer_Desc));
+        memcpy(pdest_addr + sizeof(AHardwareBuffer_Desc), hwbuf_cpu_ptr, import_buf_size);
+        AHardwareBuffer_unlock(pImportAHWBuf->buffer, NULL);
+        pImportAHWBuf->buffer = (struct AHardwareBuffer*)(pdest_addr - (uint8_t*)pHeader->pBody);
+    }
+#endif
     pPacket = interpret_body_as_vkAllocateMemory(pHeader);
     pPacket->device = device;
     vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pAllocateInfo), sizeof(VkMemoryAllocateInfo), pAllocateInfo);
@@ -434,7 +464,7 @@ VKTRACER_EXPORT VKAPI_ATTR void VKAPI_CALL __HOOKED_vkUnmapMemory(VkDevice devic
     vktrace_enter_critical_section(&g_memInfoLock);
     entry = find_mem_info_entry(memory);
     if (entry && entry->pData != NULL) {
-        if (!entry->didFlush) {
+        if (entry->didFlush == NoFlush) {
             // no FlushMapped Memory
             siz = (size_t)entry->rangeSize;
         }
@@ -607,7 +637,6 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkInvalidateMappedMemory
             vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->ppData[iter]), range_size,
                                                pEntry->pData + pRange->offset);
             vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->ppData[iter]));
-            pEntry->didFlush = TRUE;  // Do we need didInvalidate?
         } else {
             vktrace_LogError("Failed to copy app memory into trace packet (idx = %u) on vkInvalidateMappedMemoryRanges",
                              pHeader->global_packet_index);
@@ -727,7 +756,7 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkFlushMappedMemoryRange
 #if defined(USE_PAGEGUARD_SPEEDUP)
             LPPageGuardMappedMemory pOPTMemoryTemp = getPageGuardControlInstance().findMappedMemoryObject(device, pRange);
             VkDeviceSize OPTPackageSizeTemp = 0;
-            if (pOPTMemoryTemp) {
+            if (pOPTMemoryTemp && !pOPTMemoryTemp->noGuard()) {
                 PBYTE pOPTDataTemp = pOPTMemoryTemp->getChangedDataPackage(&OPTPackageSizeTemp);
                 vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->ppData[iter]), OPTPackageSizeTemp, pOPTDataTemp);
                 pOPTMemoryTemp->clearChangedDataPackage();
@@ -743,7 +772,7 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkFlushMappedMemoryRange
                                                pEntry->pData + pRange->offset);
 #endif
             vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->ppData[iter]));
-            pEntry->didFlush = TRUE;
+            pEntry->didFlush = ApiFlush;
         } else {
             vktrace_LogError("Failed to copy app memory into trace packet (idx = %u) on vkFlushedMappedMemoryRanges",
                              pHeader->global_packet_index);

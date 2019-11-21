@@ -132,6 +132,7 @@ class vkReplay {
     int get_frame_number() { return m_frameNumber; }
     void reset_frame_number(int frameNumber) { m_frameNumber = frameNumber > 0 ? frameNumber : 0; }
     void interpret_pnext_handles(void* struct_ptr);
+    void deviceWaitIdle();
 
    private:
     void init_funcs(void* handle);
@@ -309,6 +310,7 @@ class vkReplay {
     void manually_replay_vkGetBufferMemoryRequirements2(packet_vkGetBufferMemoryRequirements2* pPacket);
     VkResult manually_replay_vkCreateSampler(packet_vkCreateSampler* pPacket);
     VkResult manually_replay_vkCreateDisplayPlaneSurfaceKHR(packet_vkCreateDisplayPlaneSurfaceKHR *pPacket);
+    void changeDeviceFeature(VkBool32 *traceFeatures,VkBool32 *deviceFeatures,uint32_t numOfFeatures);
 
     void process_screenshot_list(const char* list) {
         std::string spec(list), word;
@@ -413,6 +415,7 @@ class vkReplay {
     std::unordered_map<VkImage, VkImageTiling> replayImageToTiling;
     std::unordered_map<VkImage, VkDeviceMemory> replayOptimalImageToDeviceMemory;
     std::unordered_map<VkDeviceMemory, uint32_t> traceDeviceMemoryToMemoryTypeIndex;
+    std::unordered_map<VkDeviceMemory, AHardwareBuffer*> traceDeviceMemoryToAHWBuf;
 
     std::unordered_set<VkDeviceMemory> traceSkippedDeviceMemories;
 

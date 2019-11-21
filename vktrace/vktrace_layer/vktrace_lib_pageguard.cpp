@@ -25,13 +25,15 @@
 
 static const bool PAGEGUARD_PAGEGUARD_ENABLE_DEFAULT = true;
 
-static const VkDeviceSize PAGEGUARD_TARGET_RANGE_SIZE_DEFAULT = 2;  // cover all reasonal mapped memory size, the mapped memory size
-                                                                    // may be less than 1 page, so processing for mapped memory
-                                                                    // size<1 page is already added,
-// other value: 32 * 1024 * 1024 (32M),  64M, this is the size which cause DOOM4 capture very slow.
-static const VkDeviceSize PAGEGUARD_PAGEGUARD_TARGET_RANGE_SIZE_MIN = 1;  // already tested: 2,2M,4M,32M,64M, because commonly page
-                                                                          // size is 4k, so only range size=2 can cover small size
-                                                                          // mapped memory.
+static const uint32_t ONE_KBYTE = 1024;
+
+static const VkDeviceSize PAGEGUARD_TARGET_RANGE_SIZE_DEFAULT = 2 * ONE_KBYTE;  // cover all reasonal mapped memory size, the mapped memory size
+                                                                                    // may be less than 1 page, so processing for mapped memory
+                                                                                    // size<1 page is already added,
+                                                                                    // other value: 32 * 1024 * 1024 (32M),  64M, this is the size which cause DOOM4 capture very slow.
+static const VkDeviceSize PAGEGUARD_PAGEGUARD_TARGET_RANGE_SIZE_MIN = ONE_KBYTE;  // already tested: 2,2M,4M,32M,64M, because commonly page
+                                                                                      // size is 4k, so only range size=2 can cover small size
+                                                                                      // mapped memory.
 
 static vktrace_sem_id ref_amount_sem_id;  // TODO if vktrace implement cross platform lib or dll load or unload function, this sem
                                           // can be putted in those functions, but now we leave it to process quit.
@@ -277,7 +279,7 @@ PageGuardCapture& getPageGuardControlInstance() {
 }
 
 void flushTargetChangedMappedMemory(LPPageGuardMappedMemory TargetMappedMemory, vkFlushMappedMemoryRangesFunc pFunc,
-                                    VkMappedMemoryRange* pMemoryRanges) {
+                                    VkMappedMemoryRange* pMemoryRanges, bool apiFlush) {
     bool newMemoryRangesInside = (pMemoryRanges == nullptr);
     if (newMemoryRangesInside) {
         pMemoryRanges = new VkMappedMemoryRange[1];
@@ -288,7 +290,7 @@ void flushTargetChangedMappedMemory(LPPageGuardMappedMemory TargetMappedMemory, 
     pMemoryRanges[0].pNext = nullptr;
     pMemoryRanges[0].size = TargetMappedMemory->getMappedSize();
     pMemoryRanges[0].sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE;
-    (*pFunc)(TargetMappedMemory->getMappedDevice(), 1, pMemoryRanges);
+    (*pFunc)(TargetMappedMemory->getMappedDevice(), 1, pMemoryRanges, apiFlush);
     if (newMemoryRangesInside) {
         delete[] pMemoryRanges;
     }
@@ -297,15 +299,25 @@ void flushTargetChangedMappedMemory(LPPageGuardMappedMemory TargetMappedMemory, 
 void flushAllChangedMappedMemory(vkFlushMappedMemoryRangesFunc pFunc) {
     LPPageGuardMappedMemory pMappedMemoryTemp;
     uint64_t amount = getPageGuardControlInstance().getMapMemory().size();
+    std::vector<LPPageGuardMappedMemory> cachedMemory;
+    std::vector<VKAllocInfo*> cachedAllocInfo;
     if (amount) {
-        int i = 0;
         VkMappedMemoryRange* pMemoryRanges = new VkMappedMemoryRange[1];  // amount
         for (std::unordered_map<VkDeviceMemory, PageGuardMappedMemory>::iterator it =
                  getPageGuardControlInstance().getMapMemory().begin();
              it != getPageGuardControlInstance().getMapMemory().end(); it++) {
+            VKAllocInfo* pEntry = find_mem_info_entry(it->first);
             pMappedMemoryTemp = &(it->second);
-            flushTargetChangedMappedMemory(pMappedMemoryTemp, pFunc, pMemoryRanges);
-            i++;
+            if ((pEntry->didFlush == ApiFlush) && (pEntry->props & VK_MEMORY_PROPERTY_HOST_CACHED_BIT)) {
+                cachedAllocInfo.push_back(pEntry);
+                cachedMemory.push_back(pMappedMemoryTemp);
+            } else {
+                flushTargetChangedMappedMemory(pMappedMemoryTemp, pFunc, pMemoryRanges, false);
+            }
+        }
+        for (uint32_t i = 0; i < cachedMemory.size(); i++) {
+            flushTargetChangedMappedMemory(cachedMemory[i], pFunc, pMemoryRanges, true);
+            cachedAllocInfo[i]->didFlush = NoFlush;
         }
         delete[] pMemoryRanges;
     }
@@ -315,13 +327,12 @@ void resetAllReadFlagAndPageGuard() {
     LPPageGuardMappedMemory pMappedMemoryTemp;
     uint64_t amount = getPageGuardControlInstance().getMapMemory().size();
     if (amount) {
-        int i = 0;
         for (std::unordered_map<VkDeviceMemory, PageGuardMappedMemory>::iterator it =
                  getPageGuardControlInstance().getMapMemory().begin();
              it != getPageGuardControlInstance().getMapMemory().end(); it++) {
             pMappedMemoryTemp = &(it->second);
-            pMappedMemoryTemp->resetMemoryObjectAllReadFlagAndPageGuard();
-            i++;
+            if (!pMappedMemoryTemp->noGuard())
+                pMappedMemoryTemp->resetMemoryObjectAllReadFlagAndPageGuard();
         }
     }
 }
@@ -407,7 +418,7 @@ void PageGuardExceptionHandler(int sig, siginfo_t* si, void* unused) {
         pageguardEnter();
         LPPageGuardMappedMemory pMappedMem =
             getPageGuardControlInstance().findMappedMemoryObject(addr, &OffsetOfAddr, &pBlock, &BlockSize);
-        if (pMappedMem) {
+        if (pMappedMem && !pMappedMem->noGuard()) {
             uint64_t index = pMappedMem->getIndexOfChangedBlockByAddr(addr);
             pMappedMem->setMappedBlockChanged(index, true, BLOCK_FLAG_ARRAY_CHANGED);
             if (mprotect(pMappedMem->getMappedDataPointer() + index * pageguardGetSystemPageSize(),
@@ -428,7 +439,7 @@ void PageGuardExceptionHandler(int sig, siginfo_t* si, void* unused) {
 // The function source code is modified from __HOOKED_vkFlushMappedMemoryRanges
 // for coherent map, need this function to dump data so simulate target application write data when playback.
 VkResult vkFlushMappedMemoryRangesWithoutAPICall(VkDevice device, uint32_t memoryRangeCount,
-                                                 const VkMappedMemoryRange* pMemoryRanges) {
+                                                 const VkMappedMemoryRange* pMemoryRanges, bool apiFlush) {
     VkResult result = VK_SUCCESS;
     vktrace_trace_packet_header* pHeader;
     uint64_t rangesSize = 0;
@@ -480,9 +491,9 @@ VkResult vkFlushMappedMemoryRangesWithoutAPICall(VkDevice device, uint32_t memor
             if (dataSize > 0) {
                 LPPageGuardMappedMemory pOPTMemoryTemp = getPageGuardControlInstance().findMappedMemoryObject(device, pRange);
                 VkDeviceSize OPTPackageSizeTemp = 0;
-                if (pOPTMemoryTemp) {
+                if (pOPTMemoryTemp && !pOPTMemoryTemp->noGuard()) {
                     PBYTE pOPTDataTemp = pOPTMemoryTemp->getChangedDataPackage(&OPTPackageSizeTemp);
-                    if (pEntry->props & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) {
+                    if (!apiFlush) {
                         setFlagTovkFlushMappedMemoryRangesSpecial(pOPTDataTemp);
                     }
                     vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->ppData[iter]), OPTPackageSizeTemp, pOPTDataTemp);
@@ -491,7 +502,7 @@ VkResult vkFlushMappedMemoryRangesWithoutAPICall(VkDevice device, uint32_t memor
                 } else {
                     PBYTE pOPTDataTemp =
                         getPageGuardControlInstance().getChangedDataPackageOutOfMap(ppPackageData, iter, &OPTPackageSizeTemp);
-                    if (pEntry->props & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) {
+                    if (!apiFlush) {
                         setFlagTovkFlushMappedMemoryRangesSpecial(pOPTDataTemp);
                     }
                     vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->ppData[iter]), OPTPackageSizeTemp, pOPTDataTemp);
@@ -503,7 +514,7 @@ VkResult vkFlushMappedMemoryRangesWithoutAPICall(VkDevice device, uint32_t memor
                                                pEntry->pData + pRange->offset);
 #endif
             vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->ppData[iter]));
-            pEntry->didFlush = true;
+            pEntry->didFlush = InternalFlush;
         } else {
             vktrace_LogError("Failed to copy app memory into trace packet (idx = %u) on vkFlushedMappedMemoryRanges",
                              pHeader->global_packet_index);

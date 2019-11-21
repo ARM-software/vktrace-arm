@@ -173,9 +173,11 @@ if [ ${NEED_PACKAGE} == "true" ]; then
         cp -a libs/armeabi-v7a/libVkLayer_screenshot.so ${TARGET}/trace_layer/armeabi-v7a/
         cp -a libs/armeabi-v7a/libVkLayer_vktrace_layer.so ${TARGET}/trace_layer/armeabi-v7a/
         cp -a libs/armeabi-v7a/libVkLayer_device_simulation.so ${TARGET}/trace_layer/armeabi-v7a/
+        cp -a libs/armeabi-v7a/libVkLayer_offscreenrender.so ${TARGET}/trace_layer/armeabi-v7a/
         cp -a libs/arm64-v8a/libVkLayer_screenshot.so ${TARGET}/trace_layer/arm64-v8a/
         cp -a libs/arm64-v8a/libVkLayer_vktrace_layer.so ${TARGET}/trace_layer/arm64-v8a/
         cp -a libs/arm64-v8a/libVkLayer_device_simulation.so ${TARGET}/trace_layer/arm64-v8a/
+        cp -a libs/arm64-v8a/libVkLayer_offscreenrender.so ${TARGET}/trace_layer/arm64-v8a/
     else
         mkdir -p ${TARGET}/bin
         cp -a vktrace/vktracedump${BINARY_SUFFIX} ${TARGET}/bin/vktracedump
@@ -193,4 +195,3 @@ if [ ${NEED_PACKAGE} == "true" ]; then
 
     tar czf vktrace_${TARGET}_${BUILD_TYPE}.tgz ${TARGET}
 fi
-

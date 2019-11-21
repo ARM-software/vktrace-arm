@@ -46,7 +46,7 @@ const char* DUMP_SETTING_FILE = "vk_layer_settings.txt";
 const char* FULL_DUMP_FILE_UNSET = "full_dump_file_unset";
 const char* SEPARATOR = " : ";
 const char* SPACES = "               ";
-const uint32_t COLUMN_WIDTH = 15;
+const uint32_t COLUMN_WIDTH = 16;
 
 static void print_usage() {
     cout << "vktracedump available options:" << endl;
@@ -317,7 +317,8 @@ int main(int argc, char** argv) {
             }
             if (ret > -1) {
                 uint32_t frameNumber = 0;
-                uint32_t apiVersion = UINT32_MAX;
+                uint32_t deviceApiVersion = UINT32_MAX;
+                uint32_t appApiVersion = UINT32_MAX;
                 char* pApplicationName = NULL;
                 uint32_t applicationVersion = 0;
                 char* pEngineName = NULL;
@@ -341,10 +342,10 @@ int main(int argc, char** argv) {
                             } break;
                             case VKTRACE_TPI_VK_vkGetPhysicalDeviceProperties: {
                                 if (!hideBriefInfo) {
-                                    if (apiVersion == UINT32_MAX) {
+                                    if (deviceApiVersion == UINT32_MAX) {
                                         packet_vkGetPhysicalDeviceProperties* pPacket =
                                             (packet_vkGetPhysicalDeviceProperties*)(pInterpretedHeader->pBody);
-                                        apiVersion = pPacket->pProperties->apiVersion;
+                                        deviceApiVersion = pPacket->pProperties->apiVersion;
                                         memcpy(deviceName, pPacket->pProperties->deviceName, VK_MAX_PHYSICAL_DEVICE_NAME_SIZE);
                                     }
                                 }
@@ -352,23 +353,28 @@ int main(int argc, char** argv) {
                             case VKTRACE_TPI_VK_vkCreateInstance: {
                                 if (!hideBriefInfo) {
                                     packet_vkCreateInstance* pPacket = (packet_vkCreateInstance*)(pInterpretedHeader->pBody);
-                                    if (pApplicationName == NULL && pEngineName == NULL && pPacket->pCreateInfo->pApplicationInfo) {
-                                        if (pPacket->pCreateInfo->pApplicationInfo->pApplicationName) {
-                                            size_t applicationNameLen =
-                                                strlen(pPacket->pCreateInfo->pApplicationInfo->pApplicationName);
-                                            pApplicationName = (char*)malloc(applicationNameLen + 1);
-                                            memcpy(pApplicationName, pPacket->pCreateInfo->pApplicationInfo->pApplicationName,
+                                    if (pPacket->pCreateInfo->pApplicationInfo) {
+                                        if (pApplicationName == NULL && pEngineName == NULL) {
+                                            if (pPacket->pCreateInfo->pApplicationInfo->pApplicationName) {
+                                                size_t applicationNameLen =
+                                                    strlen(pPacket->pCreateInfo->pApplicationInfo->pApplicationName);
+                                                pApplicationName = (char*)malloc(applicationNameLen + 1);
+                                                memcpy(pApplicationName, pPacket->pCreateInfo->pApplicationInfo->pApplicationName,
                                                    applicationNameLen);
-                                            pApplicationName[applicationNameLen] = '\0';
+                                                pApplicationName[applicationNameLen] = '\0';
+                                            }
+                                            applicationVersion = pPacket->pCreateInfo->pApplicationInfo->applicationVersion;
+                                            if (pPacket->pCreateInfo->pApplicationInfo->pEngineName) {
+                                                size_t engineNameLen = strlen(pPacket->pCreateInfo->pApplicationInfo->pEngineName);
+                                                pEngineName = (char*)malloc(engineNameLen + 1);
+                                                memcpy(pEngineName, pPacket->pCreateInfo->pApplicationInfo->pEngineName, engineNameLen);
+                                                pEngineName[engineNameLen] = '\0';
+                                            }
+                                            engineVersion = pPacket->pCreateInfo->pApplicationInfo->engineVersion;
                                         }
-                                        applicationVersion = pPacket->pCreateInfo->pApplicationInfo->applicationVersion;
-                                        if (pPacket->pCreateInfo->pApplicationInfo->pEngineName) {
-                                            size_t engineNameLen = strlen(pPacket->pCreateInfo->pApplicationInfo->pEngineName);
-                                            pEngineName = (char*)malloc(engineNameLen + 1);
-                                            memcpy(pEngineName, pPacket->pCreateInfo->pApplicationInfo->pEngineName, engineNameLen);
-                                            pEngineName[engineNameLen] = '\0';
+                                        if (appApiVersion == UINT32_MAX) {
+                                            appApiVersion = pPacket->pCreateInfo->pApplicationInfo->apiVersion;
                                         }
-                                        engineVersion = pPacket->pCreateInfo->pApplicationInfo->engineVersion;
                                     }
                                 }
                             } break;
@@ -379,10 +385,14 @@ int main(int argc, char** argv) {
                     vktrace_delete_trace_packet_no_lock(&packet);
                 }
                 if (!hideBriefInfo) {
-                    if (apiVersion != UINT32_MAX) {
-                        cout << setw(COLUMN_WIDTH) << left << "API Ver:" << dec << VK_VERSION_MAJOR(apiVersion) << "." << dec
-                             << VK_VERSION_MINOR(apiVersion) << "." << dec << VK_VERSION_PATCH(apiVersion) << endl;
+                    if (deviceApiVersion != UINT32_MAX) {
                         cout << setw(COLUMN_WIDTH) << left << "Device Name:" << deviceName << endl;
+                        cout << setw(COLUMN_WIDTH) << left << "Device API Ver:" << dec << VK_VERSION_MAJOR(deviceApiVersion) << "." << dec
+                             << VK_VERSION_MINOR(deviceApiVersion) << "." << dec << VK_VERSION_PATCH(deviceApiVersion) << endl;
+                    }
+                    if (appApiVersion != UINT32_MAX) {
+                        cout << setw(COLUMN_WIDTH) << left << "App API Ver:" << dec << VK_VERSION_MAJOR(appApiVersion) << "." << dec
+                             << VK_VERSION_MINOR(appApiVersion) << "." << dec << VK_VERSION_PATCH(appApiVersion) << endl;
                     }
                     if (pApplicationName) {
                         cout << setw(COLUMN_WIDTH) << left << "App Name:" << pApplicationName << endl;

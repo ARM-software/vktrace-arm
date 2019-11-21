@@ -28,8 +28,7 @@
 // declared as extern in header
 vkreplayer_settings g_vkReplaySettings;
 
-static vkreplayer_settings s_defaultVkReplaySettings = {NULL, 1, UINT_MAX, UINT_MAX, true, false, NULL, NULL, NULL, NULL,
-                                                        NULL, FALSE,    FALSE,    FALSE, FALSE, FALSE, FALSE};
+static vkreplayer_settings s_defaultVkReplaySettings = {NULL, 1, UINT_MAX, UINT_MAX, true, false, NULL, NULL, NULL, NULL, NULL, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, 50};
 
 vktrace_SettingInfo g_vk_settings_info[] = {
     {"o",
@@ -147,6 +146,13 @@ vktrace_SettingInfo g_vk_settings_info[] = {
      {&s_defaultVkReplaySettings.forceSingleWindow},
      TRUE,
      "Force single window rendering."},
+     {"feadm",
+      "forceEXTASTCDecodeMode",
+      VKTRACE_SETTING_BOOL,
+      {&g_vkReplaySettings.forceEXTASTCDecodeMode},
+      {&s_defaultVkReplaySettings.forceEXTASTCDecodeMode},
+      TRUE,
+      "Force using VK_FORMAT_R8G8B8A8_UNORM as ASTC decode mode."},
 };
 
 vktrace_SettingGroup g_vkReplaySettingGroup = {"vkreplay_vk", sizeof(g_vk_settings_info) / sizeof(g_vk_settings_info[0]),

@@ -74,9 +74,6 @@ void PageGuardCapture::vkMapMemoryPageGuardHandle(VkDevice device, VkDeviceMemor
                                                   VkFlags flags, void** ppData) {
     PageGuardMappedMemory OPTmappedmem;
     if (getPageGuardEnableFlag()) {
-#if defined(PAGEGUARD_TARGET_RANGE_SIZE_CONTROL)
-        if (size >= ref_target_range_size())
-#endif
         {
             void* pExternalHostMemory = nullptr;
             auto iteratorExtPointer = MapMemoryExtHostPointer.find(memory);
@@ -97,7 +94,7 @@ void PageGuardCapture::vkUnmapMemoryPageGuardHandle(VkDevice device, VkDeviceMem
     LPPageGuardMappedMemory lpOPTMemoryTemp = findMappedMemoryObject(device, memory);
     if (lpOPTMemoryTemp) {
         VkMappedMemoryRange memoryRange;
-        flushTargetChangedMappedMemory(lpOPTMemoryTemp, pFunc, &memoryRange);
+        flushTargetChangedMappedMemory(lpOPTMemoryTemp, pFunc, &memoryRange, false);
         lpOPTMemoryTemp->vkUnmapMemoryPageGuardHandle(device, memory, MappedData);
         MapMemory.erase(memory);
     }
@@ -132,7 +129,7 @@ bool PageGuardCapture::vkFlushMappedMemoryRangesPageGuardHandle(VkDevice device,
         ppPackageDataforOutOfMap[i] = nullptr;
         LPPageGuardMappedMemory lpOPTMemoryTemp = findMappedMemoryObject(device, pRange->memory);
 
-        if (lpOPTMemoryTemp) {
+        if (lpOPTMemoryTemp && !lpOPTMemoryTemp->noGuard()) {
             if (pRange->size == VK_WHOLE_SIZE) {
                 pRange->size = lpOPTMemoryTemp->getMappedSize() - (pRange->offset - lpOPTMemoryTemp->MappedOffset);
             }
@@ -224,7 +221,7 @@ VkDeviceSize PageGuardCapture::getALLChangedPackageSizeInMappedMemory(VkDevice d
     LPPageGuardMappedMemory pMappedMemoryTemp;
     for (uint32_t i = 0; i < memoryRangeCount; i++) {
         pMappedMemoryTemp = findMappedMemoryObject(device, pMemoryRanges + i);
-        if (pMappedMemoryTemp) {
+        if (pMappedMemoryTemp && !pMappedMemoryTemp->noGuard()) {
             pMappedMemoryTemp->getChangedDataPackage(&PackageSize);
         } else {
             PageGuardChangedBlockInfo* pInfoTemp = (PageGuardChangedBlockInfo*)ppPackageDataforOutOfMap[i];

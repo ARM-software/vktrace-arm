@@ -30,6 +30,7 @@ extern "C" {
 #include <memory>
 
 #include "vkreplay_preload.h"
+#include "vkreplay_factory.h"
 
 /* Class to handle fetching and sequencing packets from a tracefile.
  * Contains no knowledge of type of tracer needed to process packet.
@@ -67,8 +68,8 @@ class Sequencer : public AbstractSequencer {
     void get_bookmark(seqBookmark &bookmark);
     void set_bookmark(const seqBookmark &bookmark);
     void record_bookmark();
-    bool start_preload() {
-        m_chunkEnabled = init_preload(m_pFile);
+    bool start_preload(vktrace_replay::vktrace_trace_packet_replay_library *replayer_array[]) {
+        m_chunkEnabled = init_preload(m_pFile, replayer_array);
         return m_chunkEnabled;
     };
 

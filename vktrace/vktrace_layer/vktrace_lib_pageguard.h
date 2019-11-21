@@ -111,7 +111,7 @@ void setFlagTovkFlushMappedMemoryRangesSpecial(PBYTE pOPTPackageData);
 void flushAllChangedMappedMemory(vkFlushMappedMemoryRangesFunc pFunc);
 
 void flushTargetChangedMappedMemory(LPPageGuardMappedMemory TargetMappedMemory, vkFlushMappedMemoryRangesFunc pFunc,
-                                    VkMappedMemoryRange* pMemoryRanges);
+                                    VkMappedMemoryRange* pMemoryRanges, bool apiFlush);
 
 void resetAllReadFlagAndPageGuard();
 
@@ -122,6 +122,6 @@ void PageGuardExceptionHandler(int sig, siginfo_t* si, void* unused);
 #endif
 
 VkResult vkFlushMappedMemoryRangesWithoutAPICall(VkDevice device, uint32_t memoryRangeCount,
-                                                 const VkMappedMemoryRange* pMemoryRanges);
+                                                 const VkMappedMemoryRange* pMemoryRanges, bool apiFlush);
 
 PageGuardCapture& getPageGuardControlInstance();

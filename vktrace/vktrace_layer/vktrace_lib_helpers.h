@@ -23,6 +23,7 @@
  */
 #pragma once
 #include <unordered_map>
+
 #include "vktrace_vk_vk.h"
 #include "vulkan/vk_layer.h"
 #include "vk_layer_dispatch_table.h"
@@ -48,13 +49,19 @@ T FromHandleId(uint64_t handle_id) {
 template <>
 uint64_t FromHandleId<uint64_t>(uint64_t handle_id);
 
+enum FlushStatus {
+    NoFlush,
+    ApiFlush,
+    InternalFlush,
+};
+
 // Support for shadowing CPU mapped memory
 // TODO better handling of multiple range rather than fixed array
 typedef struct _VKAllocInfo {
     VkDeviceSize totalSize;
     VkDeviceSize rangeSize;
     VkDeviceSize rangeOffset;
-    BOOL didFlush;
+    FlushStatus didFlush;
     VkDeviceMemory handle;
     VkMemoryPropertyFlags props;
     uint8_t *pData;
@@ -104,7 +111,7 @@ static void init_mem_info_entrys(VKAllocInfo *ptr, const unsigned int num) {
         entry->totalSize = 0;
         entry->rangeSize = 0;
         entry->rangeOffset = 0;
-        entry->didFlush = FALSE;
+        entry->didFlush = NoFlush;
         entry->props = 0;
         memset(&entry->handle, 0, sizeof(VkDeviceMemory));
         entry->valid = FALSE;
@@ -201,7 +208,7 @@ static void add_new_handle_to_mem_info(const VkDeviceMemory handle, uint32_t mem
         entry->totalSize = size;
         entry->rangeSize = 0;
         entry->rangeOffset = 0;
-        entry->didFlush = FALSE;
+        entry->didFlush = NoFlush;
         entry->props = g_savedDevMemProps.memoryTypes[memTypeIdx].propertyFlags;
         entry->pData = (uint8_t *)pData;  // NOTE: VKFreeMemory will free this mem, so no malloc()
     }
@@ -237,7 +244,7 @@ static void rm_handle_from_mem_info(const VkDeviceMemory handle) {
         entry->totalSize = 0;
         entry->rangeSize = 0;
         entry->rangeOffset = 0;
-        entry->didFlush = FALSE;
+        entry->didFlush = NoFlush;
         entry->props = 0;
         memset(&entry->handle, 0, sizeof(VkDeviceMemory));
 

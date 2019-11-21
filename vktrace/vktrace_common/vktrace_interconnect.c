@@ -19,15 +19,15 @@
  * Author: Peter Lohrmann <peterl@valvesoftware.com>
  */
 
-#include "vktrace_interconnect.h"
 #include "vktrace_common.h"
-
 #include "vktrace_filelike.h"
 
 #if defined(ANDROID)
 #include <sys/un.h>
 #endif
-
+#if !defined(WIN32)
+#include <errno.h>
+#endif
 const size_t kSendBufferSize = 1024 * 1024;
 
 MessageStream* gMessageStream = NULL;
@@ -37,7 +37,6 @@ static VKTRACE_CRITICAL_SECTION gSendLock;
 // ------------------------------------------------------------------------------------------------
 // private functions
 BOOL vktrace_MessageStream_SetupSocket(MessageStream* pStream);
-BOOL vktrace_MessageStream_SetupHostSocket(MessageStream* pStream);
 BOOL vktrace_MessageStream_SetupClientSocket(MessageStream* pStream);
 BOOL vktrace_MessageStream_Handshake(MessageStream* pStream);
 BOOL vktrace_MessageStream_ReallySend(MessageStream* pStream, const void* _bytes, uint64_t _size, BOOL _optional);
@@ -60,6 +59,7 @@ MessageStream* vktrace_MessageStream_create_port_string(BOOL _isHost, const char
     pStream->mHostAddressInfo = NULL;
     pStream->mNextPacketId = 0;
     pStream->mSocket = INVALID_SOCKET;
+    pStream->mServerListenSocket = INVALID_SOCKET;
     pStream->mSendBuffer = NULL;
 
     if (vktrace_MessageStream_SetupSocket(pStream) == FALSE) {
@@ -127,60 +127,77 @@ BOOL vktrace_MessageStream_SetupHostSocket(MessageStream* pStream) {
 #endif
     struct addrinfo hostAddrInfo = {0};
     SOCKET listenSocket;
+    if (pStream->mServerListenSocket == INVALID_SOCKET) {
+        vktrace_create_critical_section(&gSendLock);
+        hostAddrInfo.ai_family = AF_INET;
+        hostAddrInfo.ai_socktype = SOCK_STREAM;
+        hostAddrInfo.ai_protocol = IPPROTO_TCP;
+        hostAddrInfo.ai_flags = AI_PASSIVE;
 
-    vktrace_create_critical_section(&gSendLock);
-    hostAddrInfo.ai_family = AF_INET;
-    hostAddrInfo.ai_socktype = SOCK_STREAM;
-    hostAddrInfo.ai_protocol = IPPROTO_TCP;
-    hostAddrInfo.ai_flags = AI_PASSIVE;
-
-    hr = getaddrinfo(NULL, pStream->mPort, &hostAddrInfo, &pStream->mHostAddressInfo);
-    if (hr != 0) {
-        vktrace_LogError("Host: Failed getaddrinfo.");
-        return FALSE;
-    }
-
-    listenSocket = socket(pStream->mHostAddressInfo->ai_family, pStream->mHostAddressInfo->ai_socktype,
-                          pStream->mHostAddressInfo->ai_protocol);
-    if (listenSocket == INVALID_SOCKET) {
-        // TODO: Figure out errors
-        vktrace_LogError("Host: Failed creating a listen socket.");
-        freeaddrinfo(pStream->mHostAddressInfo);
-        pStream->mHostAddressInfo = NULL;
-        return FALSE;
-    }
+        hr = getaddrinfo(NULL, pStream->mPort, &hostAddrInfo, &pStream->mHostAddressInfo);
+        if (hr != 0) {
+            vktrace_LogError("Host: Failed getaddrinfo.");
+            return FALSE;
+        }
+        listenSocket = socket(pStream->mHostAddressInfo->ai_family,
+                              pStream->mHostAddressInfo->ai_socktype,
+                              pStream->mHostAddressInfo->ai_protocol);
+        if (listenSocket == INVALID_SOCKET) {
+            // TODO: Figure out errors
+            vktrace_LogError("Host: Failed creating a listen socket.");
+            freeaddrinfo(pStream->mHostAddressInfo);
+            pStream->mHostAddressInfo = NULL;
+            return FALSE;
+        } else {
+            pStream->mServerListenSocket = listenSocket;
+        }
 
 #if defined(PLATFORM_LINUX) || defined(PLATFORM_OSX)
-    setsockopt(listenSocket, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
+        setsockopt(listenSocket, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
 #endif
-    hr = bind(listenSocket, pStream->mHostAddressInfo->ai_addr, (int)pStream->mHostAddressInfo->ai_addrlen);
-    if (hr == SOCKET_ERROR) {
-        vktrace_LogError("Host: Failed binding socket err=%d.", VKTRACE_WSAGetLastError());
+        hr = bind(listenSocket, pStream->mHostAddressInfo->ai_addr, (int)pStream->mHostAddressInfo->ai_addrlen);
+        if (hr == SOCKET_ERROR) {
+            vktrace_LogError("Host: Failed binding socket err=%d.", VKTRACE_WSAGetLastError());
+            freeaddrinfo(pStream->mHostAddressInfo);
+            pStream->mHostAddressInfo = NULL;
+            closesocket(listenSocket);
+            return FALSE;
+        }
+
+        // Done with this.
         freeaddrinfo(pStream->mHostAddressInfo);
         pStream->mHostAddressInfo = NULL;
-        closesocket(listenSocket);
-        return FALSE;
-    }
 
-    // Done with this.
-    freeaddrinfo(pStream->mHostAddressInfo);
-    pStream->mHostAddressInfo = NULL;
-
-    hr = listen(listenSocket, 1);
-    if (hr == SOCKET_ERROR) {
-        vktrace_LogError("Host: Failed listening on socket err=%d.", VKTRACE_WSAGetLastError());
-        closesocket(listenSocket);
-        return FALSE;
+        hr = listen(listenSocket, 5);
+        if (hr == SOCKET_ERROR) {
+            vktrace_LogError("Host: Failed listening on socket err=%d.", VKTRACE_WSAGetLastError());
+            closesocket(listenSocket);
+            return FALSE;
+        }
+    } else {
+        listenSocket = pStream->mServerListenSocket;
     }
 
     // Fo reals.
     vktrace_LogVerbose("Listening for connections on port %s.", pStream->mPort);
-    pStream->mSocket = accept(listenSocket, NULL, NULL);
-    closesocket(listenSocket);
-
-    if (pStream->mSocket == INVALID_SOCKET) {
-        vktrace_LogError("Host: Failed accepting socket connection.");
-        return FALSE;
+    pStream->mSocket = INVALID_SOCKET;
+    // The accept call needs be put in while loop because none-blocking
+    // mode is used during receiving trace file data.
+    int error_code;
+    while (pStream->mSocket == INVALID_SOCKET) {
+        pStream->mSocket = accept(listenSocket, NULL, NULL);
+        if (pStream->mSocket == INVALID_SOCKET) {
+#if defined(WIN32)
+            error_code = WSAGetLastError();
+            if ((error_code == WSAECONNRESET) || (error_code == WSAENETDOWN)) {
+#else
+            error_code = errno;
+            if ((error_code == ECONNABORTED) || (error_code == ENETDOWN)) {
+#endif
+                vktrace_LogError("Host: Failed network connection.");
+                return FALSE;
+            }
+        }
     }
 
     vktrace_LogVerbose("Connected on port %s.", pStream->mPort);

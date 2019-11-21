@@ -26,8 +26,6 @@
 extern "C" {
 #include "vktrace_settings.h"
 }
-#include "vkreplay_main.h"
-
 #include <vulkan/vulkan.h>
 
 extern vkreplayer_settings g_vkReplaySettings;

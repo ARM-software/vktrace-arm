@@ -171,7 +171,7 @@ uint64_t MessageLoop() {
 #endif
 
 int PrepareTracers(vktrace_process_capture_trace_thread_info** ppTracerInfo) {
-    unsigned int num_tracers = 1;
+    unsigned int num_tracers = 32;
 
     assert(ppTracerInfo != NULL && *ppTracerInfo == NULL);
     *ppTracerInfo = VKTRACE_NEW_ARRAY(vktrace_process_capture_trace_thread_info, num_tracers);
@@ -235,56 +235,6 @@ void loggingCallback(VktraceLogLevel level, const char* pMessage) {
 #endif
 }
 
-// ------------------------------------------------------------------------------------------------
-char* append_index_to_filename(const char* base, uint32_t index, const char* extension) {
-    char num[17];
-#if defined(PLATFORM_LINUX)
-    snprintf(num, 17, "-%u", index);
-#elif defined(WIN32)
-    _snprintf_s(num, 17, _TRUNCATE, "-%u", index);
-#endif
-    return vktrace_copy_and_append(base, num, extension);
-}
-
-// ------------------------------------------------------------------------------------------------
-static uint32_t s_fileIndex = 0;
-char* find_available_filename(const char* originalFilename, bool bForceOverwrite) {
-    char* pOutputFilename = NULL;
-
-    if (bForceOverwrite) {
-        if (s_fileIndex == 0) {
-            pOutputFilename = vktrace_allocate_and_copy(g_settings.output_trace);
-        } else {
-            const char* pExtension = strrchr(g_settings.output_trace, '.');
-            char* basename = vktrace_allocate_and_copy_n(
-                g_settings.output_trace,
-                (int)((pExtension == NULL) ? strlen(g_settings.output_trace) : pExtension - g_settings.output_trace));
-            pOutputFilename = append_index_to_filename(basename, s_fileIndex, pExtension);
-            vktrace_free(basename);
-        }
-    } else  // don't overwrite
-    {
-        const char* pExtension = strrchr(g_settings.output_trace, '.');
-        char* basename = vktrace_allocate_and_copy_n(
-            g_settings.output_trace,
-            (int)((pExtension == NULL) ? strlen(g_settings.output_trace) : pExtension - g_settings.output_trace));
-        pOutputFilename = vktrace_allocate_and_copy(g_settings.output_trace);
-        FILE* pFile = NULL;
-        while ((pFile = fopen(pOutputFilename, "rb")) != NULL) {
-            fclose(pFile);
-            ++s_fileIndex;
-
-            vktrace_free(pOutputFilename);
-            pOutputFilename = append_index_to_filename(basename, s_fileIndex, pExtension);
-        }
-        vktrace_free(basename);
-    }
-
-    // increment to the next available fileIndex to prep for the next trace file
-    ++s_fileIndex;
-    return pOutputFilename;
-}
-
 // Portability table - Table of trace file offsets to packets
 // we need to access to determine what memory index should be used
 // in vkAllocateMemory during trace playback. This table is appended
@@ -294,7 +244,7 @@ uint32_t lastPacketThreadId;
 uint64_t lastPacketIndex;
 uint64_t lastPacketEndTime;
 
-static void vktrace_appendPortabilityPacket(FILE* pTraceFile) {
+void vktrace_appendPortabilityPacket(FILE* pTraceFile) {
     vktrace_trace_packet_header hdr;
     uint64_t one_64 = 1;
 
@@ -503,8 +453,8 @@ int main(int argc, char* argv[]) {
         procInfo.parentThreadId = vktrace_platform_get_thread_id();
 
         // setup tracer, only Vulkan tracer suppported
-        PrepareTracers(&procInfo.pCaptureThreads);
-
+        procInfo.maxCaptureThreadsNumber = PrepareTracers(&procInfo.pCaptureThreads);
+        procInfo.currentCaptureThreadsCount = 1;
         if (g_settings.program != NULL) {
             char* instEnv = vktrace_get_global_var("VK_INSTANCE_LAYERS");
             // Add ScreenShot layer if enabled
@@ -565,7 +515,9 @@ int main(int argc, char* argv[]) {
                 vktrace_linux_sync_wait_for_thread(&procInfo.watchdogThread);
             }
 
-            vktrace_linux_sync_wait_for_thread(&(procInfo.pCaptureThreads[0].recordingThread));
+            for (uint32_t i = 0; i < procInfo.currentCaptureThreadsCount; i++) {
+                vktrace_linux_sync_wait_for_thread(&(procInfo.pCaptureThreads[i].recordingThread));
+            }
 
 #else
             vktrace_platform_resume_thread(&procInfo.hThread);
@@ -573,8 +525,10 @@ int main(int argc, char* argv[]) {
             // Now into the main message loop, listen for hotkeys to send over.
             exitval = (int)MessageLoop();
 #endif
+            if (procInfo.messageStream && procInfo.messageStream->mServerListenSocket) {
+                closesocket(procInfo.messageStream->mServerListenSocket);
+            }
         }
-        vktrace_appendPortabilityPacket(procInfo.pTraceFile);
         vktrace_process_info_delete(&procInfo);
         serverIndex++;
     } while (g_settings.program == NULL);

@@ -6,16 +6,16 @@ This vktrace build is based on lunarG's open source VulkanTools project, https:/
    2)  adb shell setenforce 0
    3)  adb shell rm -rf /data/local/debug/vulkan
    4)  adb shell mkdir -p /data/local/debug/vulkan
-
+   
 # Trace 32-bit Vulkan APK
    5)  adb push android/trace_layer/armeabi-v7a/libVkLayer_vktrace_layer.so /data/local/debug/vulkan/
 # Or trace 64-bit Vulkan APK
    5)  adb push android/trace_layer/arm64-v8a/libVkLayer_vktrace_layer.so /data/local/debug/vulkan/
-
+   
    6)  adb shell setprop debug.vulkan.layer.1 VK_LAYER_LUNARG_vktrace
    7)  adb reverse localabstract:vktrace tcp:34201
    8)  x64/bin/vktrace -v full -o <filename>.vktrace
-
+   
    9)  # Optional: Trim/Fast forward
        # Suggest to set post processing trim to remove most of the redundant resources when the trim frame range is not too large.  Because this feature will cache resources in memory until trim end frame.
        adb shell setprop VKTRACE_TRIM_POST_PROCESS 1
@@ -23,11 +23,9 @@ This vktrace build is based on lunarG's open source VulkanTools project, https:/
        adb shell setprop VKTRACE_TRIM_TRIGGER "frames-<start_frame>-<end_frame>"
    10) # Optional: Force using FIFO present mode in vkCreateInstance.
        adb shell setprop VKTRACE_FORCE_FIFO 1
-   11) # Optional: Sync the GPU data back to the PMB buffer
-       adb shell setprop VKTRACE_PAGEGUARD_ENABLE_SYNC_GPU_DATA_BACK 1
-
-   12) # Run the app on android to start tracing
-   13) # Shutdown the app to stop tracing
+       
+   11) # Run the app on android to start tracing
+   12) # Shutdown the app to stop tracing
        adb shell am force-stop <app's package name>
        # Command "aapt dump badging <path to the APK file>" can be used to get package name from an APK.
 

@@ -18,8 +18,9 @@
 #ifndef _VKTRACE_PRELOAD_H_
 #define _VKTRACE_PRELOAD_H_
 #include <cinttypes>
+#include "vkreplay_factory.h"
 
-bool init_preload(FileLike* file);
+bool init_preload(FileLike* file, vktrace_replay::vktrace_trace_packet_replay_library *replayer_array[]);
 vktrace_trace_packet_header* preload_get_next_packet();
 void exit_preload();
 uint64_t get_preload_waiting_time_when_replaying();

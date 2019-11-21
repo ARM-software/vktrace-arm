@@ -28,6 +28,7 @@ extern "C" {
 #include <mutex>
 #include <condition_variable>
 
+#include "vkreplay_factory.h"
 #include "vkreplay_preload.h"
 #include "vkreplay_main.h"
 
@@ -97,7 +98,7 @@ static uint64_t get_system_memory_size() {
 }
 
 static uint32_t calc_chunk_count(uint64_t sys_mem_size, uint64_t chunk_size, uint64_t file_size) {
-    uint64_t preload_mem_size = sys_mem_size / 2;
+    uint64_t preload_mem_size = sys_mem_size * replaySettings.memoryPercentage / 100;
 
     preload_mem_size = preload_mem_size < file_size ? preload_mem_size : file_size;
     uint32_t chunk_count = (preload_mem_size + chunk_size - 1) / chunk_size;
@@ -112,6 +113,9 @@ static uint64_t get_packet_size(FileLike* file) {
     }
     return packet_size;
 }
+
+vktrace_replay::vktrace_trace_packet_replay_library **replayerArray;
+vktrace_replay::vktrace_trace_packet_replay_library *replayer = NULL;
 
 static uint64_t load_packet(FileLike* file, void* load_addr, uint64_t packet_size) {
     vktrace_trace_packet_header* pHeader = (vktrace_trace_packet_header*)load_addr;
@@ -132,6 +136,57 @@ static uint64_t load_packet(FileLike* file, void* load_addr, uint64_t packet_siz
     }
 
     pHeader->pBody = (uintptr_t)pHeader + sizeof(vktrace_trace_packet_header);
+
+    // interpret this packet
+    switch (pHeader->packet_id) {
+        case VKTRACE_TPI_MESSAGE:
+#if defined(ANDROID) || !defined(ARM_ARCH)
+            vktrace_trace_packet_message* msgPacket;
+            msgPacket = vktrace_interpret_body_as_trace_packet_message(pHeader);
+            vktrace_LogAlways("Packet %lu: Traced Message (%s): %s", pHeader->global_packet_index,
+                              vktrace_LogLevelToShortString(msgPacket->type), msgPacket->message);
+#endif
+            break;
+        case VKTRACE_TPI_MARKER_CHECKPOINT:
+            break;
+        case VKTRACE_TPI_MARKER_API_BOUNDARY:
+            break;
+        case VKTRACE_TPI_MARKER_API_GROUP_BEGIN:
+            break;
+        case VKTRACE_TPI_MARKER_API_GROUP_END:
+            break;
+        case VKTRACE_TPI_MARKER_TERMINATE_PROCESS:
+            break;
+        case VKTRACE_TPI_PORTABILITY_TABLE:
+            break;
+        case VKTRACE_TPI_VK_vkQueuePresentKHR: {
+            vktrace_trace_packet_header* res = replayer->Interpret(pHeader);
+            if (res == NULL) {
+                vktrace_LogError("Failed to interpret QueuePresent().");
+            }
+            break;
+        }
+        // TODO processing code for all the above cases
+        default: {
+            if (pHeader->tracer_id >= VKTRACE_MAX_TRACER_ID_ARRAY_SIZE || pHeader->tracer_id == VKTRACE_TID_RESERVED) {
+                vktrace_LogError("Tracer_id from packet num packet %d invalid.", pHeader->packet_id);
+            }
+            replayer = replayerArray[pHeader->tracer_id];
+            if (replayer == NULL) {
+                vktrace_LogWarning("Tracer_id %d has no valid replayer.", pHeader->tracer_id);
+            }
+            if (pHeader->packet_id >= VKTRACE_TPI_VK_vkApiVersion) {
+                // replay the API packet
+                vktrace_trace_packet_header* res = replayer->Interpret(pHeader);
+                if (res == NULL) {
+                    vktrace_LogError("Failed to replay packet_id %d, with global_packet_index %d.", pHeader->packet_id,
+                                     pHeader->global_packet_index);
+                }
+            } else {
+                vktrace_LogError("Bad packet type id=%d, index=%d.", pHeader->packet_id, pHeader->global_packet_index);
+            }
+        }
+    }
 
     return packet_size;
 }
@@ -195,8 +250,9 @@ static void chunk_loading() {
     }
 }
 
-bool init_preload(FileLike* file) {
+bool init_preload(FileLike* file, vktrace_replay::vktrace_trace_packet_replay_library *replayer_array[]) {
 
+    replayerArray = replayer_array;
     bool ret = true;
     uint64_t system_mem_size = get_system_memory_size();
     vktrace_LogAlways("Init preload: the total size of system memory = 0x%llX and the size of trace file = 0x%llX", system_mem_size, file->mFileLen);

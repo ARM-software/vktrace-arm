@@ -59,3 +59,5 @@ extern std::vector<uint64_t> portabilityTable;
 extern uint32_t lastPacketThreadId;
 extern uint64_t lastPacketIndex;
 extern uint64_t lastPacketEndTime;
+
+void vktrace_appendPortabilityPacket(FILE* pTraceFile);

@@ -43,7 +43,7 @@
 //#define PAGEGUARD_ADD_PAGEGUARD_ON_REAL_MAPPED_MEMORY
 
 typedef VkResult (*vkFlushMappedMemoryRangesFunc)(VkDevice device, uint32_t memoryRangeCount,
-                                                  const VkMappedMemoryRange* pMemoryRanges);
+                                                  const VkMappedMemoryRange* pMemoryRanges, bool apiFlush);
 
 typedef class PageGuardCapture {
    private:

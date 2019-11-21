@@ -44,8 +44,10 @@
 #include "vkreplay_preload.h"
 #include "screenshot_parsing.h"
 #include "vktrace_vk_packet_id.h"
+#include "vkreplay_vkreplay.h"
 
-vkreplayer_settings replaySettings = {NULL, 1, UINT_MAX, UINT_MAX, true, false, NULL, NULL, NULL, NULL, NULL, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE};
+vkreplayer_settings replaySettings = {NULL, 1, UINT_MAX, UINT_MAX, true, false, NULL, NULL, NULL, NULL, NULL, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, 50};
+extern vkReplay* g_replay;
 
 #if defined(ANDROID)
 const char* env_var_screenshot_frames = "debug.vulkan.screenshot";
@@ -204,6 +206,27 @@ vktrace_SettingInfo g_settings_info[] = {
      "Verbosity mode. Modes are \"quiet\", \"errors\", \"warnings\", "
      "\"full\"."},
 #endif
+    {"fdaf",
+     "forceDisableAF",
+     VKTRACE_SETTING_BOOL,
+     {&replaySettings.forceDisableAF},
+     {&replaySettings.forceDisableAF},
+     TRUE,
+     "Force to disable anisotropic filter, default is FALSE"},
+    {"feadm",
+     "forceEXTASTCDecodeMode",
+     VKTRACE_SETTING_BOOL,
+     {&replaySettings.forceEXTASTCDecodeMode},
+     {&replaySettings.forceEXTASTCDecodeMode},
+     TRUE,
+     "Force using VK_FORMAT_R8G8B8A8_UNORM as ASTC decode mode."},
+    {"pmp",
+     "memoryPercentage",
+     VKTRACE_SETTING_UINT,
+     {&replaySettings.memoryPercentage},
+     {&replaySettings.memoryPercentage},
+     TRUE,
+     "Preload vktrace file block occupancy system memory percentage,the default is 50%"},
 };
 
 vktrace_SettingGroup g_replaySettingGroup = {"vkreplay", sizeof(g_settings_info) / sizeof(g_settings_info[0]), &g_settings_info[0]};
@@ -227,10 +250,19 @@ uint64_t getEndFrame()
     return replaySettings.loopEndFrame;
 }
 
+unsigned int replay(vktrace_trace_packet_replay_library* replayer, vktrace_trace_packet_header* packet)
+{
+    if (replaySettings.preloadTraceFile && timerStarted()) {    // the packet has already been interpreted during the preloading
+        return replayer->Replay(packet);
+    }
+    else {
+        return replayer->Replay(replayer->Interpret(packet));
+    }
+}
+
 int main_loop(vktrace_replay::ReplayDisplay display, Sequencer& seq, vktrace_trace_packet_replay_library* replayerArray[]) {
     int err = 0;
     vktrace_trace_packet_header* packet;
-    unsigned int res;
     vktrace_trace_packet_replay_library* replayer = NULL;
 #if defined(ANDROID) || !defined(ARM_ARCH)
     vktrace_trace_packet_message* msgPacket;
@@ -251,18 +283,18 @@ int main_loop(vktrace_replay::ReplayDisplay display, Sequencer& seq, vktrace_tra
     seq.get_bookmark(startingPacket);
     uint64_t totalLoops = replaySettings.numLoops;
     uint64_t totalLoopFrames = 0;
-    uint64_t start_time = vktrace_get_time();
     uint64_t end_time;
     uint64_t start_frame = replaySettings.loopStartFrame == UINT_MAX ? 0 : replaySettings.loopStartFrame;
     uint64_t end_frame = UINT_MAX;
     if (start_frame == 0) {
         if (replaySettings.preloadTraceFile) {
             vktrace_LogAlways("Preloading trace file...");
-            seq.start_preload();
+            seq.start_preload(replayerArray);
         }
         timer_started = true;
         vktrace_LogAlways("================== Start timer (Frame: %llu) ==================", start_frame);
     }
+    uint64_t start_time = vktrace_get_time();
     const char* screenshot_list = replaySettings.screenshotList;
     while (replaySettings.numLoops > 0) {
         if (replaySettings.numLoops > 1 && replaySettings.screenshotList != NULL) {
@@ -297,8 +329,7 @@ int main_loop(vktrace_replay::ReplayDisplay display, Sequencer& seq, vktrace_tra
                 case VKTRACE_TPI_PORTABILITY_TABLE:
                     break;
                 case VKTRACE_TPI_VK_vkQueuePresentKHR: {
-                    res = replayer->Replay(replayer->Interpret(packet));
-                    if (res != VKTRACE_REPLAY_SUCCESS) {
+                    if (replay(replayer, packet) != VKTRACE_REPLAY_SUCCESS) {
                         vktrace_LogError("Failed to replay QueuePresent().");
                         if (replaySettings.exitOnAnyError) {
                             err = -1;
@@ -315,7 +346,7 @@ int main_loop(vktrace_replay::ReplayDisplay display, Sequencer& seq, vktrace_tra
                         seq.get_bookmark(startingPacket);
                         if (replaySettings.preloadTraceFile) {
                             vktrace_LogAlways("Preloading trace file...");
-                            seq.start_preload();
+                            seq.start_preload(replayerArray);
                         }
                         timer_started = true;
                         start_time = vktrace_get_time();
@@ -348,8 +379,7 @@ int main_loop(vktrace_replay::ReplayDisplay display, Sequencer& seq, vktrace_tra
                     }
                     if (packet->packet_id >= VKTRACE_TPI_VK_vkApiVersion) {
                         // replay the API packet
-                        res = replayer->Replay(replayer->Interpret(packet));
-                        if (res != VKTRACE_REPLAY_SUCCESS) {
+                        if (replay(replayer, packet) != VKTRACE_REPLAY_SUCCESS) {
                             vktrace_LogError("Failed to replay packet_id %d, with global_packet_index %d.", packet->packet_id,
                                              packet->global_packet_index);
                             if (replaySettings.exitOnAnyError || packet->packet_id == VKTRACE_TPI_VK_vkCreateInstance ||
@@ -381,6 +411,9 @@ int main_loop(vktrace_replay::ReplayDisplay display, Sequencer& seq, vktrace_tra
         if (replayer != NULL) {
             replayer->ResetFrameNumber(replaySettings.loopStartFrame);
         }
+    }
+    if (g_replay != nullptr) {
+        g_replay->deviceWaitIdle();
     }
     end_time = vktrace_get_time();
     timer_started = false;
@@ -546,7 +579,10 @@ int vkreplay_main(int argc, char** argv, vktrace_replay::ReplayDisplayImp* pDisp
         vktrace_LogError("Bad loop frame range");
         return -1;
     }
-
+    if (replaySettings.memoryPercentage >= 90 || replaySettings.memoryPercentage == 0) {
+        vktrace_LogError("Bad preload memory Percentage");
+        return -1;
+    }
     // merge settings so that new settings will get written into the settings file
     vktrace_SettingGroup_merge(&g_replaySettingGroup, &pAllSettings, &numAllSettings);
 
@@ -766,6 +802,8 @@ int vkreplay_main(int argc, char** argv, vktrace_replay::ReplayDisplayImp* pDisp
     }
 
     // read portability table if it exists
+    if (pFileHeader->portability_table_valid)
+        vktrace_LogAlways("Portability table exists.");
     if (replaySettings.enablePortabilityTable) {
         vktrace_LogDebug("Read portability table if it exists.");
         if (pFileHeader->portability_table_valid) pFileHeader->portability_table_valid = readPortabilityTable();

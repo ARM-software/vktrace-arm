@@ -25,14 +25,13 @@
  * Author: David Pinedo <david@lunarg.com>
  */
 
+#include <algorithm>
+
 #include "vulkan/vulkan.h"
 #include "vkreplay_vkreplay.h"
 #include "vkreplay.h"
 #include "vkreplay_settings.h"
 #include "vkreplay_main.h"
-
-#include <algorithm>
-
 #include "vktrace_vk_vk_packets.h"
 #include "vk_enum_string_helper.h"
 #include "vktrace_vk_packet_id.h"
@@ -45,7 +44,6 @@
 using namespace std;
 #include "vktrace_pageguard_memorycopy.h"
 
-vkreplayer_settings *g_pReplaySettings;
 #if defined(PLATFORM_LINUX) && !defined(ANDROID)
 
 namespace {
@@ -57,6 +55,8 @@ namespace {
 }
 
 #endif // #if defined(PLATFORM_LINUX) && !defined(ANDROID)
+
+vkReplay* g_replay = nullptr;
 
 vkReplay::vkReplay(vkreplayer_settings *pReplaySettings, vktrace_trace_file_header *pFileHeader,
                    vktrace_replay::ReplayDisplayImp *display)
@@ -86,6 +86,7 @@ vkReplay::vkReplay(vkreplayer_settings *pReplaySettings, vktrace_trace_file_head
     m_pFileHeader = pFileHeader;
     m_pGpuinfo = (struct_gpuinfo *)(pFileHeader + 1);
     m_platformMatch = -1;
+    g_replay = this;
 }
 
 std::vector<uintptr_t> portabilityTablePackets;
@@ -100,6 +101,7 @@ vkReplay::~vkReplay() {
         free(subobj->second.queueFamilyProperties);
     }
     replayQueueFamilyProperties.clear();
+    g_replay = nullptr;
 
     for (auto obj = m_objMapper.m_devices.begin(); obj != m_objMapper.m_devices.end(); obj++) {
         // Make sure no gpu job is running before quit vkreplay
@@ -507,6 +509,9 @@ VkResult vkReplay::manually_replay_vkCreateInstance(packet_vkCreateInstance *pPa
     outlist.push_back("VK_KHR_wayland_surface");
     outlist.push_back("VK_KHR_android_surface");
 #endif
+    if (g_pReplaySettings && TRUE == g_pReplaySettings->forceEXTASTCDecodeMode) {
+        extension_names.push_back(VK_EXT_ASTC_DECODE_MODE_EXTENSION_NAME);
+    }
 
     // Get replayable extensions in compatibility mode
     uint32_t extensionCount = 0;
@@ -820,6 +825,19 @@ VkResult vkReplay::manually_replay_vkCreateDevice(packet_vkCreateDevice *pPacket
         pCreateInfo->ppEnabledExtensionNames = extensionNames.data();
         pCreateInfo->enabledExtensionCount = (uint32_t)extensionNames.size();
     }
+    if (pPacket->pCreateInfo->pEnabledFeatures) {
+        VkPhysicalDeviceFeatures physicalDeviceFeatures;
+        m_vkFuncs.GetPhysicalDeviceFeatures(remappedPhysicalDevice, &physicalDeviceFeatures);
+        VkBool32 *traceFeatures = (VkBool32 *)(pPacket->pCreateInfo->pEnabledFeatures);
+        VkBool32 *deviceFeatures = (VkBool32 *)(&physicalDeviceFeatures);
+        uint32_t numOfFeatures = sizeof(VkPhysicalDeviceFeatures) / sizeof(VkBool32);
+        for (uint32_t i = 0; i < numOfFeatures; i++) {
+            if ((*(traceFeatures + i)) && !(*(deviceFeatures + i))) {
+                vktrace_LogAlways("Device Features (%s = %d) in trace file do not match the physical device (%d)", GetPhysDevFeatureString(i),*(traceFeatures + i),*(deviceFeatures + i));
+            }
+        }
+        changeDeviceFeature(traceFeatures,deviceFeatures,numOfFeatures);
+    }
 
     replayResult = m_vkFuncs.CreateDevice(remappedPhysicalDevice, pPacket->pCreateInfo, NULL, &device);
     if (ppEnabledLayerNames) {
@@ -892,7 +910,6 @@ VkResult vkReplay::manually_replay_vkCreateImage(packet_vkCreateImage *pPacket) 
     if (remappedDevice == VK_NULL_HANDLE) {
         return VK_ERROR_VALIDATION_FAILED_EXT;
     }
-
     // Convert queueFamilyIndices
     if (pPacket->pCreateInfo) {
         for (uint32_t i = 0; i < pPacket->pCreateInfo->queueFamilyIndexCount; i++) {
@@ -2216,19 +2233,21 @@ bool vkReplay::modifyMemoryTypeIndexInAllocateMemoryPacket(VkDevice remappedDevi
         }
 
         if (pPacketHeader1->packet_id == VKTRACE_TPI_VK_vkBindImageMemory2KHR ||
-            pPacketHeader1->packet_id == VKTRACE_TPI_VK_vkBindBufferMemory2KHR) {
+            pPacketHeader1->packet_id == VKTRACE_TPI_VK_vkBindBufferMemory2KHR ||
+            pPacketHeader1->packet_id == VKTRACE_TPI_VK_vkBindImageMemory2 ||
+            pPacketHeader1->packet_id == VKTRACE_TPI_VK_vkBindBufferMemory2) {
             // Search the memory bind list in vkBIM2/vkBBM2 packet for traceAllocateMemoryRval
             packet_vkBindImageMemory2KHR *pBim2Packet = (packet_vkBindImageMemory2KHR *)(pPacketHeader1->pBody);
             for (uint32_t bindCounter = 0; bindCounter < pBim2Packet->bindInfoCount; bindCounter++) {
                 if (pBim2Packet->pBindInfos[bindCounter].memory == traceAllocateMemoryRval) {
                     // Found a bind
-                    if (pPacketHeader1->packet_id == VKTRACE_TPI_VK_vkBindImageMemory2KHR)
+                    if (pPacketHeader1->packet_id == VKTRACE_TPI_VK_vkBindImageMemory2KHR || pPacketHeader1->packet_id == VKTRACE_TPI_VK_vkBindImageMemory2)
                         remappedImage = m_objMapper.remap_images(pBim2Packet->pBindInfos[bindCounter].image);
                     else
                         remappedImage = (VkImage)m_objMapper.remap_buffers((VkBuffer)pBim2Packet->pBindInfos[bindCounter].image);
 
-                    if (pPacketHeader1->packet_id == VKTRACE_TPI_VK_vkBindImageMemory2KHR && remappedImage &&
-                        replayImageToTiling[remappedImage] == VK_IMAGE_TILING_OPTIMAL) {
+                    if ((pPacketHeader1->packet_id == VKTRACE_TPI_VK_vkBindImageMemory2KHR || pPacketHeader1->packet_id == VKTRACE_TPI_VK_vkBindImageMemory2)
+                        && remappedImage && replayImageToTiling[remappedImage] == VK_IMAGE_TILING_OPTIMAL) {
                         // Skip optimal tiling image
                         remappedImage = VK_NULL_HANDLE;
                     } else {
@@ -2324,7 +2343,8 @@ bool vkReplay::modifyMemoryTypeIndexInAllocateMemoryPacket(VkDevice remappedDevi
 
     // Call GIMR/GBMR for the replay image/buffer
     if (pPacketHeader1->packet_id == VKTRACE_TPI_VK_vkBindImageMemory ||
-        pPacketHeader1->packet_id == VKTRACE_TPI_VK_vkBindImageMemory2KHR) {
+        pPacketHeader1->packet_id == VKTRACE_TPI_VK_vkBindImageMemory2KHR ||
+        pPacketHeader1->packet_id == VKTRACE_TPI_VK_vkBindImageMemory2) {
         if (replayGetImageMemoryRequirements.find(remappedImage) == replayGetImageMemoryRequirements.end()) {
             m_vkDeviceFuncs.GetImageMemoryRequirements(remappedDevice, remappedImage, &memRequirements);
             replayGetImageMemoryRequirements[remappedImage] = memRequirements;
@@ -2395,6 +2415,31 @@ VkResult vkReplay::manually_replay_vkAllocateMemory(packet_vkAllocateMemory *pPa
         return VK_ERROR_VALIDATION_FAILED_EXT;
     }
 
+#if defined(ANDROID)
+    VkImportAndroidHardwareBufferInfoANDROID* importAHWBuf = (VkImportAndroidHardwareBufferInfoANDROID*)find_ext_struct(
+                                                                    (const vulkan_struct_header*)pPacket->pAllocateInfo,
+                                                                    VK_STRUCTURE_TYPE_IMPORT_ANDROID_HARDWARE_BUFFER_INFO_ANDROID);
+    if (importAHWBuf) {
+        PBYTE importBufData = (PBYTE)vktrace_trace_packet_interpret_buffer_pointer(pPacket->header, (intptr_t)importAHWBuf->buffer);
+        AHardwareBuffer_Desc* ahwbuf_desc = (AHardwareBuffer_Desc*)importBufData;
+        int ret = AHardwareBuffer_allocate(ahwbuf_desc, &importAHWBuf->buffer);
+        if (ret) {
+            vktrace_LogError("Allocate android hardware buffer failed with return %d!", ret);
+            return VK_ERROR_VALIDATION_FAILED_EXT;
+        }
+        void* ahwbuf_wrt_ptr = NULL;
+        ret = AHardwareBuffer_lock(importAHWBuf->buffer, AHARDWAREBUFFER_USAGE_CPU_READ_RARELY, -1, NULL, &ahwbuf_wrt_ptr);
+        if (ret) {
+            vktrace_LogError("AM: Lock the hardware buffer failed !");
+            return VK_ERROR_VALIDATION_FAILED_EXT;
+        }
+        uint32_t buf_size = ahwbuf_desc->stride * ahwbuf_desc->height * getAHardwareBufBPP(ahwbuf_desc->format);
+        memcpy(ahwbuf_wrt_ptr, importBufData + sizeof(AHardwareBuffer_Desc), buf_size);
+        AHardwareBuffer_unlock(importAHWBuf->buffer, NULL);
+        traceDeviceMemoryToAHWBuf[*pPacket->pMemory] = importAHWBuf->buffer;
+    }
+#endif
+
     if (g_pReplaySettings->compatibilityMode && m_pFileHeader->portability_table_valid && !platformMatch()) {
         traceDeviceMemoryToMemoryTypeIndex[*(pPacket->pMemory)] = pPacket->pAllocateInfo->memoryTypeIndex;
     }
@@ -2460,6 +2505,12 @@ void vkReplay::manually_replay_vkFreeMemory(packet_vkFreeMemory *pPacket) {
 
     delete local_mem.pGpuMem;
     m_objMapper.rm_from_devicememorys_map(pPacket->memory);
+#if defined(ANDROID)
+    if (traceDeviceMemoryToAHWBuf.find(pPacket->memory) != traceDeviceMemoryToAHWBuf.end()) {
+        AHardwareBuffer_release(traceDeviceMemoryToAHWBuf[pPacket->memory]);
+        traceDeviceMemoryToAHWBuf.erase(pPacket->memory);
+    }
+#endif
 }
 
 VkResult vkReplay::manually_replay_vkMapMemory(packet_vkMapMemory *pPacket) {
@@ -3631,7 +3682,9 @@ VkResult vkReplay::manually_replay_vkGetSwapchainImagesKHR(packet_vkGetSwapchain
             traceImageToDevice[packetImage[i]] = pPacket->device;
         }
     }
-
+    if (numImages) {
+        vktrace_LogAlways("The swapchain image count = %d",numImages);
+    }
     replayResult = m_vkDeviceFuncs.GetSwapchainImagesKHR(remappeddevice, remappedswapchain, pPacket->pSwapchainImageCount,
                                                          pPacket->pSwapchainImages);
     if (replayResult == VK_SUCCESS) {
@@ -5338,6 +5391,26 @@ VkResult vkReplay::manually_replay_vkEnumerateDeviceExtensionProperties(packet_v
     return result;
 }
 
+void vkReplay::changeDeviceFeature(VkBool32 *traceFeatures,VkBool32 *deviceFeatures,uint32_t numOfFeatures)
+{
+    if (g_pReplaySettings->forceDisableAF) {
+        for (uint32_t i = 0; i < numOfFeatures; i++) {
+            const char* feature = GetPhysDevFeatureString(i);
+            if (strcmp(feature,"samplerAnisotropy")) {
+                continue;
+            }
+            *(traceFeatures + i) = VK_FALSE;
+            break;
+        }
+    }
+}
+
+void vkReplay::deviceWaitIdle()
+{
+    for (auto obj = m_objMapper.m_devices.begin(); obj != m_objMapper.m_devices.end(); obj++) {
+        m_vkDeviceFuncs.DeviceWaitIdle(obj->second);
+    }
+}
 // vkReplay::interpret_pnext_handles translate handles in all Vulkan structures that have a
 // pNext and at least one handle.
 //
