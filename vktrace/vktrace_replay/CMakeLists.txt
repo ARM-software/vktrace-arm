@@ -61,6 +61,7 @@ set(SRC_LIST
     vkreplay_vkreplay.cpp
     vkreplay_vkdisplay.cpp
     vkreplay_preload.cpp
+    vkreplay_pipelinecache.cpp
     ${GENERATED_FILES_DIR}/vkreplay_vk_replay_gen.cpp
     vkreplay_factory.h
     vkreplay_seq.h
@@ -76,6 +77,7 @@ set (HDR_LIST
     vkreplay_settings.h
     vkreplay_vkreplay.h
     vkreplay_preload.h
+    vkreplay_pipelinecache.h
     ${SRC_DIR}/../layersvt/screenshot_parsing.h
     ${GENERATED_FILES_DIR}/vkreplay_vk_objmapper.h
     ${GENERATED_FILES_DIR}/vktrace_vk_packet_id.h

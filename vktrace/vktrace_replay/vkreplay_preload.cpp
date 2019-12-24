@@ -30,6 +30,7 @@ extern "C" {
 
 #include "vkreplay_factory.h"
 #include "vkreplay_preload.h"
+#include "vkreplay_vkreplay.h"
 #include "vkreplay_main.h"
 
 #define MAX_CHUNK_COUNT 16
@@ -185,6 +186,12 @@ static uint64_t load_packet(FileLike* file, void* load_addr, uint64_t packet_siz
             } else {
                 vktrace_LogError("Bad packet type id=%d, index=%d.", pHeader->packet_id, pHeader->global_packet_index);
             }
+            if (pHeader->packet_id == VKTRACE_TPI_VK_vkFlushMappedMemoryRanges) {
+                extern vkReplay* g_pReplayer;
+                if (replaySettings.premapping && g_pReplayer->premap_FlushMappedMemoryRanges(pHeader)) {
+                    pHeader->packet_id += PREMAP_SHIFT;
+                }
+            }
         }
     }
 
@@ -257,7 +264,7 @@ bool init_preload(FileLike* file, vktrace_replay::vktrace_trace_packet_replay_li
     uint64_t system_mem_size = get_system_memory_size();
     vktrace_LogAlways("Init preload: the total size of system memory = 0x%llX and the size of trace file = 0x%llX", system_mem_size, file->mFileLen);
 
-    static const uint64_t chunk_size  = 384 * SIZE_1M;
+    static const uint64_t chunk_size  = 400 * SIZE_1M;
     uint32_t chunk_count = calc_chunk_count(system_mem_size, chunk_size, file->mFileLen);
     chunk_count = chunk_count < MAX_CHUNK_COUNT ? chunk_count : MAX_CHUNK_COUNT;
 

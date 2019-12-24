@@ -27,7 +27,7 @@ These pieces are required to enable this repository to be built standalone; that
 
 The following components are available in this repository over and above what is mirrored from Vulkan-ValidationLayers repository
 - Api_dump, screenshot, device_simulation, and example layers (layersvt/)
-- Assistant_layer, starter_layer, and demo_layer (layer_factory/)
+- Starter_layer and demo_layer (layer_factory/)
 - tests for the vktrace and vkreplay (tests/)
 - vktrace and vkreplay, API capture and replay  (vktrace/)
 
@@ -43,7 +43,7 @@ Please see the [CONTRIBUTING](CONTRIBUTING.md) file in this repository for more 
 includes directions for building all the components, running the tests and running the demo applications.
 
 Information on how to enable the various layers is in
-[layers/README.md](layers/README.md).
+[layersvt/README.md](layersvt/README.md).
 
 ## Version Tagging Scheme
 

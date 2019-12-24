@@ -66,6 +66,8 @@ typedef vktrace_replay::VKTRACE_REPLAY_RESULT(VKTRACER_CDECL *funcptr_vkreplayer
 typedef int(VKTRACER_CDECL *funcptr_vkreplayer_dump)();
 typedef int(VKTRACER_CDECL *funcptr_vkreplayer_getframenumber)();
 typedef void(VKTRACER_CDECL *funcptr_vkreplayer_resetframenumber)(int frameNumber);
+typedef int(VKTRACER_CDECL *funcptr_vkreplayer_getframenumber)();
+typedef void(VKTRACER_CDECL *funcptr_vkreplayer_onterminate)();
 }
 
 struct vktrace_trace_packet_replay_library {
@@ -83,6 +85,7 @@ struct vktrace_trace_packet_replay_library {
     funcptr_vkreplayer_dump Dump;
     funcptr_vkreplayer_getframenumber GetFrameNumber;
     funcptr_vkreplayer_resetframenumber ResetFrameNumber;
+    funcptr_vkreplayer_onterminate OnTerminate;
 };
 
 class ReplayFactory {

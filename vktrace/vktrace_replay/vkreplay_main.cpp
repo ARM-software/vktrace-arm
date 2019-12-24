@@ -27,6 +27,7 @@
 #include <sstream>
 #include <algorithm>
 #include <inttypes.h>
+
 #if defined(ANDROID)
 #include <sstream>
 #include <android/log.h>
@@ -46,7 +47,7 @@
 #include "vktrace_vk_packet_id.h"
 #include "vkreplay_vkreplay.h"
 
-vkreplayer_settings replaySettings = {NULL, 1, UINT_MAX, UINT_MAX, true, false, NULL, NULL, NULL, NULL, NULL, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, 50};
+vkreplayer_settings replaySettings = {NULL, 1, UINT_MAX, UINT_MAX, true, false, NULL, NULL, NULL, NULL, NULL, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, 50, FALSE, FALSE, NULL};
 extern vkReplay* g_replay;
 
 #if defined(ANDROID)
@@ -227,9 +228,38 @@ vktrace_SettingInfo g_settings_info[] = {
      {&replaySettings.memoryPercentage},
      TRUE,
      "Preload vktrace file block occupancy system memory percentage,the default is 50%"},
+    {"prm",
+     "premapping",
+     VKTRACE_SETTING_BOOL,
+     {&replaySettings.premapping},
+     {&replaySettings.premapping},
+     TRUE,
+     "Premap resources in several vulkan APIs when preloading."},
+     {"epc",
+     "enablePipelineCache",
+     VKTRACE_SETTING_BOOL,
+     {&replaySettings.enablePipelineCache},
+     {&replaySettings.enablePipelineCache},
+     TRUE,
+     "Write pipeline cache to the disk and use the cache data for the next replay."},
+    {"pcp",
+     "pipelineCachePath",
+     VKTRACE_SETTING_STRING,
+     {&replaySettings.pipelineCachePath},
+     {&replaySettings.pipelineCachePath},
+     TRUE,
+     "Set the path for saving the pipeline cache data for the replay."}
 };
 
 vktrace_SettingGroup g_replaySettingGroup = {"vkreplay", sizeof(g_settings_info) / sizeof(g_settings_info[0]), &g_settings_info[0]};
+
+static vktrace_replay::vktrace_trace_packet_replay_library* g_replayer_interface = NULL;
+
+void TerminateHandler(int) {
+    if (NULL != g_replayer_interface) {
+        g_replayer_interface->OnTerminate();
+    }
+}
 
 namespace vktrace_replay {
 
@@ -263,7 +293,6 @@ unsigned int replay(vktrace_trace_packet_replay_library* replayer, vktrace_trace
 int main_loop(vktrace_replay::ReplayDisplay display, Sequencer& seq, vktrace_trace_packet_replay_library* replayerArray[]) {
     int err = 0;
     vktrace_trace_packet_header* packet;
-    vktrace_trace_packet_replay_library* replayer = NULL;
 #if defined(ANDROID) || !defined(ARM_ARCH)
     vktrace_trace_packet_message* msgPacket;
 #endif
@@ -296,6 +325,7 @@ int main_loop(vktrace_replay::ReplayDisplay display, Sequencer& seq, vktrace_tra
     }
     uint64_t start_time = vktrace_get_time();
     const char* screenshot_list = replaySettings.screenshotList;
+
     while (replaySettings.numLoops > 0) {
         if (replaySettings.numLoops > 1 && replaySettings.screenshotList != NULL) {
             // Don't take screenshots until the last loop
@@ -329,7 +359,7 @@ int main_loop(vktrace_replay::ReplayDisplay display, Sequencer& seq, vktrace_tra
                 case VKTRACE_TPI_PORTABILITY_TABLE:
                     break;
                 case VKTRACE_TPI_VK_vkQueuePresentKHR: {
-                    if (replay(replayer, packet) != VKTRACE_REPLAY_SUCCESS) {
+                    if (replay(g_replayer_interface, packet) != VKTRACE_REPLAY_SUCCESS) {
                         vktrace_LogError("Failed to replay QueuePresent().");
                         if (replaySettings.exitOnAnyError) {
                             err = -1;
@@ -337,7 +367,7 @@ int main_loop(vktrace_replay::ReplayDisplay display, Sequencer& seq, vktrace_tra
                         }
                     }
                     // frame control logic
-                    unsigned int frameNumber = replayer->GetFrameNumber();
+                    unsigned int frameNumber = g_replayer_interface->GetFrameNumber();
 
                     // Only set the loop start location and start_time in the first loop when loopStartFrame is not 0
                     if (frameNumber == start_frame && start_frame > 0 && replaySettings.numLoops == totalLoops) {
@@ -372,14 +402,14 @@ int main_loop(vktrace_replay::ReplayDisplay display, Sequencer& seq, vktrace_tra
                         vktrace_LogError("Tracer_id from packet num packet %d invalid.", packet->packet_id);
                         continue;
                     }
-                    replayer = replayerArray[packet->tracer_id];
-                    if (replayer == NULL) {
+                    g_replayer_interface = replayerArray[packet->tracer_id];
+                    if (g_replayer_interface == NULL) {
                         vktrace_LogWarning("Tracer_id %d has no valid replayer.", packet->tracer_id);
                         continue;
                     }
                     if (packet->packet_id >= VKTRACE_TPI_VK_vkApiVersion) {
                         // replay the API packet
-                        if (replay(replayer, packet) != VKTRACE_REPLAY_SUCCESS) {
+                        if (replay(g_replayer_interface, packet) != VKTRACE_REPLAY_SUCCESS) {
                             vktrace_LogError("Failed to replay packet_id %d, with global_packet_index %d.", packet->packet_id,
                                              packet->global_packet_index);
                             if (replaySettings.exitOnAnyError || packet->packet_id == VKTRACE_TPI_VK_vkCreateInstance ||
@@ -402,14 +432,14 @@ int main_loop(vktrace_replay::ReplayDisplay display, Sequencer& seq, vktrace_tra
 
         if (end_frame == UINT_MAX)
             end_frame = replaySettings.loopEndFrame == UINT_MAX
-                            ? replayer->GetFrameNumber()
-                            : std::min((unsigned int)replayer->GetFrameNumber(), replaySettings.loopEndFrame);
+                            ? g_replayer_interface->GetFrameNumber()
+                            : std::min((unsigned int)g_replayer_interface->GetFrameNumber(), replaySettings.loopEndFrame);
         totalLoopFrames += end_frame - start_frame;
 
         seq.set_bookmark(startingPacket);
         trace_running = true;
-        if (replayer != NULL) {
-            replayer->ResetFrameNumber(replaySettings.loopStartFrame);
+        if (g_replayer_interface != NULL) {
+            g_replayer_interface->ResetFrameNumber(replaySettings.loopStartFrame);
         }
     }
     if (g_replay != nullptr) {
@@ -417,6 +447,7 @@ int main_loop(vktrace_replay::ReplayDisplay display, Sequencer& seq, vktrace_tra
     }
     end_time = vktrace_get_time();
     timer_started = false;
+    g_replayer_interface->OnTerminate();
     vktrace_LogAlways("================== End timer (Frame: %llu) ==================", (end_frame - 1));
     if (end_time > start_time) {
         double fps = static_cast<double>(totalLoopFrames) / (end_time - start_time) * NANOSEC_IN_ONE_SEC;

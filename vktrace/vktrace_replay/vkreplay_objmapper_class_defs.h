@@ -161,11 +161,41 @@ typedef struct _bufferObj {
 typedef struct _devicememoryObj {
     gpuMemory *pGpuMem;
     VkDeviceMemory replayDeviceMemory;
+    VkDeviceMemory traceDeviceMemory;
+    _devicememoryObj(gpuMemory *gpuMem = 0, VkDeviceMemory replayDeviceMem = VK_NULL_HANDLE, VkDeviceMemory traceDeviceMem = VK_NULL_HANDLE) {
+        pGpuMem = gpuMem;
+        replayDeviceMemory = replayDeviceMem;
+        traceDeviceMemory = traceDeviceMem;
+    }
 } devicememoryObj;
 
 class vkReplayObjMapper {
    public:
-    vkReplayObjMapper() {}
+    vkReplayObjMapper(bool usePremapping)
+    : dummyDeviceMemoryObj(0, VK_NULL_HANDLE, VK_NULL_HANDLE) {
+        if (usePremapping) {
+            add_to_devices_map_ptr = &vkReplayObjMapper::add_to_devices_map_premapped;
+            rm_from_devices_map_ptr = &vkReplayObjMapper::rm_from_devices_map_premapped;
+            remap_devices_ptr = &vkReplayObjMapper::remap_devices_premapped;
+
+            add_to_devicememorys_map_ptr = &vkReplayObjMapper::add_to_devicememorys_map_premapped;
+            rm_from_devicememorys_map_ptr = &vkReplayObjMapper::rm_from_devicememorys_map_premapped;
+            remap_devicememorys_ptr = &vkReplayObjMapper::remap_devicememorys_premapped;
+            devicememory_exists_ptr = &vkReplayObjMapper::devicememory_exists_premapped;
+            find_devicememory_ptr = &vkReplayObjMapper::find_devicememory_premapped;
+        }
+        else {
+            add_to_devices_map_ptr = &vkReplayObjMapper::add_to_devices_map_origin;
+            rm_from_devices_map_ptr = &vkReplayObjMapper::rm_from_devices_map_origin;
+            remap_devices_ptr = &vkReplayObjMapper::remap_devices_origin;
+
+            add_to_devicememorys_map_ptr = &vkReplayObjMapper::add_to_devicememorys_map_origin;
+            rm_from_devicememorys_map_ptr = &vkReplayObjMapper::rm_from_devicememorys_map_origin;
+            remap_devicememorys_ptr = &vkReplayObjMapper::remap_devicememorys_origin;
+            devicememory_exists_ptr = &vkReplayObjMapper::devicememory_exists_origin;
+            find_devicememory_ptr = &vkReplayObjMapper::find_devicememory_origin;
+        }
+    }
     ~vkReplayObjMapper() {}
 
     bool m_adjustForGPU;  // true if replay adjusts behavior based on GPU

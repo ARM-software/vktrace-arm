@@ -104,11 +104,13 @@ extern "C" {
 
 #include "vkreplay_vkdisplay.h"
 #include "vkreplay_vk_objmapper.h"
+#include "vkreplay_pipelinecache.h"
 #if !defined(ANDROID) && defined(PLATFORM_LINUX)
 #include "arm_headless_ext.h"
 #endif
 
 #define CHECK_RETURN_VALUE(entrypoint) returnValue = handle_replay_errors(#entrypoint, replayResult, pPacket->result, returnValue);
+#define PREMAP_SHIFT (0x1 << 15)
 
 extern vkreplayer_settings* g_pReplaySettings;
 
@@ -117,6 +119,7 @@ class vkReplay {
     ~vkReplay();
     vkReplay(vkreplayer_settings* pReplaySettings, vktrace_trace_file_header* pFileHeader,
              vktrace_replay::ReplayDisplayImp* display);
+    void destroyObjects(const VkDevice &device);
 
     int init(vktrace_replay::ReplayDisplay& disp);
     vktrace_replay::ReplayDisplayImp* get_display() { return m_display; }
@@ -133,7 +136,10 @@ class vkReplay {
     void reset_frame_number(int frameNumber) { m_frameNumber = frameNumber > 0 ? frameNumber : 0; }
     void interpret_pnext_handles(void* struct_ptr);
     void deviceWaitIdle();
+    void on_terminate();
+    vktrace_replay::PipelineCacheAccessor::Ptr get_pipelinecache_accessor() const;
 
+    bool premap_FlushMappedMemoryRanges(vktrace_trace_packet_header* pHeader);
    private:
     void init_funcs(void* handle);
     void* m_libHandle;
@@ -156,6 +162,7 @@ class vkReplay {
     struct_gpuinfo* m_pGpuinfo;
     uint32_t m_gpu_count = 0;
     uint32_t m_imageIndex = UINT32_MAX;
+    uint32_t m_pktImgIndex = UINT32_MAX;
 
     VkDisplayType m_displayServer = VK_DISPLAY_NONE;
     const char* initialized_screenshot_list;
@@ -247,6 +254,7 @@ class vkReplay {
     VkResult manually_replay_vkMapMemory(packet_vkMapMemory* pPacket);
     void manually_replay_vkUnmapMemory(packet_vkUnmapMemory* pPacket);
     VkResult manually_replay_vkFlushMappedMemoryRanges(packet_vkFlushMappedMemoryRanges* pPacket);
+    VkResult manually_replay_vkFlushMappedMemoryRangesPremapped(packet_vkFlushMappedMemoryRanges* pPacket);
     VkResult manually_replay_vkInvalidateMappedMemoryRanges(packet_vkInvalidateMappedMemoryRanges* pPacket);
     void manually_replay_vkGetPhysicalDeviceMemoryProperties(packet_vkGetPhysicalDeviceMemoryProperties* pPacket);
     void manually_replay_vkGetPhysicalDeviceMemoryProperties2KHR(packet_vkGetPhysicalDeviceMemoryProperties2KHR* pPacket);
@@ -435,4 +443,7 @@ class vkReplay {
     bool getQueueFamilyIdx(VkDevice traceDevice, VkDevice replayDevice, uint32_t traceIdx, uint32_t* pReplayIdx);
 
     void remapHandlesInDescriptorSetWithTemplateData(VkDescriptorUpdateTemplateKHR remappedDescriptorUpdateTemplate, char* pData);
+
+
+    vktrace_replay::PipelineCacheAccessor::Ptr    m_pipelinecache_accessor;
 };

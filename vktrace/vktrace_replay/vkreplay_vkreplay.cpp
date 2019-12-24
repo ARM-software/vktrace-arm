@@ -36,6 +36,7 @@
 #include "vk_enum_string_helper.h"
 #include "vktrace_vk_packet_id.h"
 #include "vktrace_trace_packet_utils.h"
+#include "vkreplay_vk_objmapper.h"
 
 #if defined(_WIN32) || defined(_WIN64)
 #define strcasecmp _stricmp  // Used for argument parsing
@@ -60,7 +61,9 @@ vkReplay* g_replay = nullptr;
 
 vkReplay::vkReplay(vkreplayer_settings *pReplaySettings, vktrace_trace_file_header *pFileHeader,
                    vktrace_replay::ReplayDisplayImp *display)
-    : initialized_screenshot_list("") {
+    : m_objMapper(pReplaySettings->premapping)
+    , initialized_screenshot_list("") 
+    , m_pipelinecache_accessor(std::make_shared<vktrace_replay::PipelineCacheAccessor>()) {
     g_pReplaySettings = pReplaySettings;
     m_pDSDump = NULL;
     m_pCBDump = NULL;
@@ -87,10 +90,190 @@ vkReplay::vkReplay(vkreplayer_settings *pReplaySettings, vktrace_trace_file_head
     m_pGpuinfo = (struct_gpuinfo *)(pFileHeader + 1);
     m_platformMatch = -1;
     g_replay = this;
+
+    if (g_pReplaySettings->enablePipelineCache) {
+        if (NULL == g_pReplaySettings->pipelineCachePath) {
+            const std::string &default_path = vktrace_replay::GetDefaultPipelineCacheRootPath();
+            g_pReplaySettings->pipelineCachePath = VKTRACE_NEW_ARRAY(char, default_path.size() + 1);
+            g_pReplaySettings->pipelineCachePath[default_path.size()] = 0;
+            strcpy(g_pReplaySettings->pipelineCachePath, default_path.data());
+        }
+        m_pipelinecache_accessor->SetPipelineCacheRootPath(g_pReplaySettings->pipelineCachePath);
+    }
 }
 
 std::vector<uintptr_t> portabilityTablePackets;
 FileLike *traceFile;
+
+void vkReplay::destroyObjects(const VkDevice &device) {
+    // Make sure no gpu job is running before quit vkreplay
+    m_vkDeviceFuncs.DeviceWaitIdle(device);
+
+    // Destroy all objects created from the device before destroy device.
+    // Reference:
+    // https://vulkan.lunarg.com/doc/view/1.0.37.0/linux/vkspec.chunked/ch02s03.html#fundamentals-objectmodel-lifetime
+    // QueryPool
+    for (auto subobj = m_objMapper.m_querypools.begin(); subobj != m_objMapper.m_querypools.end(); subobj++) {
+        if (replayQueryPoolToDevice[subobj->second] == device) {
+            m_vkDeviceFuncs.DestroyQueryPool(device, subobj->second, NULL);
+        }
+    }
+
+    // Event
+    for (auto subobj = m_objMapper.m_events.begin(); subobj != m_objMapper.m_events.end(); subobj++) {
+        if (replayEventToDevice[subobj->second] == device) {
+            m_vkDeviceFuncs.DestroyEvent(device, subobj->second, NULL);
+        }
+    }
+
+    // Fence
+    for (auto subobj = m_objMapper.m_fences.begin(); subobj != m_objMapper.m_fences.end(); subobj++) {
+        if (replayFenceToDevice[subobj->second] == device) {
+            m_vkDeviceFuncs.DestroyFence(device, subobj->second, NULL);
+        }
+    }
+
+    // Semaphore
+    for (auto subobj = m_objMapper.m_semaphores.begin(); subobj != m_objMapper.m_semaphores.end(); subobj++) {
+        if (replaySemaphoreToDevice[subobj->second] == device) {
+            m_vkDeviceFuncs.DestroySemaphore(device, subobj->second, NULL);
+        }
+    }
+
+    // Framebuffer
+    for (auto subobj = m_objMapper.m_framebuffers.begin(); subobj != m_objMapper.m_framebuffers.end(); subobj++) {
+        if (replayFramebufferToDevice[subobj->second] == device) {
+            m_vkDeviceFuncs.DestroyFramebuffer(device, subobj->second, NULL);
+        }
+    }
+
+    // DescriptorPool
+    for (auto subobj = m_objMapper.m_descriptorpools.begin(); subobj != m_objMapper.m_descriptorpools.end(); subobj++) {
+        if (replayDescriptorPoolToDevice[subobj->second] == device) {
+            m_vkDeviceFuncs.DestroyDescriptorPool(device, subobj->second, NULL);
+        }
+    }
+
+    // Pipeline
+    for (auto subobj = m_objMapper.m_pipelines.begin(); subobj != m_objMapper.m_pipelines.end(); subobj++) {
+        if (replayPipelineToDevice[subobj->second] == device) {
+            m_vkDeviceFuncs.DestroyPipeline(device, subobj->second, NULL);
+        }
+    }
+
+    // PipelineCache
+    for (auto subobj = m_objMapper.m_pipelinecaches.begin(); subobj != m_objMapper.m_pipelinecaches.end(); subobj++) {
+        if (replayPipelineCacheToDevice[subobj->second] == device) {
+            m_vkDeviceFuncs.DestroyPipelineCache(device, subobj->second, NULL);
+        }
+    }
+
+    // ShaderModule
+    for (auto subobj = m_objMapper.m_shadermodules.begin(); subobj != m_objMapper.m_shadermodules.end(); subobj++) {
+        if (replayShaderModuleToDevice[subobj->second] == device) {
+            m_vkDeviceFuncs.DestroyShaderModule(device, subobj->second, NULL);
+        }
+    }
+
+    // RenderPass
+    for (auto subobj = m_objMapper.m_renderpasss.begin(); subobj != m_objMapper.m_renderpasss.end(); subobj++) {
+        if (replayRenderPassToDevice[subobj->second] == device) {
+            m_vkDeviceFuncs.DestroyRenderPass(device, subobj->second, NULL);
+        }
+    }
+
+    // PipelineLayout
+    for (auto subobj = m_objMapper.m_pipelinelayouts.begin(); subobj != m_objMapper.m_pipelinelayouts.end(); subobj++) {
+        if (replayPipelineLayoutToDevice[subobj->second] == device) {
+            m_vkDeviceFuncs.DestroyPipelineLayout(device, subobj->second, NULL);
+        }
+    }
+
+    // DescriptorSetLayout
+    for (auto subobj = m_objMapper.m_descriptorsetlayouts.begin(); subobj != m_objMapper.m_descriptorsetlayouts.end();
+         subobj++) {
+        if (replayDescriptorSetLayoutToDevice[subobj->second] == device) {
+            m_vkDeviceFuncs.DestroyDescriptorSetLayout(device, subobj->second, NULL);
+        }
+    }
+
+    // Sampler
+    for (auto subobj = m_objMapper.m_samplers.begin(); subobj != m_objMapper.m_samplers.end(); subobj++) {
+        if (replaySamplerToDevice[subobj->second] == device) {
+            m_vkDeviceFuncs.DestroySampler(device, subobj->second, NULL);
+        }
+    }
+
+    // Buffer
+    for (auto subobj = m_objMapper.m_buffers.begin(); subobj != m_objMapper.m_buffers.end(); subobj++) {
+        if (replayBufferToDevice[subobj->second.replayBuffer] == device) {
+            m_vkDeviceFuncs.DestroyBuffer(device, subobj->second.replayBuffer, NULL);
+        }
+    }
+
+    // BufferView
+    for (auto subobj = m_objMapper.m_bufferviews.begin(); subobj != m_objMapper.m_bufferviews.end(); subobj++) {
+        if (replayBufferViewToDevice[subobj->second] == device) {
+            m_vkDeviceFuncs.DestroyBufferView(device, subobj->second, NULL);
+        }
+    }
+
+    // Image
+    for (auto subobj = m_objMapper.m_images.begin(); subobj != m_objMapper.m_images.end(); subobj++) {
+        if (replayImageToDevice[subobj->second.replayImage] == device) {
+            // Only destroy non-swapchain image
+            if (replaySwapchainImageToDevice.find(subobj->second.replayImage) == replaySwapchainImageToDevice.end() ||
+                replaySwapchainImageToDevice[subobj->second.replayImage] != device) {
+                m_vkDeviceFuncs.DestroyImage(device, subobj->second.replayImage, NULL);
+                if (g_pReplaySettings->compatibilityMode && m_pFileHeader->portability_table_valid && !platformMatch() &&
+                    replayOptimalImageToDeviceMemory.find(subobj->second.replayImage) !=
+                        replayOptimalImageToDeviceMemory.end()) {
+                    m_vkDeviceFuncs.FreeMemory(device, replayOptimalImageToDeviceMemory[subobj->second.replayImage], NULL);
+                    replayOptimalImageToDeviceMemory.erase(subobj->second.replayImage);
+                }
+            }
+        }
+    }
+
+    // ImageView
+    for (auto subobj = m_objMapper.m_imageviews.begin(); subobj != m_objMapper.m_imageviews.end(); subobj++) {
+        if (replayImageViewToDevice[subobj->second] == device) {
+            m_vkDeviceFuncs.DestroyImageView(device, subobj->second, NULL);
+        }
+    }
+
+    // DeviceMemory
+    if (g_pReplaySettings->premapping) {
+        for (auto subobj = m_objMapper.m_indirect_devicememorys.begin(); subobj != m_objMapper.m_indirect_devicememorys.end(); subobj++) {
+            if (replayDeviceMemoryToDevice[subobj->second->replayDeviceMemory] == device) {
+                m_vkDeviceFuncs.FreeMemory(device, subobj->second->replayDeviceMemory, NULL);
+            }
+        }
+    }
+    else {
+        for (auto subobj = m_objMapper.m_devicememorys.begin(); subobj != m_objMapper.m_devicememorys.end(); subobj++) {
+            if (replayDeviceMemoryToDevice[subobj->second.replayDeviceMemory] == device) {
+                m_vkDeviceFuncs.FreeMemory(device, subobj->second.replayDeviceMemory, NULL);
+            }
+        }
+    }
+
+    // SwapchainKHR
+    for (auto subobj = m_objMapper.m_swapchainkhrs.begin(); subobj != m_objMapper.m_swapchainkhrs.end(); subobj++) {
+        if (replaySwapchainKHRToDevice[subobj->second] == device) {
+            m_vkDeviceFuncs.DestroySwapchainKHR(device, subobj->second, NULL);
+        }
+    }
+
+    // CommandPool
+    for (auto subobj = m_objMapper.m_commandpools.begin(); subobj != m_objMapper.m_commandpools.end(); subobj++) {
+        if (replayCommandPoolToDevice[subobj->second] == device) {
+            m_vkDeviceFuncs.DestroyCommandPool(device, subobj->second, NULL);
+        }
+    }
+
+    m_vkDeviceFuncs.DestroyDevice(device, NULL);
+}
 
 vkReplay::~vkReplay() {
     for (auto subobj = traceQueueFamilyProperties.begin(); subobj != traceQueueFamilyProperties.end(); subobj++) {
@@ -103,165 +286,16 @@ vkReplay::~vkReplay() {
     replayQueueFamilyProperties.clear();
     g_replay = nullptr;
 
-    for (auto obj = m_objMapper.m_devices.begin(); obj != m_objMapper.m_devices.end(); obj++) {
-        // Make sure no gpu job is running before quit vkreplay
-        m_vkDeviceFuncs.DeviceWaitIdle(obj->second);
-
-        // Destroy all objects created from the device before destroy device.
-        // Reference:
-        // https://vulkan.lunarg.com/doc/view/1.0.37.0/linux/vkspec.chunked/ch02s03.html#fundamentals-objectmodel-lifetime
-        // QueryPool
-        for (auto subobj = m_objMapper.m_querypools.begin(); subobj != m_objMapper.m_querypools.end(); subobj++) {
-            if (replayQueryPoolToDevice[subobj->second] == obj->second) {
-                m_vkDeviceFuncs.DestroyQueryPool(obj->second, subobj->second, NULL);
-            }
+    if (g_pReplaySettings->premapping) {
+        for (auto obj = m_objMapper.m_indirect_devices.begin(); obj != m_objMapper.m_indirect_devices.end(); obj++) {
+            if (*obj->second != VK_NULL_HANDLE)
+                destroyObjects(*obj->second);
         }
-
-        // Event
-        for (auto subobj = m_objMapper.m_events.begin(); subobj != m_objMapper.m_events.end(); subobj++) {
-            if (replayEventToDevice[subobj->second] == obj->second) {
-                m_vkDeviceFuncs.DestroyEvent(obj->second, subobj->second, NULL);
-            }
+    }
+    else {
+        for (auto obj = m_objMapper.m_devices.begin(); obj != m_objMapper.m_devices.end(); obj++) {
+            destroyObjects(obj->second);
         }
-
-        // Fence
-        for (auto subobj = m_objMapper.m_fences.begin(); subobj != m_objMapper.m_fences.end(); subobj++) {
-            if (replayFenceToDevice[subobj->second] == obj->second) {
-                m_vkDeviceFuncs.DestroyFence(obj->second, subobj->second, NULL);
-            }
-        }
-
-        // Semaphore
-        for (auto subobj = m_objMapper.m_semaphores.begin(); subobj != m_objMapper.m_semaphores.end(); subobj++) {
-            if (replaySemaphoreToDevice[subobj->second] == obj->second) {
-                m_vkDeviceFuncs.DestroySemaphore(obj->second, subobj->second, NULL);
-            }
-        }
-
-        // Framebuffer
-        for (auto subobj = m_objMapper.m_framebuffers.begin(); subobj != m_objMapper.m_framebuffers.end(); subobj++) {
-            if (replayFramebufferToDevice[subobj->second] == obj->second) {
-                m_vkDeviceFuncs.DestroyFramebuffer(obj->second, subobj->second, NULL);
-            }
-        }
-
-        // DescriptorPool
-        for (auto subobj = m_objMapper.m_descriptorpools.begin(); subobj != m_objMapper.m_descriptorpools.end(); subobj++) {
-            if (replayDescriptorPoolToDevice[subobj->second] == obj->second) {
-                m_vkDeviceFuncs.DestroyDescriptorPool(obj->second, subobj->second, NULL);
-            }
-        }
-
-        // Pipeline
-        for (auto subobj = m_objMapper.m_pipelines.begin(); subobj != m_objMapper.m_pipelines.end(); subobj++) {
-            if (replayPipelineToDevice[subobj->second] == obj->second) {
-                m_vkDeviceFuncs.DestroyPipeline(obj->second, subobj->second, NULL);
-            }
-        }
-
-        // PipelineCache
-        for (auto subobj = m_objMapper.m_pipelinecaches.begin(); subobj != m_objMapper.m_pipelinecaches.end(); subobj++) {
-            if (replayPipelineCacheToDevice[subobj->second] == obj->second) {
-                m_vkDeviceFuncs.DestroyPipelineCache(obj->second, subobj->second, NULL);
-            }
-        }
-
-        // ShaderModule
-        for (auto subobj = m_objMapper.m_shadermodules.begin(); subobj != m_objMapper.m_shadermodules.end(); subobj++) {
-            if (replayShaderModuleToDevice[subobj->second] == obj->second) {
-                m_vkDeviceFuncs.DestroyShaderModule(obj->second, subobj->second, NULL);
-            }
-        }
-
-        // RenderPass
-        for (auto subobj = m_objMapper.m_renderpasss.begin(); subobj != m_objMapper.m_renderpasss.end(); subobj++) {
-            if (replayRenderPassToDevice[subobj->second] == obj->second) {
-                m_vkDeviceFuncs.DestroyRenderPass(obj->second, subobj->second, NULL);
-            }
-        }
-
-        // PipelineLayout
-        for (auto subobj = m_objMapper.m_pipelinelayouts.begin(); subobj != m_objMapper.m_pipelinelayouts.end(); subobj++) {
-            if (replayPipelineLayoutToDevice[subobj->second] == obj->second) {
-                m_vkDeviceFuncs.DestroyPipelineLayout(obj->second, subobj->second, NULL);
-            }
-        }
-
-        // DescriptorSetLayout
-        for (auto subobj = m_objMapper.m_descriptorsetlayouts.begin(); subobj != m_objMapper.m_descriptorsetlayouts.end();
-             subobj++) {
-            if (replayDescriptorSetLayoutToDevice[subobj->second] == obj->second) {
-                m_vkDeviceFuncs.DestroyDescriptorSetLayout(obj->second, subobj->second, NULL);
-            }
-        }
-
-        // Sampler
-        for (auto subobj = m_objMapper.m_samplers.begin(); subobj != m_objMapper.m_samplers.end(); subobj++) {
-            if (replaySamplerToDevice[subobj->second] == obj->second) {
-                m_vkDeviceFuncs.DestroySampler(obj->second, subobj->second, NULL);
-            }
-        }
-
-        // Buffer
-        for (auto subobj = m_objMapper.m_buffers.begin(); subobj != m_objMapper.m_buffers.end(); subobj++) {
-            if (replayBufferToDevice[subobj->second.replayBuffer] == obj->second) {
-                m_vkDeviceFuncs.DestroyBuffer(obj->second, subobj->second.replayBuffer, NULL);
-            }
-        }
-
-        // BufferView
-        for (auto subobj = m_objMapper.m_bufferviews.begin(); subobj != m_objMapper.m_bufferviews.end(); subobj++) {
-            if (replayBufferViewToDevice[subobj->second] == obj->second) {
-                m_vkDeviceFuncs.DestroyBufferView(obj->second, subobj->second, NULL);
-            }
-        }
-
-        // Image
-        for (auto subobj = m_objMapper.m_images.begin(); subobj != m_objMapper.m_images.end(); subobj++) {
-            if (replayImageToDevice[subobj->second.replayImage] == obj->second) {
-                // Only destroy non-swapchain image
-                if (replaySwapchainImageToDevice.find(subobj->second.replayImage) == replaySwapchainImageToDevice.end() ||
-                    replaySwapchainImageToDevice[subobj->second.replayImage] != obj->second) {
-                    m_vkDeviceFuncs.DestroyImage(obj->second, subobj->second.replayImage, NULL);
-                    if (g_pReplaySettings->compatibilityMode && m_pFileHeader->portability_table_valid && !platformMatch() &&
-                        replayOptimalImageToDeviceMemory.find(subobj->second.replayImage) !=
-                            replayOptimalImageToDeviceMemory.end()) {
-                        m_vkDeviceFuncs.FreeMemory(obj->second, replayOptimalImageToDeviceMemory[subobj->second.replayImage], NULL);
-                        replayOptimalImageToDeviceMemory.erase(subobj->second.replayImage);
-                    }
-                }
-            }
-        }
-
-        // ImageView
-        for (auto subobj = m_objMapper.m_imageviews.begin(); subobj != m_objMapper.m_imageviews.end(); subobj++) {
-            if (replayImageViewToDevice[subobj->second] == obj->second) {
-                m_vkDeviceFuncs.DestroyImageView(obj->second, subobj->second, NULL);
-            }
-        }
-
-        // DeviceMemory
-        for (auto subobj = m_objMapper.m_devicememorys.begin(); subobj != m_objMapper.m_devicememorys.end(); subobj++) {
-            if (replayDeviceMemoryToDevice[subobj->second.replayDeviceMemory] == obj->second) {
-                m_vkDeviceFuncs.FreeMemory(obj->second, subobj->second.replayDeviceMemory, NULL);
-            }
-        }
-
-        // SwapchainKHR
-        for (auto subobj = m_objMapper.m_swapchainkhrs.begin(); subobj != m_objMapper.m_swapchainkhrs.end(); subobj++) {
-            if (replaySwapchainKHRToDevice[subobj->second] == obj->second) {
-                m_vkDeviceFuncs.DestroySwapchainKHR(obj->second, subobj->second, NULL);
-            }
-        }
-
-        // CommandPool
-        for (auto subobj = m_objMapper.m_commandpools.begin(); subobj != m_objMapper.m_commandpools.end(); subobj++) {
-            if (replayCommandPoolToDevice[subobj->second] == obj->second) {
-                m_vkDeviceFuncs.DestroyCommandPool(obj->second, subobj->second, NULL);
-            }
-        }
-
-        m_vkDeviceFuncs.DestroyDevice(obj->second, NULL);
     }
 
     for (auto obj = m_objMapper.m_instances.begin(); obj != m_objMapper.m_instances.end(); obj++) {
@@ -1193,7 +1227,7 @@ VkResult vkReplay::manually_replay_vkQueueBindSparse(packet_vkQueueBindSparse *p
             }
 
             for (uint32_t bindCountIdx = 0; bindCountIdx < sBMBinf->bindCount; bindCountIdx++) {
-                devicememoryObj local_mem = m_objMapper.m_devicememorys.find(pRemappedBufferMemories[bindCountIdx].memory)->second;
+                devicememoryObj local_mem = m_objMapper.find_devicememory(pRemappedBufferMemories[bindCountIdx].memory);
                 VkDeviceMemory replay_mem = m_objMapper.remap_devicememorys(pRemappedBufferMemories[bindCountIdx].memory);
 
                 if (replay_mem == VK_NULL_HANDLE || local_mem.pGpuMem == NULL) {
@@ -1223,7 +1257,7 @@ VkResult vkReplay::manually_replay_vkQueueBindSparse(packet_vkQueueBindSparse *p
                     pPacket->header, (intptr_t)remappedBindSparseInfos[bindInfo_idx].pImageBinds->pBinds));
             }
             for (uint32_t bindCountIdx = 0; bindCountIdx < sIMBinf->bindCount; bindCountIdx++) {
-                devicememoryObj local_mem = m_objMapper.m_devicememorys.find(pRemappedImageMemories[bindCountIdx].memory)->second;
+                devicememoryObj local_mem = m_objMapper.find_devicememory(pRemappedImageMemories[bindCountIdx].memory);
                 VkDeviceMemory replay_mem = m_objMapper.remap_devicememorys(pRemappedImageMemories[bindCountIdx].memory);
 
                 if (replay_mem == VK_NULL_HANDLE || local_mem.pGpuMem == NULL) {
@@ -1254,7 +1288,7 @@ VkResult vkReplay::manually_replay_vkQueueBindSparse(packet_vkQueueBindSparse *p
             }
             for (uint32_t bindCountIdx = 0; bindCountIdx < sIMOBinf->bindCount; bindCountIdx++) {
                 devicememoryObj local_mem =
-                    m_objMapper.m_devicememorys.find(pRemappedImageOpaqueMemories[bindCountIdx].memory)->second;
+                    m_objMapper.find_devicememory(pRemappedImageOpaqueMemories[bindCountIdx].memory);
                 VkDeviceMemory replay_mem = m_objMapper.remap_devicememorys(pRemappedImageOpaqueMemories[bindCountIdx].memory);
 
                 if (replay_mem == VK_NULL_HANDLE || local_mem.pGpuMem == NULL) {
@@ -1952,12 +1986,18 @@ VkResult vkReplay::manually_replay_vkCreateFramebuffer(packet_vkCreateFramebuffe
     VkImageView *pAttachments = (VkImageView *)pInfo->pAttachments;
     if (pAttachments != NULL) {
         for (uint32_t i = 0; i < pInfo->attachmentCount; i++) {
-            if (curSwapchainImgState.traceImageViewToImageIndex.find(pInfo->pAttachments[i]) != curSwapchainImgState.traceImageViewToImageIndex.end()) {
-                curSwapchainImgState.traceFramebufferToImageIndex[*(pPacket->pFramebuffer)] = curSwapchainImgState.traceImageViewToImageIndex[pInfo->pAttachments[i]];
-                curSwapchainImgState.traceImageIndexToFramebuffer[curSwapchainImgState.traceImageViewToImageIndex[pInfo->pAttachments[i]]] = *(pPacket->pFramebuffer);
-            }
             VkImageView savedIV = pInfo->pAttachments[i];
-            pAttachments[i] = m_objMapper.remap_imageviews(pInfo->pAttachments[i]);
+            if (curSwapchainImgState.traceImageViewToImageIndex.find(pInfo->pAttachments[i]) != curSwapchainImgState.traceImageViewToImageIndex.end()) {
+                if (m_imageIndex != UINT32_MAX) {
+                    curSwapchainImgState.traceFramebufferToImageIndex[*(pPacket->pFramebuffer)] = m_imageIndex;
+                    curSwapchainImgState.traceImageIndexToFramebuffer[m_imageIndex] = *(pPacket->pFramebuffer);
+                    savedIV = curSwapchainImgState.traceImageIndexToImageView[m_imageIndex];
+                } else {
+                    curSwapchainImgState.traceFramebufferToImageIndex[*(pPacket->pFramebuffer)] = curSwapchainImgState.traceImageViewToImageIndex[pInfo->pAttachments[i]];
+                    curSwapchainImgState.traceImageIndexToFramebuffer[curSwapchainImgState.traceImageViewToImageIndex[pInfo->pAttachments[i]]] = *(pPacket->pFramebuffer);
+                }
+            }
+            pAttachments[i] = m_objMapper.remap_imageviews(savedIV);
             if (pAttachments[i] == VK_NULL_HANDLE && savedIV != VK_NULL_HANDLE) {
                 vktrace_LogError("Skipping vkCreateFramebuffer() due to invalid remapped VkImageView.");
                 return VK_ERROR_VALIDATION_FAILED_EXT;
@@ -2457,6 +2497,7 @@ VkResult vkReplay::manually_replay_vkAllocateMemory(packet_vkAllocateMemory *pPa
     if (replayResult == VK_SUCCESS) {
         local_mem.pGpuMem = new (gpuMemory);
         if (local_mem.pGpuMem) local_mem.pGpuMem->setAllocInfo(pPacket->pAllocateInfo, false);
+        local_mem.traceDeviceMemory = *(pPacket->pMemory);
         m_objMapper.add_to_devicememorys_map(*(pPacket->pMemory), local_mem);
         replayDeviceMemoryToDevice[local_mem.replayDeviceMemory] = remappedDevice;
     } else {
@@ -2482,7 +2523,7 @@ void vkReplay::manually_replay_vkFreeMemory(packet_vkFreeMemory *pPacket) {
         return;
     }
 
-    if (m_objMapper.m_devicememorys.find(pPacket->memory) == m_objMapper.m_devicememorys.end()) {
+    if (!m_objMapper.devicememory_exists(pPacket->memory)) {
         if (g_pReplaySettings->compatibilityMode && m_pFileHeader->portability_table_valid && !platformMatch() &&
             traceSkippedDeviceMemories.find(pPacket->memory) != traceSkippedDeviceMemories.end()) {
             traceSkippedDeviceMemories.erase(pPacket->memory);
@@ -2494,7 +2535,7 @@ void vkReplay::manually_replay_vkFreeMemory(packet_vkFreeMemory *pPacket) {
     }
 
     devicememoryObj local_mem;
-    local_mem = m_objMapper.m_devicememorys.find(pPacket->memory)->second;
+    local_mem = m_objMapper.find_devicememory(pPacket->memory);
     // TODO how/when to free pendingAlloc that did not use and existing devicememoryObj
     m_vkDeviceFuncs.FreeMemory(remappedDevice, local_mem.replayDeviceMemory, NULL);
 
@@ -2522,7 +2563,7 @@ VkResult vkReplay::manually_replay_vkMapMemory(packet_vkMapMemory *pPacket) {
         return VK_ERROR_VALIDATION_FAILED_EXT;
     }
 
-    if (m_objMapper.m_devicememorys.find(pPacket->memory) == m_objMapper.m_devicememorys.end()) {
+    if (!m_objMapper.devicememory_exists(pPacket->memory)) {
         if (g_pReplaySettings->compatibilityMode && m_pFileHeader->portability_table_valid && !platformMatch() &&
             traceSkippedDeviceMemories.find(pPacket->memory) != traceSkippedDeviceMemories.end()) {
             vktrace_LogDebug("Skipping vkMapMemory() due to VkDeviceMemory 0x%llX skipped in vkAllocateMemory.", pPacket->memory);
@@ -2532,7 +2573,7 @@ VkResult vkReplay::manually_replay_vkMapMemory(packet_vkMapMemory *pPacket) {
         return VK_ERROR_VALIDATION_FAILED_EXT;
     }
 
-    devicememoryObj local_mem = m_objMapper.m_devicememorys.find(pPacket->memory)->second;
+    devicememoryObj local_mem = m_objMapper.find_devicememory(pPacket->memory);
     void *pData;
     if (!local_mem.pGpuMem->isPendingAlloc()) {
         replayResult = m_vkDeviceFuncs.MapMemory(remappedDevice, local_mem.replayDeviceMemory, pPacket->offset, pPacket->size,
@@ -2557,7 +2598,7 @@ void vkReplay::manually_replay_vkUnmapMemory(packet_vkUnmapMemory *pPacket) {
         return;
     }
 
-    if (m_objMapper.m_devicememorys.find(pPacket->memory) == m_objMapper.m_devicememorys.end()) {
+    if (!m_objMapper.devicememory_exists(pPacket->memory)) {
         if (g_pReplaySettings->compatibilityMode && m_pFileHeader->portability_table_valid && !platformMatch() &&
             traceSkippedDeviceMemories.find(pPacket->memory) != traceSkippedDeviceMemories.end()) {
             vktrace_LogDebug("Skipping vkUnmapMemory() due to VkDeviceMemory 0x%llX skipped in vkAllocateMemory.", pPacket->memory);
@@ -2567,7 +2608,7 @@ void vkReplay::manually_replay_vkUnmapMemory(packet_vkUnmapMemory *pPacket) {
         return;
     }
 
-    devicememoryObj local_mem = m_objMapper.m_devicememorys.find(pPacket->memory)->second;
+    devicememoryObj local_mem = m_objMapper.find_devicememory(pPacket->memory);
     if (!local_mem.pGpuMem->isPendingAlloc()) {
         if (local_mem.pGpuMem) {
             if (pPacket->pData)
@@ -2619,17 +2660,108 @@ VkResult vkReplay::manually_replay_vkFlushMappedMemoryRanges(packet_vkFlushMappe
     }
 
     for (uint32_t i = 0; i < pPacket->memoryRangeCount; i++) {
-        devicememoryObj* localMem = nullptr;
-        auto it = m_objMapper.m_devicememorys.find(pPacket->pMemoryRanges[i].memory);
-        if (it != m_objMapper.m_devicememorys.end()) {
-            localMem = &(it->second);
+        const devicememoryObj* localMem = nullptr;
+        if (m_objMapper.devicememory_exists(pPacket->pMemoryRanges[i].memory)) {
+            localMem = &(m_objMapper.find_devicememory(pPacket->pMemoryRanges[i].memory));
         } else if (g_pReplaySettings->compatibilityMode && m_pFileHeader->portability_table_valid && !platformMatch() &&
                    traceSkippedDeviceMemories.find(pPacket->pMemoryRanges[i].memory) != traceSkippedDeviceMemories.end()) {
             vktrace_LogDebug("Skipping vkFlushMappedMemoryRanges() due to VkDeviceMemory 0x%llX skipped in vkAllocateMemory.",
                              pPacket->pMemoryRanges[i].memory);
             return VK_SUCCESS;
         }
+
         localRanges[i].memory = m_objMapper.remap_devicememorys(pPacket->pMemoryRanges[i].memory);
+        if (localRanges[i].memory == VK_NULL_HANDLE || localMem->pGpuMem == NULL) {
+            vktrace_LogError("Skipping vkFlushMappedMemoryRanges() due to invalid remapped VkDeviceMemory.");
+            return VK_ERROR_VALIDATION_FAILED_EXT;
+        }
+
+        if (flushedMems) {
+            uint32_t j = 0;
+            while (j < flushedCount) {
+                if (flushedMems[j] == pPacket->pMemoryRanges[i].memory)
+                    break;
+                j++;
+            }
+            if (j < flushedCount)
+                continue;
+            else
+                flushedMems[flushedCount++] = pPacket->pMemoryRanges[i].memory;
+        }
+
+        if (!localMem->pGpuMem->isPendingAlloc()) {
+            if (pPacket->pMemoryRanges[i].size != 0) {
+#if defined(USE_PAGEGUARD_SPEEDUP)
+                if (vktrace_check_min_version(VKTRACE_TRACE_FILE_VERSION_5))
+                    localMem->pGpuMem->copyMappingDataPageGuard(pPacket->ppData[i]);
+                else
+                    localMem->pGpuMem->copyMappingData(pPacket->ppData[i], false, pPacket->pMemoryRanges[i].size,
+                                                           pPacket->pMemoryRanges[i].offset);
+#else
+                localMem->pGpuMem->copyMappingData(pPacket->ppData[i], false, pPacket->pMemoryRanges[i].size,
+                                                       pPacket->pMemoryRanges[i].offset);
+#endif
+            }
+        } else {
+            unsigned char *pBuf = (unsigned char *)vktrace_malloc(localMem->pGpuMem->getMemoryMapSize());
+            if (!pBuf) {
+                vktrace_LogError("vkFlushMappedMemoryRanges() malloc failed.");
+            }
+            localMem->pGpuMem->setMemoryDataAddr(pBuf);
+#if defined(USE_PAGEGUARD_SPEEDUP)
+            if (vktrace_check_min_version(VKTRACE_TRACE_FILE_VERSION_5))
+                localMem->pGpuMem->copyMappingDataPageGuard(pPacket->ppData[i]);
+            else
+                localMem->pGpuMem->copyMappingData(pPacket->ppData[i], false, pPacket->pMemoryRanges[i].size,
+                                                       pPacket->pMemoryRanges[i].offset);
+#else
+            localMem->pGpuMem->copyMappingData(pPacket->ppData[i], false, pPacket->pMemoryRanges[i].size,
+                                                   pPacket->pMemoryRanges[i].offset);
+#endif
+        }
+    }
+
+#if defined(USE_PAGEGUARD_SPEEDUP)
+    replayResult = pPacket->result;  // if this is a OPT refresh-all packet, we need avoid to call real api and return original
+                                     // return to avoid error message;
+    if (!vktrace_check_min_version(VKTRACE_TRACE_FILE_VERSION_5) || !isvkFlushMappedMemoryRangesSpecial((PBYTE)pPacket->ppData[0]))
+#endif
+    {
+        replayResult = m_vkDeviceFuncs.FlushMappedMemoryRanges(remappedDevice, pPacket->memoryRangeCount, localRanges);
+    }
+
+    return replayResult;
+}
+
+// after OPT speed up, the format of this packet will be different with before, the packet now only include changed block(page).
+//
+VkResult vkReplay::manually_replay_vkFlushMappedMemoryRangesPremapped(packet_vkFlushMappedMemoryRanges *pPacket) {
+    VkResult replayResult = VK_ERROR_VALIDATION_FAILED_EXT;
+
+    VkDevice remappedDevice = *(reinterpret_cast<VkDevice*>(pPacket->device));
+    if (remappedDevice == VK_NULL_HANDLE) {
+        vktrace_LogError("Skipping vkFlushMappedMemoryRanges() due to invalid remapped VkDevice.");
+        return VK_ERROR_VALIDATION_FAILED_EXT;
+    }
+
+    VkMappedMemoryRange *localRanges = const_cast<VkMappedMemoryRange *>(pPacket->pMemoryRanges);
+
+    VkDeviceMemory* flushedMems = NULL;
+    uint32_t flushedCount = 0;
+    if (!isvkFlushMappedMemoryRangesSpecial((PBYTE)pPacket->ppData[0])) {
+        flushedMems = VKTRACE_NEW_ARRAY(VkDeviceMemory, pPacket->memoryRangeCount);
+        memset(flushedMems, 0, sizeof(VkDeviceMemory) * pPacket->memoryRangeCount);
+    }
+
+    for (uint32_t i = 0; i < pPacket->memoryRangeCount; i++) {
+        devicememoryObj* localMem = reinterpret_cast<devicememoryObj*>(pPacket->pMemoryRanges[i].memory);
+        localRanges[i].memory = localMem->replayDeviceMemory;
+        if (g_pReplaySettings->compatibilityMode && m_pFileHeader->portability_table_valid && !platformMatch() &&
+                   traceSkippedDeviceMemories.find(localMem->traceDeviceMemory) != traceSkippedDeviceMemories.end()) {
+            vktrace_LogDebug("Skipping vkFlushMappedMemoryRanges() due to VkDeviceMemory 0x%llX skipped in vkAllocateMemory.",
+                             pPacket->pMemoryRanges[i].memory);
+            return VK_SUCCESS;
+        }
         if (localRanges[i].memory == VK_NULL_HANDLE || localMem->pGpuMem == NULL) {
             vktrace_LogError("Skipping vkFlushMappedMemoryRanges() due to invalid remapped VkDeviceMemory.");
             return VK_ERROR_VALIDATION_FAILED_EXT;
@@ -2707,8 +2839,8 @@ VkResult vkReplay::manually_replay_vkInvalidateMappedMemoryRanges(packet_vkInval
 
     devicememoryObj *pLocalMems = VKTRACE_NEW_ARRAY(devicememoryObj, pPacket->memoryRangeCount);
     for (uint32_t i = 0; i < pPacket->memoryRangeCount; i++) {
-        if (m_objMapper.m_devicememorys.find(pPacket->pMemoryRanges[i].memory) != m_objMapper.m_devicememorys.end()) {
-            pLocalMems[i] = m_objMapper.m_devicememorys.find(pPacket->pMemoryRanges[i].memory)->second;
+        if (m_objMapper.devicememory_exists(pPacket->pMemoryRanges[i].memory)) {
+            pLocalMems[i] = m_objMapper.find_devicememory(pPacket->pMemoryRanges[i].memory);
         }
         localRanges[i].memory = m_objMapper.remap_devicememorys(pPacket->pMemoryRanges[i].memory);
         if (localRanges[i].memory == VK_NULL_HANDLE || pLocalMems[i].pGpuMem == NULL) {
@@ -2749,6 +2881,11 @@ void vkReplay::manually_replay_vkGetPhysicalDeviceProperties(packet_vkGetPhysica
     m_vkFuncs.GetPhysicalDeviceProperties(remappedphysicalDevice, pPacket->pProperties);
     m_replay_gpu = ((uint64_t)pPacket->pProperties->vendorID << 32) | (uint64_t)pPacket->pProperties->deviceID;
     m_replay_drv_vers = (uint64_t)pPacket->pProperties->driverVersion;
+
+    assert(nullptr != m_pipelinecache_accessor);
+    m_pipelinecache_accessor->SetPhysicalDeviceProperties(pPacket->pProperties->vendorID, 
+                                                          pPacket->pProperties->deviceID, 
+                                                          pPacket->pProperties->pipelineCacheUUID);
 }
 
 void vkReplay::manually_replay_vkGetPhysicalDeviceProperties2KHR(packet_vkGetPhysicalDeviceProperties2KHR *pPacket) {
@@ -2763,6 +2900,11 @@ void vkReplay::manually_replay_vkGetPhysicalDeviceProperties2KHR(packet_vkGetPhy
     m_replay_gpu =
         ((uint64_t)pPacket->pProperties->properties.vendorID << 32) | (uint64_t)pPacket->pProperties->properties.deviceID;
     m_replay_drv_vers = (uint64_t)pPacket->pProperties->properties.driverVersion;
+
+    assert(nullptr != m_pipelinecache_accessor);
+    m_pipelinecache_accessor->SetPhysicalDeviceProperties(pPacket->pProperties->properties.vendorID, 
+                                                          pPacket->pProperties->properties.deviceID, 
+                                                          pPacket->pProperties->properties.pipelineCacheUUID);
 }
 
 VkResult vkReplay::manually_replay_vkGetPhysicalDeviceSurfaceSupportKHR(packet_vkGetPhysicalDeviceSurfaceSupportKHR *pPacket) {
@@ -3528,6 +3670,29 @@ VkResult vkReplay::manually_replay_vkCreateSwapchainKHR(packet_vkCreateSwapchain
     }
     free(surfFormats);
 
+    // Force a present mode via the _VKREPLAY_CREATESWAPCHAIN_PRESENTMODE
+    // environment variable. This is sometimes needed for compatibility when replaying
+    // old traces on a newer version of a driver.
+    VkPresentModeKHR vkreplay_createswapchain_presentmode = VK_PRESENT_MODE_MAX_ENUM_KHR;
+    char *vkreplay_createswapchain_presentmode_env;
+    vkreplay_createswapchain_presentmode_env = vktrace_get_global_var("_VKREPLAY_CREATESWAPCHAIN_PRESENTMODE");
+    if (vkreplay_createswapchain_presentmode_env && *vkreplay_createswapchain_presentmode_env) {
+        if (0 == strcmp(vkreplay_createswapchain_presentmode_env, "VK_PRESENT_MODE_IMMEDIATE_KHR"))
+            vkreplay_createswapchain_presentmode = VK_PRESENT_MODE_IMMEDIATE_KHR;
+        else if (0 == strcmp(vkreplay_createswapchain_presentmode_env, "VK_PRESENT_MODE_MAILBOX_KHR "))
+            vkreplay_createswapchain_presentmode = VK_PRESENT_MODE_MAILBOX_KHR;
+        else if (0 == strcmp(vkreplay_createswapchain_presentmode_env, "VK_PRESENT_MODE_FIFO_KHR"))
+            vkreplay_createswapchain_presentmode = VK_PRESENT_MODE_FIFO_KHR;
+        else if (0 == strcmp(vkreplay_createswapchain_presentmode_env, "VK_PRESENT_MODE_FIFO_RELAXED_KHR"))
+            vkreplay_createswapchain_presentmode = VK_PRESENT_MODE_FIFO_RELAXED_KHR;
+        else if (0 == strcmp(vkreplay_createswapchain_presentmode_env, "VK_PRESENT_MODE_SHARED_DEMAND_REFRESH_KHR"))
+            vkreplay_createswapchain_presentmode = VK_PRESENT_MODE_SHARED_DEMAND_REFRESH_KHR;
+        else if (0 == strcmp(vkreplay_createswapchain_presentmode_env, "VK_PRESENT_MODE_SHARED_CONTINUOUS_REFRESH_KHR"))
+            vkreplay_createswapchain_presentmode = VK_PRESENT_MODE_SHARED_CONTINUOUS_REFRESH_KHR;
+        if (vkreplay_createswapchain_presentmode != VK_PRESENT_MODE_MAX_ENUM_KHR)
+            *((VkPresentModeKHR *)(&pPacket->pCreateInfo->presentMode)) = vkreplay_createswapchain_presentmode;
+    }
+
 #if !defined(ANDROID) && defined(ARM_ARCH)
     if (g_pReplaySettings->headless == FALSE) {
         // Check if vkSwapchainCreateInfoKHR.imageExtent is between VkSurfaceCapabilitiesKHR.minImageExtent and
@@ -3652,6 +3817,7 @@ void vkReplay::manually_replay_vkDestroySwapchainKHR(packet_vkDestroySwapchainKH
 
     curSwapchainImgState.reset();
     m_imageIndex = UINT32_MAX;
+    m_pktImgIndex = UINT32_MAX;
 }
 
 VkResult vkReplay::manually_replay_vkGetSwapchainImagesKHR(packet_vkGetSwapchainImagesKHR *pPacket) {
@@ -5391,6 +5557,32 @@ VkResult vkReplay::manually_replay_vkEnumerateDeviceExtensionProperties(packet_v
     return result;
 }
 
+bool vkReplay::premap_FlushMappedMemoryRanges(vktrace_trace_packet_header* pHeader)
+{
+    packet_vkFlushMappedMemoryRanges* pPacket = reinterpret_cast<packet_vkFlushMappedMemoryRanges*>(pHeader->pBody);
+    auto it = m_objMapper.m_indirect_devices.find(pPacket->device);
+    if (it == m_objMapper.m_indirect_devices.end()) {
+        m_objMapper.add_to_devices_map(pPacket->device, VK_NULL_HANDLE);
+    }
+    for (uint32_t i = 0; i < pPacket->memoryRangeCount; i++) {
+        auto it = m_objMapper.m_indirect_devicememorys.find(pPacket->pMemoryRanges[i].memory);
+        if (it == m_objMapper.m_indirect_devicememorys.end()) {
+            m_objMapper.add_to_devicememorys_map(pPacket->pMemoryRanges[i].memory, devicememoryObj(NULL, VK_NULL_HANDLE, pPacket->pMemoryRanges[i].memory));
+        }
+    }
+
+    it = m_objMapper.m_indirect_devices.find(pPacket->device);
+    pPacket->device = reinterpret_cast<VkDevice>(it->second);
+
+    VkMappedMemoryRange* localRanges = const_cast<VkMappedMemoryRange*>(pPacket->pMemoryRanges);
+    for (uint32_t i = 0; i < pPacket->memoryRangeCount; i++) {
+        auto it = m_objMapper.m_indirect_devicememorys.find(pPacket->pMemoryRanges[i].memory);
+        localRanges[i].memory = reinterpret_cast<VkDeviceMemory>(it->second);
+    }
+
+    return true;
+}
+
 void vkReplay::changeDeviceFeature(VkBool32 *traceFeatures,VkBool32 *deviceFeatures,uint32_t numOfFeatures)
 {
     if (g_pReplaySettings->forceDisableAF) {
@@ -5407,10 +5599,53 @@ void vkReplay::changeDeviceFeature(VkBool32 *traceFeatures,VkBool32 *deviceFeatu
 
 void vkReplay::deviceWaitIdle()
 {
-    for (auto obj = m_objMapper.m_devices.begin(); obj != m_objMapper.m_devices.end(); obj++) {
-        m_vkDeviceFuncs.DeviceWaitIdle(obj->second);
+    if (g_pReplaySettings->premapping) {
+        for (auto obj = m_objMapper.m_indirect_devices.begin(); obj != m_objMapper.m_indirect_devices.end(); obj++) {
+            if (*obj->second != VK_NULL_HANDLE)
+                m_vkDeviceFuncs.DeviceWaitIdle(*obj->second);
+        }
+    }
+    else {
+        for (auto obj = m_objMapper.m_devices.begin(); obj != m_objMapper.m_devices.end(); obj++) {
+            m_vkDeviceFuncs.DeviceWaitIdle(obj->second);
+        }
     }
 }
+
+void vkReplay::on_terminate() {
+    if (g_pReplaySettings->enablePipelineCache) { 
+        assert(nullptr != m_pipelinecache_accessor);
+        auto cache_list = m_pipelinecache_accessor->GetCollectedPacketInfo();
+        size_t datasize = 0;
+        for (const auto &info: cache_list) {
+            if (m_pipelinecache_accessor->FileExists(info.second)) {
+                // Cache data for the pipeline can be found from the disk, 
+                // no need to write again.
+                continue;
+            }
+            auto remapped_device = m_objMapper.remap_devices(info.first);
+            auto remapped_pipeline_cache = m_objMapper.remap_pipelinecaches(info.second);
+            if (VK_NULL_HANDLE == remapped_pipeline_cache) {
+                continue;
+            }
+            auto result = m_vkDeviceFuncs.GetPipelineCacheData(remapped_device, remapped_pipeline_cache, &datasize, nullptr);
+            if (VK_SUCCESS == result) {
+                uint8_t *data = VKTRACE_NEW_ARRAY(uint8_t, datasize);
+                assert(nullptr != data);
+                result = m_vkDeviceFuncs.GetPipelineCacheData(remapped_device, remapped_pipeline_cache, &datasize, data);
+                if (VK_SUCCESS == result) {
+                    m_pipelinecache_accessor->WritePipelineCache(info.second, data, datasize);
+                }
+                VKTRACE_DELETE(data);
+            }
+        }
+    }
+}
+
+vktrace_replay::PipelineCacheAccessor::Ptr vkReplay::get_pipelinecache_accessor() const {
+    return m_pipelinecache_accessor;
+}
+
 // vkReplay::interpret_pnext_handles translate handles in all Vulkan structures that have a
 // pNext and at least one handle.
 //

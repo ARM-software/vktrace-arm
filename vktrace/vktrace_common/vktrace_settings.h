@@ -81,6 +81,9 @@ typedef struct vkreplayer_settings {
     BOOL forceDisableAF;
     BOOL forceEXTASTCDecodeMode;
     unsigned int memoryPercentage;
+    BOOL premapping;
+    BOOL enablePipelineCache;
+    char* pipelineCachePath;
 } vkreplayer_settings;
 
 int vktrace_SettingGroup_init(vktrace_SettingGroup* pSettingGroup, FILE* pSettingsFile, int argc, char* argv[],

@@ -64,6 +64,9 @@ void ext_init_create_instance(layer_instance_data* instData, VkInstance inst, ui
 #if defined(VK_USE_PLATFORM_ANDROID_KHR)
     instData->instTable.CreateAndroidSurfaceKHR = (PFN_vkCreateAndroidSurfaceKHR)gpa(inst, "vkCreateAndroidSurfaceKHR");
 #endif
+#if defined(VK_USE_PLATFORM_HEADLESS_EXT) || defined(VK_USE_PLATFORM_HEADLESS_ARM)
+    instData->instTable.CreateHeadlessSurfaceEXT = (PFN_vkCreateHeadlessSurfaceEXT)gpa(inst, "vkCreateHeadlessSurfaceEXT");
+#endif
     instData->LunargDebugReportEnabled = false;
     instData->KHRSurfaceEnabled = false;
     instData->KHRXlibSurfaceEnabled = false;
@@ -71,6 +74,7 @@ void ext_init_create_instance(layer_instance_data* instData, VkInstance inst, ui
     instData->KHRWaylandSurfaceEnabled = false;
     instData->KHRWin32SurfaceEnabled = false;
     instData->KHRAndroidSurfaceEnabled = false;
+    instData->KHRHeadlessSurfaceEnabled = false;
     for (uint32_t i = 0; i < extension_count; i++) {
         if (strcmp(ppEnabledExtensions[i], VK_EXT_DEBUG_REPORT_EXTENSION_NAME) == 0) {
             instData->LunargDebugReportEnabled = true;
@@ -101,6 +105,11 @@ void ext_init_create_instance(layer_instance_data* instData, VkInstance inst, ui
 #if defined(VK_USE_PLATFORM_ANDROID_KHR)
         if (strcmp(ppEnabledExtensions[i], VK_KHR_ANDROID_SURFACE_EXTENSION_NAME) == 0) {
             instData->KHRAndroidSurfaceEnabled = true;
+        }
+#endif
+#if defined(VK_USE_PLATFORM_HEADLESS_EXT) || defined(VK_USE_PLATFORM_HEADLESS_ARM)
+        if (strcmp(ppEnabledExtensions[i], VK_EXT_HEADLESS_SURFACE_EXTENSION_NAME) == 0) {
+            instData->KHRHeadlessSurfaceEnabled = true;
         }
 #endif
     }

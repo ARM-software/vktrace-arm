@@ -510,9 +510,13 @@ class VkTraceFileOutputGenerator(OutputGenerator):
             replay_objmapper_header += '        %s.clear();\n' % mangled_name
         for item in additional_remap_fifo:
             replay_objmapper_header += '        m_%s.clear();\n' % item
+        replay_objmapper_header += '        m_actual_devicememorys.clear();\n'
         replay_objmapper_header += '    }\n'
 
-        remapped_objects = ['VkImage', 'VkBuffer', 'VkDeviceMemory']
+        #remapped_objects = ['VkImage', 'VkBuffer', 'VkDeviceMemory']
+        remapped_objects = ['VkImage', 'VkBuffer']
+        self.object_types.remove('VkDeviceMemory')
+        self.object_types.remove('VkDevice')
         for item in self.object_types:
             map_name = item[2:].lower() + 's'
             mangled_name = 'm_' + map_name
@@ -543,6 +547,194 @@ class VkTraceFileOutputGenerator(OutputGenerator):
                 replay_objmapper_header += '        if (q == %s.end()) { vktrace_LogError("Failed to remap %s."); return VK_NULL_HANDLE; }\n' % (mangled_name, item)
                 replay_objmapper_header += '        return q->second;\n'
             replay_objmapper_header += '    }\n\n'
+
+        ##########################################################################
+
+        replay_objmapper_header += 'private:\n'
+        replay_objmapper_header += '    void (vkReplayObjMapper::*add_to_devices_map_ptr)(VkDevice pTraceVal, VkDevice pReplayVal);\n'
+        replay_objmapper_header += '    void (vkReplayObjMapper::*rm_from_devices_map_ptr)(const VkDevice& key);\n'
+        replay_objmapper_header += '    VkDevice (vkReplayObjMapper::*remap_devices_ptr)(const VkDevice& value);\n'
+        replay_objmapper_header += '    std::list<VkDevice> m_actual_devices;\n\n'
+
+        replay_objmapper_header += '    void add_to_devices_map_origin(VkDevice pTraceVal, VkDevice pReplayVal) {\n'
+        replay_objmapper_header += '        m_devices[pTraceVal] = pReplayVal;\n'
+        replay_objmapper_header += '    }\n\n'
+
+        replay_objmapper_header += '    void rm_from_devices_map_origin(const VkDevice& key) {\n'
+        replay_objmapper_header += '         m_devices.erase(key);\n'
+        replay_objmapper_header += '    }\n\n'
+
+        replay_objmapper_header += '    VkDevice remap_devices_origin(const VkDevice& value) {\n'
+        replay_objmapper_header += '        if (value == 0) { return 0; }\n'
+        replay_objmapper_header += '        std::unordered_map<VkDevice, VkDevice>::const_iterator q = m_devices.find(value);\n'
+        replay_objmapper_header += '        if (q == m_devices.end()) { vktrace_LogError("Failed to remap VkDevice."); return VK_NULL_HANDLE; }\n'
+        replay_objmapper_header += '        return q->second;\n'
+        replay_objmapper_header += '    }\n\n'
+
+        replay_objmapper_header += '    void add_to_devices_map_premapped(VkDevice pTraceVal, VkDevice pReplayVal) {\n'
+        replay_objmapper_header += '        auto it = m_indirect_devices.find(pTraceVal);\n'
+        replay_objmapper_header += '        if (it == m_indirect_devices.end()) {\n'
+        replay_objmapper_header += '            m_actual_devices.push_back(pReplayVal);\n'
+        replay_objmapper_header += '            m_indirect_devices[pTraceVal] = &(m_actual_devices.back());\n'
+        replay_objmapper_header += '        }\n'
+        replay_objmapper_header += '        else {\n'
+        replay_objmapper_header += '            assert(*it->second == VK_NULL_HANDLE);\n'
+        replay_objmapper_header += '            *it->second = pReplayVal;\n'
+        replay_objmapper_header += '        }\n'
+        replay_objmapper_header += '    }\n\n'
+
+        replay_objmapper_header += '    void rm_from_devices_map_premapped(const VkDevice& key) {\n'
+        replay_objmapper_header += '        auto it = m_indirect_devices.find(key);\n'
+        replay_objmapper_header += '        if (it != m_indirect_devices.end()) {\n'
+        replay_objmapper_header += '            *it->second = VK_NULL_HANDLE;\n'
+        replay_objmapper_header += '        }\n'
+        replay_objmapper_header += '    }\n\n'
+
+        replay_objmapper_header += '    VkDevice remap_devices_premapped(const VkDevice& value) {\n'
+        replay_objmapper_header += '        if (value == 0) { return 0; }\n'
+        replay_objmapper_header += '        std::unordered_map<VkDevice, VkDevice*>::const_iterator q = m_indirect_devices.find(value);\n'
+        replay_objmapper_header += '        if (q == m_indirect_devices.end()) { vktrace_LogError("Failed to remap VkDevice."); return VK_NULL_HANDLE; }\n'
+        replay_objmapper_header += '        return *(q->second);\n'
+        replay_objmapper_header += '    }\n\n'
+
+        replay_objmapper_header += 'public:\n'
+        replay_objmapper_header += '    std::unordered_map<VkDevice, VkDevice*> m_indirect_devices;\n'
+        replay_objmapper_header += '    std::unordered_map<VkDevice, VkDevice> m_devices;\n'
+
+        replay_objmapper_header += '    void add_to_devices_map(VkDevice pTraceVal, VkDevice pReplayVal) {\n'
+        replay_objmapper_header += '        (this->*add_to_devices_map_ptr)(pTraceVal, pReplayVal);\n'
+        replay_objmapper_header += '    }\n\n'
+
+        replay_objmapper_header += '    void rm_from_devices_map(const VkDevice& key) {\n'
+        replay_objmapper_header += '        (this->*rm_from_devices_map_ptr)(key);\n'
+        replay_objmapper_header += '    }\n\n'
+
+        replay_objmapper_header += '    VkDevice remap_devices(const VkDevice& value) {\n'
+        replay_objmapper_header += '        return (this->*remap_devices_ptr)(value);\n'
+        replay_objmapper_header += '    }\n\n'
+
+        ##########################################################################
+
+        replay_objmapper_header += 'private:\n'
+        replay_objmapper_header += '    void (vkReplayObjMapper::*add_to_devicememorys_map_ptr)(VkDeviceMemory pTraceVal, devicememoryObj pReplayVal);\n'
+        replay_objmapper_header += '    void (vkReplayObjMapper::*rm_from_devicememorys_map_ptr)(const VkDeviceMemory& key);\n'
+        replay_objmapper_header += '    VkDeviceMemory (vkReplayObjMapper::*remap_devicememorys_ptr)(const VkDeviceMemory& value);\n'
+        replay_objmapper_header += '    bool (vkReplayObjMapper::*devicememory_exists_ptr)(const VkDeviceMemory &deviceMem);\n'
+        replay_objmapper_header += '    const devicememoryObj &(vkReplayObjMapper::*find_devicememory_ptr)(const VkDeviceMemory &deviceMem);\n'
+        replay_objmapper_header += '    std::list<devicememoryObj> m_actual_devicememorys;\n'
+        replay_objmapper_header += '    devicememoryObj dummyDeviceMemoryObj;\n'
+
+        replay_objmapper_header += '    void add_to_devicememorys_map_origin(VkDeviceMemory pTraceVal, devicememoryObj pReplayVal) {\n'
+        replay_objmapper_header += '        m_devicememorys[pTraceVal] = pReplayVal;\n'
+        replay_objmapper_header += '    }\n'
+
+        replay_objmapper_header += '    void rm_from_devicememorys_map_origin(const VkDeviceMemory& key) {\n'
+        replay_objmapper_header += '        m_devicememorys.erase(key);\n'
+        replay_objmapper_header += '    }\n'
+
+        replay_objmapper_header += '    VkDeviceMemory remap_devicememorys_origin(const VkDeviceMemory& value) {\n'
+        replay_objmapper_header += '        if (value == 0) { return 0; }\n'
+        replay_objmapper_header += '        std::unordered_map<VkDeviceMemory, devicememoryObj>::const_iterator q = m_devicememorys.find(value);\n'
+        replay_objmapper_header += '        if (q == m_devicememorys.end()) { vktrace_LogError("Failed to remap VkDeviceMemory."); return VK_NULL_HANDLE; }\n'
+        replay_objmapper_header += '        return q->second.replayDeviceMemory;\n'
+        replay_objmapper_header += '    }\n\n'
+
+        replay_objmapper_header += '    bool devicememory_exists_origin(const VkDeviceMemory &value) {\n'
+        replay_objmapper_header += '        return m_devicememorys.find(value) != m_devicememorys.end();\n'
+        replay_objmapper_header += '    }\n\n'
+
+        replay_objmapper_header += '    const devicememoryObj &find_devicememory_origin(const VkDeviceMemory &deviceMem) {\n'
+        replay_objmapper_header += '        auto it = m_devicememorys.find(deviceMem);\n'
+        replay_objmapper_header += '        if (it == m_devicememorys.end()) {\n'
+        replay_objmapper_header += '            return dummyDeviceMemoryObj;\n'
+        replay_objmapper_header += '        }\n'
+        replay_objmapper_header += '        else {\n'
+        replay_objmapper_header += '            return it->second;\n'
+        replay_objmapper_header += '        }\n'
+        replay_objmapper_header += '    }\n'
+
+        replay_objmapper_header += '    void add_to_devicememorys_map_premapped(VkDeviceMemory pTraceVal, devicememoryObj pReplayVal) {\n'
+        replay_objmapper_header += '        auto it = m_indirect_devicememorys.find(pTraceVal);\n'
+        replay_objmapper_header += '        if (it == m_indirect_devicememorys.end()) {\n'
+        replay_objmapper_header += '            m_actual_devicememorys.push_back(pReplayVal);\n'
+        replay_objmapper_header += '            m_indirect_devicememorys[pTraceVal] = &(m_actual_devicememorys.back());\n'
+        replay_objmapper_header += '        }\n'
+        replay_objmapper_header += '        else {\n'
+        replay_objmapper_header += '            assert(it->second->replayDeviceMemory == VK_NULL_HANDLE && it->second->pGpuMem == NULL);\n'
+        replay_objmapper_header += '            *it->second = pReplayVal;\n'
+        replay_objmapper_header += '        }\n'
+        replay_objmapper_header += '    }\n'
+
+        replay_objmapper_header += '    void rm_from_devicememorys_map_premapped(const VkDeviceMemory& key) {\n'
+        replay_objmapper_header += '        auto it = m_indirect_devicememorys.find(key);\n'
+        replay_objmapper_header += '        if (it != m_indirect_devicememorys.end()) {\n'
+        replay_objmapper_header += '            it->second->pGpuMem = NULL;\n'
+        replay_objmapper_header += '            it->second->replayDeviceMemory = VK_NULL_HANDLE;\n'
+        replay_objmapper_header += '        }\n'
+        replay_objmapper_header += '    }\n'
+
+        replay_objmapper_header += '    VkDeviceMemory remap_devicememorys_premapped(const VkDeviceMemory& value) {\n'
+        replay_objmapper_header += '        if (value == 0) { return 0; }\n'
+        replay_objmapper_header += '        std::unordered_map<VkDeviceMemory, devicememoryObj*>::const_iterator q = m_indirect_devicememorys.find(value);\n'
+        replay_objmapper_header += '        if (q == m_indirect_devicememorys.end()) { vktrace_LogError("Failed to remap VkDeviceMemory."); return VK_NULL_HANDLE; }\n'
+        replay_objmapper_header += '        if (q->second == 0) return 0;\n'
+        replay_objmapper_header += '        return q->second->replayDeviceMemory;\n'
+        replay_objmapper_header += '    }\n'
+
+        replay_objmapper_header += '    bool devicememory_exists_premapped(const VkDeviceMemory &value) {\n'
+        replay_objmapper_header += '        auto it = m_indirect_devicememorys.find(value);\n'
+        replay_objmapper_header += '        if (it == m_indirect_devicememorys.end()) {\n'
+        replay_objmapper_header += '            return false;\n'
+        replay_objmapper_header += '        }\n'
+        replay_objmapper_header += '        else if (it->second->pGpuMem == NULL && it->second->replayDeviceMemory == VK_NULL_HANDLE) {\n'
+        replay_objmapper_header += '            return false;\n'
+        replay_objmapper_header += '        }\n'
+        replay_objmapper_header += '        return true;\n'
+        replay_objmapper_header += '    }\n'
+
+        replay_objmapper_header += '    const devicememoryObj &find_devicememory_premapped(const VkDeviceMemory &deviceMem) {\n'
+        replay_objmapper_header += '        auto it = m_indirect_devicememorys.find(deviceMem);\n'
+        replay_objmapper_header += '        if (it == m_indirect_devicememorys.end()) {\n'
+        replay_objmapper_header += '            return dummyDeviceMemoryObj;\n'
+        replay_objmapper_header += '        }\n'
+        replay_objmapper_header += '        else {\n'
+        replay_objmapper_header += '            return *it->second;\n'
+        replay_objmapper_header += '        }\n'
+        replay_objmapper_header += '    }\n'
+
+        replay_objmapper_header += 'public:\n'
+        replay_objmapper_header += '    std::unordered_map<VkDeviceMemory, devicememoryObj*> m_indirect_devicememorys;\n'
+        replay_objmapper_header += '    std::unordered_map<VkDeviceMemory, devicememoryObj>  m_devicememorys;\n'
+        replay_objmapper_header += '    std::unordered_map<VkDeviceMemory, devicememoryObj*>::iterator find_devicememory_iterator(const VkDeviceMemory &deviceMem) {\n'
+        replay_objmapper_header += '        auto it = m_indirect_devicememorys.find(deviceMem);\n'
+        replay_objmapper_header += '        if (it == m_indirect_devicememorys.end()) {\n'
+        replay_objmapper_header += '            return m_indirect_devicememorys.end();\n'
+        replay_objmapper_header += '        }\n'
+        replay_objmapper_header += '        else if (it->second->pGpuMem == NULL && it->second->replayDeviceMemory == VK_NULL_HANDLE) {\n'
+        replay_objmapper_header += '            return m_indirect_devicememorys.end();\n'
+        replay_objmapper_header += '        }\n'
+        replay_objmapper_header += '        else {\n'
+        replay_objmapper_header += '            return it;\n'
+        replay_objmapper_header += '        }\n'
+        replay_objmapper_header += '    }\n'
+        replay_objmapper_header += '    bool devicememory_exists(const VkDeviceMemory &deviceMem) {\n'
+        replay_objmapper_header += '        return (this->*devicememory_exists_ptr)(deviceMem);\n'
+        replay_objmapper_header += '    }\n'
+        replay_objmapper_header += '    void add_to_devicememorys_map(VkDeviceMemory pTraceVal, devicememoryObj pReplayVal) {\n'
+        replay_objmapper_header += '        (this->*add_to_devicememorys_map_ptr)(pTraceVal, pReplayVal);\n'
+        replay_objmapper_header += '    }\n'
+        replay_objmapper_header += '    void rm_from_devicememorys_map(const VkDeviceMemory& key) {\n'
+        replay_objmapper_header += '        (this->*rm_from_devicememorys_map_ptr)(key);\n'
+        replay_objmapper_header += '    }\n'
+        replay_objmapper_header += '    VkDeviceMemory remap_devicememorys(const VkDeviceMemory& value) {\n'
+        replay_objmapper_header += '        return (this->*remap_devicememorys_ptr)(value);\n'
+        replay_objmapper_header += '    }\n'
+        replay_objmapper_header += '    const devicememoryObj &find_devicememory(const VkDeviceMemory &deviceMem) {\n'
+        replay_objmapper_header += '        return (this->*find_devicememory_ptr)(deviceMem);\n'
+        replay_objmapper_header += '    }\n'
+
+        ##########################################################################
+
         for item in additional_remap_fifo:
             replay_objmapper_header += '    std::list<%s> m_%s;\n' % (additional_remap_fifo[item], item)
             replay_objmapper_header += '    void add_to_%s_map(%s traceVal, %s replayVal) {\n' % (item, additional_remap_fifo[item], additional_remap_fifo[item])
@@ -765,7 +957,7 @@ class VkTraceFileOutputGenerator(OutputGenerator):
             else:
                 if create_view:
                     replay_gen_source += '            %s createInfo;\n' % (params[1].type.strip('*').replace('const ', ''))
-                    replay_gen_source += '            memcpy(&createInfo, pPacket->pCreateInfo, sizeof(%s))\n;' % (params[1].type.strip('*').replace('const ', ''))
+                    replay_gen_source += '            memcpy(&createInfo, pPacket->pCreateInfo, sizeof(%s));\n' % (params[1].type.strip('*').replace('const ', ''))
                     if 'CreateComputePipeline' == cmdname:
                         replay_gen_source += '            createInfo.cs.shader = m_objMapper.remap_shaders(pPacket->pCreateInfo->cs.shader);\n'
                         replay_gen_source += '            if (createInfo.cs.shader == VK_NULL_HANDLE && pPacket->pCreateInfo->cs.shader != VK_NULL_HANDLE) {\n'
@@ -779,7 +971,13 @@ class VkTraceFileOutputGenerator(OutputGenerator):
                         replay_gen_source += '                return vktrace_replay::VKTRACE_REPLAY_ERROR;\n'
                         replay_gen_source += '            }\n'
                     else:
-                        replay_gen_source += '            createInfo.image = m_objMapper.remap_images(pPacket->pCreateInfo->image);\n'
+                        replay_gen_source += '            VkImage pktImg = pPacket->pCreateInfo->image;\n'
+                        replay_gen_source += '            if (curSwapchainImgState.traceImageToImageIndex.find(pktImg) != curSwapchainImgState.traceImageToImageIndex.end()) {\n'
+                        replay_gen_source += '                if (curSwapchainImgState.traceImageToImageIndex[pktImg] == m_pktImgIndex) {\n'
+                        replay_gen_source += '                    pktImg = curSwapchainImgState.traceImageIndexToImage[m_imageIndex];\n'
+                        replay_gen_source += '                }\n'
+                        replay_gen_source += '            }\n'
+                        replay_gen_source += '            createInfo.image = m_objMapper.remap_images(pktImg);\n'
                         replay_gen_source += '            if (createInfo.image == VK_NULL_HANDLE && pPacket->pCreateInfo->image != VK_NULL_HANDLE) {\n'
                         replay_gen_source += '                vktrace_LogError("Error detected in vkCreateImageView() due to invalid remapped VkImage.");\n'
                         replay_gen_source += '                return vktrace_replay::VKTRACE_REPLAY_ERROR;\n'
@@ -924,6 +1122,42 @@ class VkTraceFileOutputGenerator(OutputGenerator):
                     replay_gen_source += '                surfRefCount--;\n'
                     replay_gen_source += '                return vktrace_replay::VKTRACE_REPLAY_SUCCESS;\n'
                     replay_gen_source += '            }\n'
+                elif 'CreatePipelineCache' in cmdname:
+                    replay_gen_source += '            if (g_pReplaySettings->enablePipelineCache) {\n'
+                    replay_gen_source += '                assert(nullptr != m_pipelinecache_accessor);\n'
+                    replay_gen_source += '                const VkPipelineCache key = *(pPacket->pPipelineCache);\n'
+                    replay_gen_source += '                if (false == m_pipelinecache_accessor->FileExists(key)) {\n'
+                    replay_gen_source += '                    m_pipelinecache_accessor->CollectPacketInfo(pPacket->device, key);\n'
+                    replay_gen_source += '                } else {\n'
+                    replay_gen_source += '                    if (m_pipelinecache_accessor->LoadPipelineCache(key)) {\n'
+                    replay_gen_source += '                        auto cache_data = m_pipelinecache_accessor->GetPipelineCache(key);\n'
+                    replay_gen_source += '                        if (nullptr != cache_data.first) {\n'
+                    replay_gen_source += '                            VkPipelineCacheCreateInfo *pCreateInfo = const_cast<VkPipelineCacheCreateInfo *>(pPacket->pCreateInfo);\n'
+                    replay_gen_source += '                            pCreateInfo->pInitialData = cache_data.first;\n'
+                    replay_gen_source += '                            pCreateInfo->initialDataSize = cache_data.second;\n'
+                    replay_gen_source += '                        }\n'
+                    replay_gen_source += '                    }\n'
+                    replay_gen_source += '                }\n'
+                    replay_gen_source += '            }\n'
+                elif 'DestroyPipelineCache' in cmdname:
+                    replay_gen_source += '            if (g_pReplaySettings->enablePipelineCache) {\n'
+                    replay_gen_source += '                size_t datasize = 0;\n'
+                    replay_gen_source += '                assert(nullptr != m_pipelinecache_accessor);\n'
+                    replay_gen_source += '                if (false == m_pipelinecache_accessor->FileExists(pPacket->pipelineCache)) {\n'
+                    replay_gen_source += '                    auto result = m_vkDeviceFuncs.GetPipelineCacheData(remappeddevice, remappedpipelineCache, &datasize, nullptr);\n'
+                    replay_gen_source += '                    if (VK_SUCCESS == result) {\n'
+                    replay_gen_source += '                        uint8_t *data = VKTRACE_NEW_ARRAY(uint8_t, datasize);\n'
+                    replay_gen_source += '                        assert(nullptr != data);\n'
+                    replay_gen_source += '                        result = m_vkDeviceFuncs.GetPipelineCacheData(remappeddevice, remappedpipelineCache, &datasize, data);\n'
+                    replay_gen_source += '                        if (VK_SUCCESS == result) {\n'
+                    replay_gen_source += '                            // There is no cache data on the disk, write the cache data.\n'
+                    replay_gen_source += '                            m_pipelinecache_accessor->WritePipelineCache(pPacket->pipelineCache, data, datasize);\n'
+                    replay_gen_source += '                        }\n'
+                    replay_gen_source += '                        VKTRACE_DELETE(data);\n'
+                    replay_gen_source += '                    }\n'
+                    replay_gen_source += '                }\n'
+                    replay_gen_source += '                m_pipelinecache_accessor->RemoveCollectedPacketInfo(pPacket->device, pPacket->pipelineCache);\n'
+                    replay_gen_source += '            }\n'
                 # Build the call to the "real_" entrypoint
                 rr_string = '            '
                 if ret_value:
@@ -1003,6 +1237,7 @@ class VkTraceFileOutputGenerator(OutputGenerator):
                 elif 'AcquireNextImage' in cmdname:
                     replay_gen_source += '            if (replayResult == VK_SUCCESS) {\n'
                     replay_gen_source += '                m_objMapper.add_to_pImageIndex_map(*(pPacket->pImageIndex), local_pImageIndex);\n'
+                    replay_gen_source += '                m_pktImgIndex = *(pPacket->pImageIndex);\n'
                     replay_gen_source += '                m_imageIndex = local_pImageIndex;\n'
                     replay_gen_source += '            }\n'
                 elif 'DestroyInstance' in cmdname:
@@ -1048,9 +1283,9 @@ class VkTraceFileOutputGenerator(OutputGenerator):
                     if 'AllocateMemory' == cmdname:
                         replay_gen_source += '                m_objMapper.add_entry_to_mapData(local_%s, pPacket->pAllocateInfo->allocationSize);\n' % (params[-1].name)
                     elif 'CreateImageView' == cmdname:
-                        replay_gen_source += '                if (curSwapchainImgState.traceImageToImageIndex.find(pPacket->pCreateInfo->image) != curSwapchainImgState.traceImageToImageIndex.end()) {\n'
-                        replay_gen_source += '                    curSwapchainImgState.traceImageIndexToImageView[curSwapchainImgState.traceImageToImageIndex[pPacket->pCreateInfo->image]] = *(pPacket->pView);\n'
-                        replay_gen_source += '                    curSwapchainImgState.traceImageViewToImageIndex[*(pPacket->pView)] = curSwapchainImgState.traceImageToImageIndex[pPacket->pCreateInfo->image];\n'
+                        replay_gen_source += '                if (curSwapchainImgState.traceImageToImageIndex.find(pktImg) != curSwapchainImgState.traceImageToImageIndex.end()) {\n'
+                        replay_gen_source += '                    curSwapchainImgState.traceImageIndexToImageView[curSwapchainImgState.traceImageToImageIndex[pktImg]] = *(pPacket->pView);\n'
+                        replay_gen_source += '                    curSwapchainImgState.traceImageViewToImageIndex[*(pPacket->pView)] = curSwapchainImgState.traceImageToImageIndex[pktImg];\n'
                         replay_gen_source += '                }\n'
                     if ret_value:
                         replay_gen_source += '            }\n'
@@ -1063,6 +1298,15 @@ class VkTraceFileOutputGenerator(OutputGenerator):
             replay_gen_source += '        }\n'
             if protect == "VK_USE_PLATFORM_XLIB_XRANDR_EXT":
                 replay_gen_source += '#endif // %s\n' % protect
+        replay_gen_source += '        case VKTRACE_TPI_VK_vkFlushMappedMemoryRanges + PREMAP_SHIFT: {\n'
+        replay_gen_source += '            packet_vkFlushMappedMemoryRanges* pPacket = (packet_vkFlushMappedMemoryRanges*)(packet->pBody);\n'
+        replay_gen_source += '            if (callFailedDuringTrace(pPacket->result, packet->packet_id)) {\n'
+        replay_gen_source += '                break;\n'
+        replay_gen_source += '            }\n'
+        replay_gen_source += '            replayResult = manually_replay_vkFlushMappedMemoryRangesPremapped(pPacket);\n'
+        replay_gen_source += '            CHECK_RETURN_VALUE(vkFlushMappedMemoryRanges + PREMAP_SHIFT);\n'
+        replay_gen_source += '            break;\n'
+        replay_gen_source += '        }\n'
         replay_gen_source += '        default:\n'
         replay_gen_source += '            vktrace_LogWarning("Unrecognized packet_id %u, skipping.", packet->packet_id);\n'
         replay_gen_source += '            returnValue = vktrace_replay::VKTRACE_REPLAY_INVALID_ID;\n'
@@ -2486,12 +2730,15 @@ class VkTraceFileOutputGenerator(OutputGenerator):
 
                 # Build the call to the "dump_" entrypoint
                 param_string = ''
+                param_string_no_result = ''
                 if ret_value:
                     param_string += 'pPacket->result, '
                 for p in params:
                     if p.name is not '':
                         param_string += 'pPacket->%s, ' % p.name
+                        param_string_no_result += 'pPacket->%s, ' % p.name
                 param_string = '%s);' % param_string[:-2]
+                param_string_no_result = '%s);' % param_string_no_result[:-2]
 
                 if cmdname == 'CreateDescriptorSetLayout':
                     dump_gen_source += '            VkDescriptorSetLayoutCreateInfo *pInfo = (VkDescriptorSetLayoutCreateInfo *)pPacket->pCreateInfo;\n'
@@ -2634,15 +2881,21 @@ class VkTraceFileOutputGenerator(OutputGenerator):
                     dump_gen_source += '                                      std::vector<VkCommandBuffer>(pPacket->pCommandBuffers, pPacket->pCommandBuffers + pPacket->commandBufferCount));\n'
                 dump_gen_source += '            switch(dump_inst.settings().format()) {\n'
                 dump_gen_source += '            case ApiDumpFormat::Text:\n'
-                dump_gen_source += '                dump_text_vk%s(dump_inst, ' % cmdname
+                dump_gen_source += '                dump_text_head_vk%s(dump_inst, ' % cmdname
+                dump_gen_source += '%s\n' %param_string_no_result
+                dump_gen_source += '                dump_text_body_vk%s(dump_inst, ' % cmdname
                 dump_gen_source += '%s\n' % param_string
                 dump_gen_source += '                break;\n'
                 dump_gen_source += '            case ApiDumpFormat::Html:\n'
-                dump_gen_source += '                dump_html_vk%s(dump_inst, ' % cmdname
+                dump_gen_source += '                dump_html_head_vk%s(dump_inst, ' % cmdname
+                dump_gen_source += '%s\n' %param_string_no_result
+                dump_gen_source += '                dump_html_body_vk%s(dump_inst, ' % cmdname
                 dump_gen_source += '%s\n' % param_string
                 dump_gen_source += '                break;\n'
                 dump_gen_source += '            case ApiDumpFormat::Json:\n'
-                dump_gen_source += '                dump_json_vk%s(dump_inst, ' % cmdname
+                dump_gen_source += '                dump_json_head_vk%s(dump_inst, ' % cmdname
+                dump_gen_source += '%s\n' %param_string_no_result
+                dump_gen_source += '                dump_json_body_vk%s(dump_inst, ' % cmdname
                 dump_gen_source += '%s\n' % param_string
                 dump_gen_source += '                break;\n'
                 dump_gen_source += '            }\n'
@@ -2820,6 +3073,7 @@ class VkTraceFileOutputGenerator(OutputGenerator):
                                          'vkCreateObjectTableNVX',
                                          'vkCmdProcessCommandsNVX',
                                          'vkCreateIndirectCommandsLayoutNVX',
+                                         'vkGetFenceStatus',
                                          # TODO: VK_EXT_display_control
                                          ]
 
@@ -3219,6 +3473,7 @@ class VkTraceFileOutputGenerator(OutputGenerator):
 
         # TODO : This code is now too large and complex, need to make codegen smarter for pointers embedded in struct params to handle those cases automatically
         custom_case_dict = { 'CreateRenderPass' : {'param': 'pCreateInfo', 'txt': create_rp_interp},
+                             'CreateDescriptorUpdateTemplate' : {'param': 'pCreateInfo', 'txt': ['*((VkDescriptorUpdateTemplateCreateInfoKHR **)&pPacket->pCreateInfo->pDescriptorUpdateEntries) = (VkDescriptorUpdateTemplateCreateInfoKHR*) vktrace_trace_packet_interpret_buffer_pointer(pHeader, (intptr_t)pPacket->pCreateInfo->pDescriptorUpdateEntries);']},
                              'CreatePipelineCache' : {'param': 'pCreateInfo', 'txt': [
                                                        '((VkPipelineCacheCreateInfo *)pPacket->pCreateInfo)->pInitialData = (const void*) vktrace_trace_packet_interpret_buffer_pointer(pHeader, (intptr_t)pPacket->pCreateInfo->pInitialData);']},
                              'CreatePipelineLayout' : {'param': 'pCreateInfo', 'txt': ['VkPipelineLayoutCreateInfo* pInfo = (VkPipelineLayoutCreateInfo*)pPacket->pCreateInfo;\n',
@@ -3857,13 +4112,13 @@ class VkTraceFileOutputGenerator(OutputGenerator):
                 if 'UnmapMemory' in proto.name:
                     trace_pkt_hdr += '    pPacket->pData = (void*)vktrace_trace_packet_interpret_buffer_pointer(pHeader, (intptr_t)pPacket->pData);\n'
                 elif 'FlushMappedMemoryRanges' in proto.name or 'InvalidateMappedMemoryRanges' in proto.name:
-                            trace_pkt_hdr += '    pPacket->ppData = (void**)vktrace_trace_packet_interpret_buffer_pointer(pHeader, (intptr_t)pPacket->ppData);\n'
-                            trace_pkt_hdr += '    if (pPacket->ppData != NULL) {\n'
-                            trace_pkt_hdr += '        uint32_t i = 0;\n'
-                            trace_pkt_hdr += '        for (i = 0; i < pPacket->memoryRangeCount; i++) {\n'
-                            trace_pkt_hdr += '            pPacket->ppData[i] = (void*)vktrace_trace_packet_interpret_buffer_pointer(pHeader, (intptr_t)pPacket->ppData[i]);\n'
-                            trace_pkt_hdr += '        }\n'
-                            trace_pkt_hdr += '    }\n'
+                    trace_pkt_hdr += '    pPacket->ppData = (void**)vktrace_trace_packet_interpret_buffer_pointer(pHeader, (intptr_t)pPacket->ppData);\n'
+                    trace_pkt_hdr += '    if (pPacket->ppData != NULL) {\n'
+                    trace_pkt_hdr += '        uint32_t i = 0;\n'
+                    trace_pkt_hdr += '        for (i = 0; i < pPacket->memoryRangeCount; i++) {\n'
+                    trace_pkt_hdr += '            pPacket->ppData[i] = (void*)vktrace_trace_packet_interpret_buffer_pointer(pHeader, (intptr_t)pPacket->ppData[i]);\n'
+                    trace_pkt_hdr += '        }\n'
+                    trace_pkt_hdr += '    }\n'
                 trace_pkt_hdr += '    return pPacket;\n'
                 trace_pkt_hdr += '}\n'
                 # TODO: Enable ifdef protections for extension?

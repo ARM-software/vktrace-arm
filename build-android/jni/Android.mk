@@ -193,6 +193,7 @@ LOCAL_SRC_FILES += $(SRC_DIR)/vktrace/vktrace_replay/vkreplay_settings.cpp
 LOCAL_SRC_FILES += $(SRC_DIR)/vktrace/vktrace_replay/vkreplay_vkdisplay.cpp
 LOCAL_SRC_FILES += $(SRC_DIR)/vktrace/vktrace_replay/vkreplay_vkreplay.cpp
 LOCAL_SRC_FILES += $(SRC_DIR)/vktrace/vktrace_replay/vkreplay_preload.cpp
+LOCAL_SRC_FILES += $(SRC_DIR)/vktrace/vktrace_replay/vkreplay_pipelinecache.cpp
 LOCAL_SRC_FILES += $(THIRD_PARTY)/Vulkan-Tools/common/vulkan_wrapper.cpp
 LOCAL_SRC_FILES += $(SRC_DIR)/layersvt/screenshot_parsing.cpp
 LOCAL_C_INCLUDES += $(LOCAL_PATH)/$(SRC_DIR)/vktrace/include \

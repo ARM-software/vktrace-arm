@@ -174,11 +174,14 @@ private:
         if (output_stream.rdstate() == std::ifstream::goodbit) {
             if (output_format == ApiCostFormat::Csv) {
                 char costinfo[256] = {0};
-                sprintf(costinfo,"function,count,time(us)\r\n");
+                sprintf(costinfo,"function,count,time(us),avg. time\r\n");
                 cost_string = cost_string + costinfo;
                 for(auto e: func_stat) {
                     memset(costinfo,0,sizeof(costinfo));
-                    sprintf(costinfo,"%s,%lu,%lu\r\n",e.first.c_str(),static_cast<unsigned long>(e.second.callcount),static_cast<unsigned long>(e.second.costsum));
+                    sprintf(costinfo,"%s,%lu,%lu,%f\r\n", e.first.c_str(),
+                            static_cast<unsigned long>(e.second.callcount),
+                            static_cast<unsigned long>(e.second.costsum),
+                            static_cast<float>(e.second.costsum) / static_cast<unsigned long>(e.second.callcount));
                     cost_string = cost_string + costinfo;
                 }
                 output_stream.write(cost_string.c_str(),cost_string.size());

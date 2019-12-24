@@ -28,7 +28,7 @@
 // declared as extern in header
 vkreplayer_settings g_vkReplaySettings;
 
-static vkreplayer_settings s_defaultVkReplaySettings = {NULL, 1, UINT_MAX, UINT_MAX, true, false, NULL, NULL, NULL, NULL, NULL, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, 50};
+static vkreplayer_settings s_defaultVkReplaySettings = {NULL, 1, UINT_MAX, UINT_MAX, true, false, NULL, NULL, NULL, NULL, NULL, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, 50, FALSE, FALSE, NULL};
 
 vktrace_SettingInfo g_vk_settings_info[] = {
     {"o",
@@ -146,13 +146,42 @@ vktrace_SettingInfo g_vk_settings_info[] = {
      {&s_defaultVkReplaySettings.forceSingleWindow},
      TRUE,
      "Force single window rendering."},
-     {"feadm",
-      "forceEXTASTCDecodeMode",
-      VKTRACE_SETTING_BOOL,
-      {&g_vkReplaySettings.forceEXTASTCDecodeMode},
-      {&s_defaultVkReplaySettings.forceEXTASTCDecodeMode},
-      TRUE,
-      "Force using VK_FORMAT_R8G8B8A8_UNORM as ASTC decode mode."},
+    {"feadm",
+     "forceEXTASTCDecodeMode",
+     VKTRACE_SETTING_BOOL,
+     {&g_vkReplaySettings.forceEXTASTCDecodeMode},
+     {&s_defaultVkReplaySettings.forceEXTASTCDecodeMode},
+     TRUE,
+     "Force using VK_FORMAT_R8G8B8A8_UNORM as ASTC decode mode."},
+    {"pmp",
+     "memoryPercentage",
+     VKTRACE_SETTING_UINT,
+     {&g_vkReplaySettings.memoryPercentage},
+     {&s_defaultVkReplaySettings.memoryPercentage},
+     TRUE,
+     "Preload vktrace file block occupancy system memory percentage,the default is 50%"},
+    {"prm",
+     "premapping",
+     VKTRACE_SETTING_BOOL,
+     {&g_vkReplaySettings.premapping},
+     {&s_defaultVkReplaySettings.premapping},
+     TRUE,
+     "Premap resources in several vulkan APIs when preloading."},
+    {"epc",
+     "enablePipelineCache",
+     VKTRACE_SETTING_BOOL,
+     {&g_vkReplaySettings.enablePipelineCache},
+     {&s_defaultVkReplaySettings.enablePipelineCache},
+     TRUE,
+     "Write pipeline cache to the disk and use the cache data for the next replay."},
+    {"pcp",
+     "pipelineCachePath",
+     VKTRACE_SETTING_STRING,
+     {&g_vkReplaySettings.pipelineCachePath},
+     {&s_defaultVkReplaySettings.pipelineCachePath},
+     TRUE,
+     "Set the path for saving the pipeline cache data for the replay."},
+
 };
 
 vktrace_SettingGroup g_vkReplaySettingGroup = {"vkreplay_vk", sizeof(g_vk_settings_info) / sizeof(g_vk_settings_info[0]),

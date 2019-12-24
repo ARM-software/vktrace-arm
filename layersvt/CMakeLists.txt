@@ -53,7 +53,7 @@ if (NOT APPLE)
         VkLayer_monitor
         VkLayer_screenshot
         VkLayer_device_simulation
-    VkLayer_api_cost
+        VkLayer_api_cost
         )
     set(VK_LAYER_RPATH /usr/lib/x86_64-linux-gnu/vulkan/layer:/usr/lib/i386-linux-gnu/vulkan/layer)
     set(CMAKE_INSTALL_RPATH ${VK_LAYER_RPATH})
@@ -107,21 +107,8 @@ else ()
 endif()
 
 if (WIN32)
-    set (CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -D_CRT_SECURE_NO_WARNINGS")
-    set (CMAKE_C_FLAGS_RELEASE   "${CMAKE_C_FLAGS_RELEASE} -D_CRT_SECURE_NO_WARNINGS")
-
-    # For VS 2015, which uses compiler version 1900, core_validation.cpp fails with too many objects
-    # without either optimizations enabled, or setting the /bigobj compilation option.  Since
-    # optimizations are enabled in a release build, this only affects the debug build.  For now,
-    # enable /bigobj mode for all debug layer files. An alternative for the future is to split
-    # large source files into multiple files which will also alleviate the compilation error.
-    if (MSVC AND NOT (MSVC_VERSION LESS 1900))
-        set (CMAKE_CXX_FLAGS_DEBUG   "${CMAKE_CXX_FLAGS_DEBUG} -D_CRT_SECURE_NO_WARNINGS /bigobj")
-        set (CMAKE_C_FLAGS_DEBUG     "${CMAKE_C_FLAGS_DEBUG} -D_CRT_SECURE_NO_WARNINGS /bigobj")
-    else()
-        set (CMAKE_CXX_FLAGS_DEBUG   "${CMAKE_CXX_FLAGS_DEBUG} -D_CRT_SECURE_NO_WARNINGS")
-        set (CMAKE_C_FLAGS_DEBUG     "${CMAKE_C_FLAGS_DEBUG} -D_CRT_SECURE_NO_WARNINGS")
-    endif()
+    set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -D_CRT_SECURE_NO_WARNINGS /bigobj")
+    set (CMAKE_C_FLAGS   "${CMAKE_C_FLAGS} -D_CRT_SECURE_NO_WARNINGS /bigobj")
 else()
     set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11")
     set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wpointer-arith")

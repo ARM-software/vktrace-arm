@@ -65,7 +65,6 @@ template <typename _Mutex>
 class TraceLock {  // specialization for a single mutex
    private:
     _Mutex &_MyMutex;
-    bool m_islocked;
 
    public:
     typedef _Mutex mutex_type;
@@ -75,16 +74,12 @@ class TraceLock {  // specialization for a single mutex
         // or when env var VKTRACE_ENABLE_TRACE_LOCK is set to "1"
         if (g_trimEnabled || g_TraceLockEnabled) {
             _MyMutex.lock();
-            m_islocked = true;
-        } else {
-            m_islocked = false;
         }
     }
 
     ~TraceLock() {  // unlock
-        if (m_islocked) {
+        if (g_trimEnabled || g_TraceLockEnabled) {
             _MyMutex.unlock();
-            m_islocked = false;
         }
     }
 

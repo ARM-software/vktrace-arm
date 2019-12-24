@@ -262,3 +262,5 @@ static uint32_t getAHardwareBufBPP(uint32_t fmt) {
 // during the resource (images and buffers) upload in trim capture.
 // It is default to device max memory allocation count divide by 100.
 #define VKTRACE_TRIM_MAX_COMMAND_BATCH_SIZE_ENV "VKTRACE_TRIM_MAX_COMMAND_BATCH_SIZE"
+
+#define VKTRACE_DELAY_SIGNAL_FENCE_FRAMES_ENV "VKTRACE_DELAY_SIGNAL_FENCE_FRAMES"

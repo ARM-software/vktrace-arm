@@ -33,6 +33,10 @@
 #include <android/hardware_buffer_jni.h>
 #endif
 
+#if defined(PLATFORM_LINUX) && !defined(ANDROID)
+#include "../vktrace_common/arm_headless_ext.h"
+#endif // #if defined(PLATFORM_LINUX) && !defined(ANDROID)
+
 #include "vktrace_vk_vk.h"
 #include "vulkan/vulkan.h"
 #include "vulkan/vk_layer.h"
@@ -173,6 +177,15 @@ bool getBoolOption(const char* name, bool def) {
     return ret;
 }
 
+uint32_t getUintOption(const char* name, uint32_t def) {
+    uint32_t ret = def;
+    const char* env_value_str = vktrace_get_global_var(name);
+    if (env_value_str) {
+        sscanf(env_value_str, "%d", &ret);
+    }
+    return ret;
+}
+
 bool getForceFifoEnableFlag() {
     static bool EnableForceFifo = FIFO_ENABLE_DEFAULT;
     static bool FirstTimeRun = true;
@@ -191,6 +204,18 @@ bool getPMBSyncGPUDataBackEnableFlag() {
         EnableSyncBack = getBoolOption(VKTRACE_PAGEGUARD_ENABLE_SYNC_GPU_DATA_BACK_ENV, false);
     }
     return EnableSyncBack;
+}
+
+std::unordered_map<VkFence, uint64_t> g_submittedFenceOnFrame;
+
+uint32_t getDelaySignalFenceFrames() {
+    static uint32_t DelayFrames = 0;
+    static bool FirstTimeRun = true;
+    if (FirstTimeRun) {
+        FirstTimeRun = false;
+        DelayFrames = getUintOption(VKTRACE_DELAY_SIGNAL_FENCE_FRAMES_ENV, 0);
+    }
+    return DelayFrames;
 }
 
 /*
@@ -253,6 +278,7 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkAllocateMemory(VkDevic
     VkImportMemoryHostPointerInfoEXT importMemoryHostPointerInfo = {};
     void* pNextOriginal = const_cast<void*>(pAllocateInfo->pNext);
     void* pHostPointer = nullptr;
+    VkDeviceSize original_allocation_size = pAllocateInfo->allocationSize;
     if (UseMappedExternalHostMemoryExtension()) {
         VkMemoryPropertyFlags propertyFlags =
             getPageGuardControlInstance().getMemoryPropertyFlags(device, pAllocateInfo->memoryTypeIndex);
@@ -275,6 +301,11 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkAllocateMemory(VkDevic
             reinterpret_cast<VkImportMemoryHostPointerInfoEXT*>(*ppNext)->pNext = pNextOriginal;
             // provide the title host memory pointer which is already added
             // memory write watch.
+            size_t page_size = pageguardGetSystemPageSize();
+            if ((original_allocation_size % page_size) != 0) {
+                const_cast<VkMemoryAllocateInfo*>(pAllocateInfo)->allocationSize =
+                    pAllocateInfo->allocationSize - (pAllocateInfo->allocationSize % page_size) + page_size;
+            }
             reinterpret_cast<VkImportMemoryHostPointerInfoEXT*>(*ppNext)->pHostPointer =
                 pageguardAllocateMemory(pAllocateInfo->allocationSize);
             pHostPointer = reinterpret_cast<VkImportMemoryHostPointerInfoEXT*>(*ppNext)->pHostPointer;
@@ -282,6 +313,7 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkAllocateMemory(VkDevic
     }
 
     result = mdd(device)->devTable.AllocateMemory(device, pAllocateInfo, pAllocator, pMemory);
+    const_cast<VkMemoryAllocateInfo*>(pAllocateInfo)->allocationSize = original_allocation_size;
     if (UseMappedExternalHostMemoryExtension()) {
         if (result == VK_SUCCESS) {
             getPageGuardControlInstance().vkAllocateMemoryPageGuardHandle(device, pAllocateInfo, pAllocator, pMemory, pHostPointer);
@@ -2317,6 +2349,40 @@ VKTRACER_EXPORT VKAPI_ATTR void VKAPI_CALL __HOOKED_vkUpdateDescriptorSets(VkDev
     }
 }
 
+VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkGetFenceStatus(
+    VkDevice device,
+    VkFence fence) {
+    trim::TraceLock<std::mutex> lock(g_mutex_trace);
+    VkResult result;
+    vktrace_trace_packet_header* pHeader;
+    packet_vkGetFenceStatus* pPacket = NULL;
+    CREATE_TRACE_PACKET(vkGetFenceStatus, 0);
+    result = mdd(device)->devTable.GetFenceStatus(device, fence);
+    vktrace_set_packet_entrypoint_end_time(pHeader);
+    if (g_submittedFenceOnFrame.find(fence) != g_submittedFenceOnFrame.end() &&
+        getDelaySignalFenceFrames() > 0 &&
+        result == VK_SUCCESS) {
+        if (getDelaySignalFenceFrames() > (g_trimFrameCounter - g_submittedFenceOnFrame[fence]) ) {
+            result = VK_NOT_READY;
+        }
+    }
+    pPacket = interpret_body_as_vkGetFenceStatus(pHeader);
+    pPacket->device = device;
+    pPacket->fence = fence;
+    pPacket->result = result;
+    if (!g_trimEnabled) {
+        FINISH_TRACE_PACKET();
+    } else {
+        vktrace_finalize_trace_packet(pHeader);
+        if (g_trimIsInTrim) {
+            trim::write_packet(pHeader);
+        } else {
+            vktrace_delete_trace_packet(&pHeader);
+        }
+    }
+    return result;
+}
+
 VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkQueueSubmit(VkQueue queue, uint32_t submitCount,
                                                                       const VkSubmitInfo* pSubmits, VkFence fence) {
     trim::TraceLock<std::mutex> lock(g_mutex_trace);
@@ -2413,6 +2479,9 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkQueueSubmit(VkQueue qu
         vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pSubmits[i].pWaitDstStageMask));
     }
     vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pSubmits));
+    if (fence != VK_NULL_HANDLE && getDelaySignalFenceFrames() > 0) {
+        g_submittedFenceOnFrame[fence] = g_trimFrameCounter;
+    }
     if (!g_trimEnabled) {
         // trim not enabled, send packet as usual
         FINISH_TRACE_PACKET();
@@ -3820,8 +3889,8 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkQueuePresentKHR(VkQueu
         }
     }
 
+    g_trimFrameCounter++;
     if (g_trimEnabled) {
-        g_trimFrameCounter++;
         if (trim::is_trim_trigger_enabled(trim::enum_trim_trigger::hotKey)) {
             if (!g_trimAlreadyFinished)
             {
@@ -4266,6 +4335,74 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkCreateAndroidSurfaceKH
         }
     }
     return result;
+}
+#endif
+
+#if defined(VK_USE_PLATFORM_HEADLESS_EXT)
+VkResult saveCreateHeadlessSurfAsAndroidSurf(VkInstance instance,
+                                             const VkHeadlessSurfaceCreateInfoEXT *pCreateInfo,
+                                             const VkAllocationCallbacks *pAllocator,
+                                             VkSurfaceKHR* pSurface) {
+    vktrace_trace_packet_header* pHeader;
+    VkResult result;
+    packet_vkCreateAndroidSurfaceKHR* pPacket = NULL;
+    VkAndroidSurfaceCreateInfoKHR fakedAndroidCreateInfo;
+
+    fakedAndroidCreateInfo.sType = VK_STRUCTURE_TYPE_ANDROID_SURFACE_CREATE_INFO_KHR;
+    fakedAndroidCreateInfo.pNext = NULL;
+    fakedAndroidCreateInfo.flags = 0;
+    fakedAndroidCreateInfo.window = (ANativeWindow*)0xFACEFACE;
+
+    // don't bother with copying the actual native window into the trace packet, vkreplay has to use it's own anyway
+    CREATE_TRACE_PACKET(vkCreateAndroidSurfaceKHR,
+                        sizeof(VkSurfaceKHR) + sizeof(VkAllocationCallbacks) + get_struct_chain_size((void*)&fakedAndroidCreateInfo));
+    result = mid(instance)->instTable.CreateHeadlessSurfaceEXT(instance, pCreateInfo, pAllocator, pSurface);
+    pPacket = interpret_body_as_vkCreateAndroidSurfaceKHR(pHeader);
+    pPacket->instance = instance;
+    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pCreateInfo), sizeof(VkAndroidSurfaceCreateInfoKHR),
+                                       &fakedAndroidCreateInfo);
+    vktrace_add_pnext_structs_to_trace_packet(pHeader, (void**)&(pPacket->pCreateInfo->pNext), fakedAndroidCreateInfo.pNext);
+    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pAllocator), sizeof(VkAllocationCallbacks), NULL);
+    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pSurface), sizeof(VkSurfaceKHR), pSurface);
+    pPacket->result = result;
+    vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pCreateInfo));
+    vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pAllocator));
+    vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pSurface));
+    if (!g_trimEnabled) {
+        FINISH_TRACE_PACKET();
+    } else {
+        vktrace_finalize_trace_packet(pHeader);
+        trim::ObjectInfo& info = trim::add_SurfaceKHR_object(*pSurface);
+        info.belongsToInstance = instance;
+        info.ObjectInfo.SurfaceKHR.pCreatePacket = trim::copy_packet(pHeader);
+        if (pAllocator != NULL) {
+            info.ObjectInfo.SurfaceKHR.pAllocator = pAllocator;
+            trim::add_Allocator(pAllocator);
+        }
+
+        if (g_trimIsInTrim) {
+            trim::write_packet(pHeader);
+        } else {
+            vktrace_delete_trace_packet(&pHeader);
+        }
+    }
+    return result;
+}
+
+VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkCreateHeadlessSurfaceEXT(VkInstance instance,
+                                                                                  const VkHeadlessSurfaceCreateInfoEXT *pCreateInfo,
+                                                                                  const VkAllocationCallbacks *pAllocator,
+                                                                                  VkSurfaceKHR* pSurface) {
+    return saveCreateHeadlessSurfAsAndroidSurf(instance, pCreateInfo, pAllocator, pSurface);
+}
+#endif
+
+#if defined(VK_USE_PLATFORM_HEADLESS_ARM)
+VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkCreateHeadlessSurfaceARM(VkInstance instance,
+                                                                                   const VkHeadlessSurfaceCreateInfoARM *pCreateInfo,
+                                                                                   const VkAllocationCallbacks *pAllocator,
+                                                                                   VkSurfaceKHR *pSurface) {
+    return saveCreateHeadlessSurfAsAndroidSurf(instance, (const VkHeadlessSurfaceCreateInfoEXT*)pCreateInfo, pAllocator, pSurface);
 }
 #endif
 
@@ -5200,6 +5337,7 @@ VKTRACER_EXPORT VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL __HOOKED_vkGetDevicePro
     if (device == VK_NULL_HANDLE) {
         return NULL;
     }
+    vktrace_LogError("Function %s is not in Device", funcName);
 
     VkLayerDispatchTable* pDisp = &devData->devTable;
     if (pDisp->GetDeviceProcAddr == NULL) return NULL;
@@ -5241,7 +5379,6 @@ VKTRACER_EXPORT VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vktraceGetInstanceProcA
 
 /* GIPA with no trace packet creation */
 VKTRACER_EXPORT VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL __HOOKED_vkGetInstanceProcAddr(VkInstance instance, const char* funcName) {
-    trim::TraceLock<std::mutex> lock(g_mutex_trace);
     PFN_vkVoidFunction addr;
     layer_instance_data* instData;
 
@@ -5256,6 +5393,9 @@ VKTRACER_EXPORT VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL __HOOKED_vkGetInstanceP
 
     if (gMessageStream != NULL) {
         addr = layer_intercept_instance_proc(funcName);
+        if (addr) return addr;
+
+        addr = layer_intercept_proc(funcName);
         if (addr) return addr;
 
         if (instance == VK_NULL_HANDLE) {
@@ -5313,12 +5453,24 @@ VKTRACER_EXPORT VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL __HOOKED_vkGetInstanceP
             if (!strcmp("vkCreateAndroidSurfaceKHR", funcName)) return (PFN_vkVoidFunction)__HOOKED_vkCreateAndroidSurfaceKHR;
         }
 #endif
+#if defined(VK_USE_PLATFORM_HEADLESS_ARM)
+        if (instData->KHRHeadlessSurfaceEnabled) {
+            if (!strcmp("vkCreateHeadlessSurfaceARM", funcName)) return (PFN_vkVoidFunction)__HOOKED_vkCreateHeadlessSurfaceARM;
+        }
+#endif
+#if defined(VK_USE_PLATFORM_HEADLESS_EXT)
+        if (instData->KHRHeadlessSurfaceEnabled) {
+            if (!strcmp("vkCreateHeadlessSurfaceEXT", funcName)) return (PFN_vkVoidFunction)__HOOKED_vkCreateHeadlessSurfaceEXT;
+        }
+#endif
     } else {
         if (instance == VK_NULL_HANDLE) {
             return NULL;
         }
         instData = mid(instance);
     }
+    vktrace_LogError("Function %s is not in Instance", funcName);
+
     VkLayerInstanceDispatchTable* pTable = &instData->instTable;
     if (pTable->GetInstanceProcAddr == NULL) return NULL;
 
