@@ -46,30 +46,26 @@ namespace vktrace_replay {
             PipelineCacheAccessor();
             ~PipelineCacheAccessor();
 
-            std::pair<void*, size_t> GetPipelineCache(const VkPipelineCache &key) const;
-            bool                     WritePipelineCache(const VkPipelineCache &key, void* cache_data, uint32_t cache_size);
-            bool                     LoadPipelineCache(const VkPipelineCache &key);
-            bool                     FileExists(const VkPipelineCache &key) const;
+            std::pair<void*, size_t> GetPipelineCache(const VkPipelineCache &cache_handle) const;
+            bool                     WritePipelineCache(const VkPipelineCache &cache_handle, void* cache_data, const uint32_t &cache_size, const uint64_t &gpu_info, const uint8_t *pipelinecache_uuid);
+            bool                     LoadPipelineCache(const std::string &full_path);
 
             void                     SetPipelineCacheRootPath(const std::string &path);
 
-            void                     SetPhysicalDeviceProperties(uint32_t vendor_id, uint32_t device_id, const uint8_t *pipelinecache_uuid);
-
             void                     CollectPacketInfo(const VkDevice &device, const VkPipelineCache &cache_key);
             void                     RemoveCollectedPacketInfo(const VkDevice &device, const VkPipelineCache &cache_key);
+
+            std::string              FindFile(const VkPipelineCache &cache_handle) const;
+            std::string              FindFile(const VkPipelineCache &cache_handle, const uint64_t &gpu_info, const uint8_t *pipelinecache_uuid) const;
+
             std::list<std::pair<VkDevice, VkPipelineCache>> GetCollectedPacketInfo() const;
         private:
-            std::pair<void*, size_t> ReadPipelineCache(const VkPipelineCache &key);
-            std::string              GeneratePipelineCacheFileName(const VkPipelineCache &key) const; 
+            std::pair<void*, size_t> ReadPipelineCache(const std::string &full_path);
 
         private:
-            std::map<VkPipelineCache, std::pair<void*, size_t>>    m_cachemap;
+            std::map<uint64_t, std::pair<void*, size_t>>           m_cachemap;
             std::list<std::pair<VkDevice, VkPipelineCache>>        m_collected_packetinfo_list;
             std::string                                            m_cachepath;
-
-            uint32_t                                               m_vendor_id = 0;
-            uint32_t                                               m_device_id = 0;
-            uint8_t                                                m_pipelinecache_uuid[VK_UUID_SIZE];
     };
 
 

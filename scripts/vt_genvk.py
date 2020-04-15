@@ -531,6 +531,7 @@ def makeGenOpts(args):
     genOpts['api_cost.cpp'] = [
         ApiDumpOutputGenerator,
         ApiDumpGeneratorOptions(
+            conventions       = conventions,
             input             = APICOST_CODEGEN,
             filename          = 'api_cost.cpp',
             apiname           = 'vulkan',

@@ -79,7 +79,6 @@ typedef struct vkreplayer_settings {
     BOOL selfManageMemAllocation;
     BOOL forceSingleWindow;
     BOOL forceDisableAF;
-    BOOL forceEXTASTCDecodeMode;
     unsigned int memoryPercentage;
     BOOL premapping;
     BOOL enablePipelineCache;

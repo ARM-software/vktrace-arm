@@ -65,7 +65,7 @@ static int rval;
 // ------------------------------------------------------------------------------------------------
 bool GetServerRequestsTerminationFlag(vktrace_process_info* pProcInfo) {
     bool get_server_requests_termination_flag = true;
-    for (int i = 0; i < pProcInfo->currentCaptureThreadsCount; i++) {
+    for (uint32_t i = 0; i < pProcInfo->currentCaptureThreadsCount; i++) {
         if (pProcInfo->pCaptureThreads[i].serverRequestsTermination == false) {
             get_server_requests_termination_flag = false;
             break;

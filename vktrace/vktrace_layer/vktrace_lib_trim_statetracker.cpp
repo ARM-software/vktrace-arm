@@ -34,6 +34,7 @@ vktrace_trace_packet_header *copy_packet(vktrace_trace_packet_header *pHeader) {
     vktrace_trace_packet_header *pCopy = static_cast<vktrace_trace_packet_header *>(malloc((size_t)packetSize));
     if (pCopy != nullptr) {
         memcpy(pCopy, pHeader, (size_t)packetSize);
+        pCopy->pBody = (uintptr_t)(((char*)pCopy) + sizeof(vktrace_trace_packet_header));
     }
     return pCopy;
 }
@@ -608,6 +609,7 @@ StateTracker &StateTracker::operator=(const StateTracker &other) {
                obj->second.ObjectInfo.ShaderModule.createInfo.codeSize);
         obj->second.ObjectInfo.ShaderModule.createInfo.pCode = pCodeCopy;
     }
+    destroyedShaderModules = other.destroyedShaderModules;
 
     createdPipelineLayouts = other.createdPipelineLayouts;
     for (auto obj = createdPipelineLayouts.begin(); obj != createdPipelineLayouts.end(); obj++) {
@@ -1583,6 +1585,7 @@ void StateTracker::remove_ShaderModule(const VkShaderModule var) {
         uint32_t *pCode = const_cast<uint32_t *>(pInfo->ObjectInfo.ShaderModule.createInfo.pCode);
         free(pCode);
         pInfo->ObjectInfo.ShaderModule.createInfo.pCode = nullptr;
+        destroyedShaderModules.insert(var);
     }
     createdShaderModules.erase(var);
 }

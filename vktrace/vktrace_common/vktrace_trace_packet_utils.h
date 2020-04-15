@@ -148,7 +148,6 @@ VkDeviceGroupDeviceCreateInfo* interpret_VkDeviceGroupDeviceCreateInfoKHX(vktrac
                                                                           intptr_t ptr_variable);
 // converts the Vulkan struct pnext chain that is currently byte offsets into pointers
 void vkreplay_interpret_pnext_pointers(vktrace_trace_packet_header* pHeader, void* struct_ptr);
-void check_devicefeature(VkSamplerCreateInfo* createInfo);
 //=============================================================================
 // trace packet message
 // Interpretting a trace_packet_message should be done only when:

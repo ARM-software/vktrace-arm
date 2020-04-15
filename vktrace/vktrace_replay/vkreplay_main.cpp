@@ -47,7 +47,7 @@
 #include "vktrace_vk_packet_id.h"
 #include "vkreplay_vkreplay.h"
 
-vkreplayer_settings replaySettings = {NULL, 1, UINT_MAX, UINT_MAX, true, false, NULL, NULL, NULL, NULL, NULL, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, 50, FALSE, FALSE, NULL};
+vkreplayer_settings replaySettings = {NULL, 1, UINT_MAX, UINT_MAX, true, false, NULL, NULL, NULL, NULL, NULL, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, 50, FALSE, FALSE, NULL};
 extern vkReplay* g_replay;
 
 #if defined(ANDROID)
@@ -214,13 +214,6 @@ vktrace_SettingInfo g_settings_info[] = {
      {&replaySettings.forceDisableAF},
      TRUE,
      "Force to disable anisotropic filter, default is FALSE"},
-    {"feadm",
-     "forceEXTASTCDecodeMode",
-     VKTRACE_SETTING_BOOL,
-     {&replaySettings.forceEXTASTCDecodeMode},
-     {&replaySettings.forceEXTASTCDecodeMode},
-     TRUE,
-     "Force using VK_FORMAT_R8G8B8A8_UNORM as ASTC decode mode."},
     {"pmp",
      "memoryPercentage",
      VKTRACE_SETTING_UINT,
@@ -252,6 +245,7 @@ vktrace_SettingInfo g_settings_info[] = {
 };
 
 vktrace_SettingGroup g_replaySettingGroup = {"vkreplay", sizeof(g_settings_info) / sizeof(g_settings_info[0]), &g_settings_info[0]};
+
 
 static vktrace_replay::vktrace_trace_packet_replay_library* g_replayer_interface = NULL;
 
@@ -614,6 +608,7 @@ int vkreplay_main(int argc, char** argv, vktrace_replay::ReplayDisplayImp* pDisp
         vktrace_LogError("Bad preload memory Percentage");
         return -1;
     }
+
     // merge settings so that new settings will get written into the settings file
     vktrace_SettingGroup_merge(&g_replaySettingGroup, &pAllSettings, &numAllSettings);
 

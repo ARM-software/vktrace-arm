@@ -17,11 +17,6 @@
 #define MIN(x, y) ((x) < (y) ? (x) : (y))
 #define VULKAN_API extern "C" __attribute__((visibility("default")))
 
-typedef struct
-{
-    VkIcdSurfaceBase base;
-} VkIcdSurfaceHeadless;
-
 typedef struct VkHeadlessSurfaceCreateInfo
 {
     VkStructureType sType;

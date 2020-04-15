@@ -156,7 +156,7 @@ VK_LAYER_EXPORT VKAPI_ATTR {funcReturn} VKAPI_CALL {funcName}({funcTypedParams})
     static const VkLayerProperties layerProperties[] = {{
         {{
             "VK_LAYER_ARM_api_cost",
-            VK_MAKE_VERSION(1, 0, VK_HEADER_VERSION), // specVersion
+            VK_MAKE_VERSION(1, 2, VK_HEADER_VERSION), // specVersion
             VK_MAKE_VERSION(0, 2, 0), // implementationVersion
             "layer: api_cost",
         }}
@@ -172,7 +172,7 @@ VK_LAYER_EXPORT VKAPI_ATTR {funcReturn} VKAPI_CALL {funcName}({funcTypedParams})
     static const VkLayerProperties layerProperties[] = {{
         {{
             "VK_LAYER_ARM_api_cost",
-            VK_MAKE_VERSION(1, 0, VK_HEADER_VERSION),
+            VK_MAKE_VERSION(1, 2, VK_HEADER_VERSION),
             VK_MAKE_VERSION(0, 2, 0),
             "layer: api_cost",
         }}

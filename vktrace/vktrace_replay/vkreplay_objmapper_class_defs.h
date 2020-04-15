@@ -156,6 +156,10 @@ typedef struct _imageObj {
 typedef struct _bufferObj {
     objMemory bufferMem;
     VkBuffer replayBuffer;
+    _bufferObj()
+    : replayBuffer(VK_NULL_HANDLE)
+    {
+    }
 } bufferObj;
 
 typedef struct _devicememoryObj {
@@ -174,9 +178,37 @@ class vkReplayObjMapper {
     vkReplayObjMapper(bool usePremapping)
     : dummyDeviceMemoryObj(0, VK_NULL_HANDLE, VK_NULL_HANDLE) {
         if (usePremapping) {
+            add_to_imageviews_map_ptr = &vkReplayObjMapper::add_to_imageviews_map_premapped;
+            rm_from_imageviews_map_ptr = &vkReplayObjMapper::rm_from_imageviews_map_premapped;
+            remap_imageviews_ptr = &vkReplayObjMapper::remap_imageviews_premapped;
+
+            add_to_bufferviews_map_ptr = &vkReplayObjMapper::add_to_bufferviews_map_premapped;
+            rm_from_bufferviews_map_ptr = &vkReplayObjMapper::rm_from_bufferviews_map_premapped;
+            remap_bufferviews_ptr = &vkReplayObjMapper::remap_bufferviews_premapped;
+
+            add_to_samplers_map_ptr = &vkReplayObjMapper::add_to_samplers_map_premapped;
+            rm_from_samplers_map_ptr = &vkReplayObjMapper::rm_from_samplers_map_premapped;
+            remap_samplers_ptr = &vkReplayObjMapper::remap_samplers_premapped;
+
+            add_to_buffers_map_ptr = &vkReplayObjMapper::add_to_buffers_map_premapped;
+            rm_from_buffers_map_ptr = &vkReplayObjMapper::rm_from_buffers_map_premapped;
+            remap_buffers_ptr = &vkReplayObjMapper::remap_buffers_premapped;
+
+            add_to_descriptorsets_map_ptr = &vkReplayObjMapper::add_to_descriptorsets_map_premapped;
+            rm_from_descriptorsets_map_ptr = &vkReplayObjMapper::rm_from_descriptorsets_map_premapped;
+            remap_descriptorsets_ptr = &vkReplayObjMapper::remap_descriptorsets_premapped;
+
             add_to_devices_map_ptr = &vkReplayObjMapper::add_to_devices_map_premapped;
             rm_from_devices_map_ptr = &vkReplayObjMapper::rm_from_devices_map_premapped;
             remap_devices_ptr = &vkReplayObjMapper::remap_devices_premapped;
+
+            add_to_commandbuffers_map_ptr = &vkReplayObjMapper::add_to_commandbuffers_map_premapped;
+            rm_from_commandbuffers_map_ptr = &vkReplayObjMapper::rm_from_commandbuffers_map_premapped;
+            remap_commandbuffers_ptr = &vkReplayObjMapper::remap_commandbuffers_premapped;
+
+            add_to_pipelinelayouts_map_ptr = &vkReplayObjMapper::add_to_pipelinelayouts_map_premapped;
+            rm_from_pipelinelayouts_map_ptr = &vkReplayObjMapper::rm_from_pipelinelayouts_map_premapped;
+            remap_pipelinelayouts_ptr = &vkReplayObjMapper::remap_pipelinelayouts_premapped;
 
             add_to_devicememorys_map_ptr = &vkReplayObjMapper::add_to_devicememorys_map_premapped;
             rm_from_devicememorys_map_ptr = &vkReplayObjMapper::rm_from_devicememorys_map_premapped;
@@ -185,9 +217,37 @@ class vkReplayObjMapper {
             find_devicememory_ptr = &vkReplayObjMapper::find_devicememory_premapped;
         }
         else {
+            add_to_imageviews_map_ptr = &vkReplayObjMapper::add_to_imageviews_map_origin;
+            rm_from_imageviews_map_ptr = &vkReplayObjMapper::rm_from_imageviews_map_origin;
+            remap_imageviews_ptr = &vkReplayObjMapper::remap_imageviews_origin;
+
+            add_to_bufferviews_map_ptr = &vkReplayObjMapper::add_to_bufferviews_map_origin;
+            rm_from_bufferviews_map_ptr = &vkReplayObjMapper::rm_from_bufferviews_map_origin;
+            remap_bufferviews_ptr = &vkReplayObjMapper::remap_bufferviews_origin;
+
+            add_to_samplers_map_ptr = &vkReplayObjMapper::add_to_samplers_map_origin;
+            rm_from_samplers_map_ptr = &vkReplayObjMapper::rm_from_samplers_map_origin;
+            remap_samplers_ptr = &vkReplayObjMapper::remap_samplers_origin;
+
+            add_to_buffers_map_ptr = &vkReplayObjMapper::add_to_buffers_map_origin;
+            rm_from_buffers_map_ptr = &vkReplayObjMapper::rm_from_buffers_map_origin;
+            remap_buffers_ptr = &vkReplayObjMapper::remap_buffers_origin;
+
+            add_to_descriptorsets_map_ptr = &vkReplayObjMapper::add_to_descriptorsets_map_origin;
+            rm_from_descriptorsets_map_ptr = &vkReplayObjMapper::rm_from_descriptorsets_map_origin;
+            remap_descriptorsets_ptr = &vkReplayObjMapper::remap_descriptorsets_origin;
+
             add_to_devices_map_ptr = &vkReplayObjMapper::add_to_devices_map_origin;
             rm_from_devices_map_ptr = &vkReplayObjMapper::rm_from_devices_map_origin;
             remap_devices_ptr = &vkReplayObjMapper::remap_devices_origin;
+
+            add_to_commandbuffers_map_ptr = &vkReplayObjMapper::add_to_commandbuffers_map_origin;
+            rm_from_commandbuffers_map_ptr = &vkReplayObjMapper::rm_from_commandbuffers_map_origin;
+            remap_commandbuffers_ptr = &vkReplayObjMapper::remap_commandbuffers_origin;
+
+            add_to_pipelinelayouts_map_ptr = &vkReplayObjMapper::add_to_pipelinelayouts_map_origin;
+            rm_from_pipelinelayouts_map_ptr = &vkReplayObjMapper::rm_from_pipelinelayouts_map_origin;
+            remap_pipelinelayouts_ptr = &vkReplayObjMapper::remap_pipelinelayouts_origin;
 
             add_to_devicememorys_map_ptr = &vkReplayObjMapper::add_to_devicememorys_map_origin;
             rm_from_devicememorys_map_ptr = &vkReplayObjMapper::rm_from_devicememorys_map_origin;

@@ -140,6 +140,12 @@ class vkReplay {
     vktrace_replay::PipelineCacheAccessor::Ptr get_pipelinecache_accessor() const;
 
     bool premap_FlushMappedMemoryRanges(vktrace_trace_packet_header* pHeader);
+    bool premap_UpdateDescriptorSets(vktrace_trace_packet_header* pHeader);
+    bool premap_CmdBindDescriptorSets(vktrace_trace_packet_header* pHeader);
+    bool premap_CmdDrawIndexed(vktrace_trace_packet_header* pHeader);
+
+    void post_interpret(vktrace_trace_packet_header* pHeader);
+
    private:
     void init_funcs(void* handle);
     void* m_libHandle;
@@ -161,6 +167,7 @@ class vkReplay {
     vktrace_trace_file_header* m_pFileHeader;
     struct_gpuinfo* m_pGpuinfo;
     uint32_t m_gpu_count = 0;
+    uint32_t m_gpu_group_count = 0;
     uint32_t m_imageIndex = UINT32_MAX;
     uint32_t m_pktImgIndex = UINT32_MAX;
 
@@ -174,6 +181,7 @@ class vkReplay {
     uint64_t m_replay_os;
     uint64_t m_replay_gpu;
     uint64_t m_replay_drv_vers;
+    uint8_t  m_replay_pipelinecache_uuid[VK_UUID_SIZE];
 
     // Result of comparing trace platform with replay platform
     // -1: Not initialized. 0: No match. 1: Match.
@@ -222,6 +230,7 @@ class vkReplay {
     void manually_replay_vkDestroyBuffer(packet_vkDestroyBuffer* pPacket);
     void manually_replay_vkDestroyImage(packet_vkDestroyImage* pPacket);
     VkResult manually_replay_vkEnumeratePhysicalDevices(packet_vkEnumeratePhysicalDevices* pPacket);
+    VkResult manually_replay_vkEnumeratePhysicalDeviceGroups(packet_vkEnumeratePhysicalDeviceGroups *pPacket);
     // TODO138 : Many new functions in API now that we need to assess if manual code needed
     // VkResult manually_replay_vkGetPhysicalDeviceInfo(packet_vkGetPhysicalDeviceInfo* pPacket);
     // VkResult manually_replay_vkGetGlobalExtensionInfo(packet_vkGetGlobalExtensionInfo* pPacket);
@@ -231,11 +240,13 @@ class vkReplay {
     // VkResult manually_replay_vkGetObjectInfo(packet_vkGetObjectInfo* pPacket);
     // VkResult manually_replay_vkGetImageSubresourceInfo(packet_vkGetImageSubresourceInfo* pPacket);
     void manually_replay_vkUpdateDescriptorSets(packet_vkUpdateDescriptorSets* pPacket);
+    void manually_replay_vkUpdateDescriptorSetsPremapped(packet_vkUpdateDescriptorSets* pPacket);
     VkResult manually_replay_vkCreateDescriptorSetLayout(packet_vkCreateDescriptorSetLayout* pPacket);
     void manually_replay_vkDestroyDescriptorSetLayout(packet_vkDestroyDescriptorSetLayout* pPacket);
     VkResult manually_replay_vkAllocateDescriptorSets(packet_vkAllocateDescriptorSets* pPacket);
     VkResult manually_replay_vkFreeDescriptorSets(packet_vkFreeDescriptorSets* pPacket);
     void manually_replay_vkCmdBindDescriptorSets(packet_vkCmdBindDescriptorSets* pPacket);
+    void manually_replay_vkCmdBindDescriptorSetsPremapped(packet_vkCmdBindDescriptorSets* pPacket);
     void manually_replay_vkCmdBindVertexBuffers(packet_vkCmdBindVertexBuffers* pPacket);
     VkResult manually_replay_vkGetPipelineCacheData(packet_vkGetPipelineCacheData* pPacket);
     VkResult manually_replay_vkCreateGraphicsPipelines(packet_vkCreateGraphicsPipelines* pPacket);
@@ -245,6 +256,7 @@ class vkReplay {
     void manually_replay_vkCmdPipelineBarrier(packet_vkCmdPipelineBarrier* pPacket);
     VkResult manually_replay_vkCreateFramebuffer(packet_vkCreateFramebuffer* pPacket);
     VkResult manually_replay_vkCreateRenderPass(packet_vkCreateRenderPass* pPacket);
+    VkResult manually_replay_vkCreateRenderPass2(packet_vkCreateRenderPass2* pPacket);
     void manually_replay_vkCmdBeginRenderPass(packet_vkCmdBeginRenderPass* pPacket);
     VkResult manually_replay_vkBeginCommandBuffer(packet_vkBeginCommandBuffer* pPacket);
     VkResult manually_replay_vkAllocateCommandBuffers(packet_vkAllocateCommandBuffers* pPacket);
@@ -255,6 +267,7 @@ class vkReplay {
     void manually_replay_vkUnmapMemory(packet_vkUnmapMemory* pPacket);
     VkResult manually_replay_vkFlushMappedMemoryRanges(packet_vkFlushMappedMemoryRanges* pPacket);
     VkResult manually_replay_vkFlushMappedMemoryRangesPremapped(packet_vkFlushMappedMemoryRanges* pPacket);
+    void manually_replay_vkCmdDrawIndexedPremapped(packet_vkCmdDrawIndexed* pPacket);
     VkResult manually_replay_vkInvalidateMappedMemoryRanges(packet_vkInvalidateMappedMemoryRanges* pPacket);
     void manually_replay_vkGetPhysicalDeviceMemoryProperties(packet_vkGetPhysicalDeviceMemoryProperties* pPacket);
     void manually_replay_vkGetPhysicalDeviceMemoryProperties2KHR(packet_vkGetPhysicalDeviceMemoryProperties2KHR* pPacket);
@@ -435,12 +448,11 @@ class vkReplay {
     uint32_t swapchainRefCount = 0;
     uint32_t surfRefCount = 0;
 
-    bool getMemoryTypeIdx(VkDevice traceDevice, VkDevice replayDevice, uint32_t traceIdx, VkMemoryRequirements* memRequirements,
-                          uint32_t* pReplayIdx);
+    bool getReplayMemoryTypeIdx(VkDevice traceDevice, VkDevice replayDevice, uint32_t traceIdx,
+                                VkMemoryRequirements* memRequirements, uint32_t* pReplayIdx);
 
-    bool getQueueFamilyIdx(VkPhysicalDevice tracePhysicalDevice, VkPhysicalDevice replayPhysicalDevice, uint32_t traceIdx,
-                           uint32_t* pReplayIdx);
-    bool getQueueFamilyIdx(VkDevice traceDevice, VkDevice replayDevice, uint32_t traceIdx, uint32_t* pReplayIdx);
+    void getReplayQueueFamilyIdx(VkPhysicalDevice tracePhysicalDevice, VkPhysicalDevice replayPhysicalDevice, uint32_t* pIdx);
+    void getReplayQueueFamilyIdx(VkDevice traceDevice, VkDevice replayDevice, uint32_t* pIdx);
 
     void remapHandlesInDescriptorSetWithTemplateData(VkDescriptorUpdateTemplateKHR remappedDescriptorUpdateTemplate, char* pData);
 

@@ -40,7 +40,7 @@ bool g_trimPostProcess = false;
 bool g_TraceLockEnabled = false;
 
 std::mutex g_trimImageHandling_Mutex;
-
+std::unordered_map<VkCommandBuffer, trim::ObjectInfo*> cb_delete_packet;
 static std::mutex g_Mutex_CommandBufferPipelineMap;
 
 namespace trim {
@@ -1083,6 +1083,143 @@ void generateMapUnmap(bool makeCalls, VkDevice device, VkDeviceMemory memory, Vk
     }
 }
 
+void delete_redundant_package(StateTracker &stateTracker) {
+    cb_delete_packet.clear();
+    for (auto& cmdBuffer : stateTracker.m_cmdBufferPackets) {
+        bool bDelete = false;
+        uint16_t delBeginPktId = 0;
+        std::list<vktrace_trace_packet_header *> &packet_list = cmdBuffer.second;
+        for (std::list<vktrace_trace_packet_header *>::iterator packet = packet_list.begin(); packet != packet_list.end();) {
+            vktrace_trace_packet_header *pHeader = *packet;
+            switch(pHeader->packet_id) {
+            case VKTRACE_TPI_VK_vkBeginCommandBuffer:
+                {
+                    const VkCommandBufferBeginInfo* pCmdbufBeginInfo =
+                            (const VkCommandBufferBeginInfo*)vktrace_trace_packet_interpret_buffer_pointer(pHeader, (intptr_t)((packet_vkBeginCommandBuffer*)pHeader->pBody)->pBeginInfo);
+                    if (pCmdbufBeginInfo) {
+                        const VkCommandBufferInheritanceInfo* pInheritanceInfo =
+                                (const VkCommandBufferInheritanceInfo*)vktrace_trace_packet_interpret_buffer_pointer(pHeader, (intptr_t)pCmdbufBeginInfo->pInheritanceInfo);
+                        if (pInheritanceInfo) {
+                            trim::ObjectInfo* pFramebuffer = nullptr;
+                            if (pInheritanceInfo->framebuffer) {
+                                pFramebuffer = trim::get_Framebuffer_objectInfo(pInheritanceInfo->framebuffer);
+                            }
+                            if (pFramebuffer == nullptr) {
+                                vktrace_delete_trace_packet(&pHeader);
+                                packet = packet_list.erase(packet);
+                                ObjectInfo *cmdbufferInfo = get_CommandBuffer_objectInfo(cmdBuffer.first);
+                                cb_delete_packet[cmdBuffer.first] = cmdbufferInfo;
+                                bDelete = true;
+                                delBeginPktId = VKTRACE_TPI_VK_vkBeginCommandBuffer;
+                                break;
+                            }
+                        }
+                    }
+                    packet++;
+                }
+                break;
+            case VKTRACE_TPI_VK_vkCmdBeginRenderPass:
+                if (bDelete) {
+                    vktrace_delete_trace_packet(&pHeader);
+                    packet = packet_list.erase(packet);
+                } else {
+                    const VkRenderPassBeginInfo* pRenderPassBegin =
+                            (const VkRenderPassBeginInfo*)vktrace_trace_packet_interpret_buffer_pointer(pHeader, (intptr_t)((packet_vkCmdBeginRenderPass*)pHeader->pBody)->pRenderPassBegin);
+                    if (pRenderPassBegin) {
+                        trim::ObjectInfo* pFramebuffer = nullptr;
+                        trim::ObjectInfo* pRenderPass = nullptr;
+                        if (pRenderPassBegin->framebuffer != 0) {
+                            pFramebuffer = trim::get_Framebuffer_objectInfo(pRenderPassBegin->framebuffer);
+                        }
+                        if (pRenderPassBegin->renderPass != 0) {
+                            pRenderPass = trim::get_RenderPass_objectInfo(pRenderPassBegin->renderPass);
+                        }
+
+                        if (pFramebuffer == nullptr || pRenderPass == nullptr) {
+                            vktrace_delete_trace_packet(&pHeader);
+                            packet = packet_list.erase(packet);
+                            ObjectInfo *cmdbufferInfo = get_CommandBuffer_objectInfo(cmdBuffer.first);
+                            cb_delete_packet[cmdBuffer.first] = cmdbufferInfo;
+                            bDelete = true;
+                            delBeginPktId = VKTRACE_TPI_VK_vkCmdBeginRenderPass;
+                            break;
+                        }
+                    }
+                    packet++;
+                }
+                break;
+            case VKTRACE_TPI_VK_vkCmdBindDescriptorSets:
+                if (bDelete) {
+                    vktrace_delete_trace_packet(&pHeader);
+                    packet = packet_list.erase(packet);
+                } else {
+                    bool bRedundant = false;
+                    const VkDescriptorSet* pDescriptorSets =
+                            (const VkDescriptorSet*)vktrace_trace_packet_interpret_buffer_pointer(pHeader, (intptr_t)((packet_vkCmdBindDescriptorSets*)pHeader->pBody)->pDescriptorSets);
+                    if (pDescriptorSets != nullptr) {
+                        for (uint32_t i = 0; i < ((packet_vkCmdBindDescriptorSets*)pHeader->pBody)->descriptorSetCount; i++) {
+                            trim::ObjectInfo* descriptorSetInfo = trim::get_DescriptorSet_objectInfo(pDescriptorSets[i]);
+                            if (descriptorSetInfo == nullptr) {
+                                vktrace_delete_trace_packet(&pHeader);
+                                packet = packet_list.erase(packet);
+                                bRedundant = true;
+                                break;
+                            }
+                        }
+                    }
+                    if (!bRedundant) {
+                        packet++;
+                    }
+                }
+                break;
+            case VKTRACE_TPI_VK_vkCmdBindVertexBuffers:
+                if (bDelete) {
+                    vktrace_delete_trace_packet(&pHeader);
+                    packet = packet_list.erase(packet);
+                } else {
+                    bool bRedundant = false;
+                    const VkBuffer* pBuffers =
+                            (const VkBuffer*)vktrace_trace_packet_interpret_buffer_pointer(pHeader, (intptr_t)((packet_vkCmdBindVertexBuffers*)pHeader->pBody)->pBuffers);
+                    if (pBuffers != nullptr) {
+                        for (uint32_t i = 0; i < ((packet_vkCmdBindVertexBuffers*)pHeader->pBody)->bindingCount; i++) {
+                            trim::ObjectInfo* bufferInfo = trim::get_Buffer_objectInfo(pBuffers[i]);
+                            if (bufferInfo == nullptr) {
+                                vktrace_delete_trace_packet(&pHeader);
+                                packet = packet_list.erase(packet);
+                                bRedundant = true;
+                                break;
+                            }
+                        }
+                    }
+                    if (!bRedundant) {
+                        packet++;
+                    }
+                }
+                break;
+            case VKTRACE_TPI_VK_vkCmdEndRenderPass:
+                if (bDelete) {
+                    vktrace_delete_trace_packet(&pHeader);
+                    packet = packet_list.erase(packet);
+                    if (delBeginPktId == VKTRACE_TPI_VK_vkCmdBeginRenderPass) {
+                        bDelete = false;
+                    }
+                } else {
+                    packet++;
+                }
+                break;
+            default:
+                if (bDelete) {
+                    vktrace_delete_trace_packet(&pHeader);
+                    packet = packet_list.erase(packet);
+                } else {
+                    packet++;
+                }
+                break;
+            }
+        }
+    }
+}
+
 //=============================================================================
 // Use this to snapshot the global state tracker at the start of the trim
 // frames.
@@ -1090,6 +1227,9 @@ void generateMapUnmap(bool makeCalls, VkDevice device, VkDeviceMemory memory, Vk
 void snapshot_state_tracker() {
     // TODO: split this function into multiple functions.
     vktrace_enter_critical_section(&trimStateTrackerLock);
+    if (g_trimPostProcess == false) {
+        delete_redundant_package(s_trimGlobalStateTracker);
+    }
     s_trimStateTrackerSnapshot = s_trimGlobalStateTracker;
 
     getTrimMaxBatchCmdCountOption();
@@ -3870,11 +4010,6 @@ void destroy_stg_img_resource(StateTracker &stateTracker, uint32_t &destroyImgIt
             // If the image is not bound to any memory, skip the following
             // process because it base on the assumption of memory binding.
 
-            uint32_t queueFamilyIndex = obj->second.ObjectInfo.Image.queueFamilyIndex;
-            if (obj->second.ObjectInfo.Image.sharingMode == VK_SHARING_MODE_CONCURRENT) {
-                queueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-            }
-
             if (obj->second.ObjectInfo.Image.needsStagingBuffer) {
                 // retrieve staging info from map
                 StagingInfo stagingInfo = s_imageToStagedInfoMap[image];
@@ -4008,6 +4143,16 @@ void recreate_images(StateTracker &stateTracker) {
         if (obj == stateTracker.createdSwapchainKHRs.end()) {
             continue;
         }
+
+        vktrace_trace_packet_header* pHeader = ( vktrace_trace_packet_header*)obj->second.ObjectInfo.SwapchainKHR.pCreatePacket;
+        VkSwapchainCreateInfoKHR *pSwapchainCreateInfo = (VkSwapchainCreateInfoKHR *)vktrace_trace_packet_interpret_buffer_pointer(pHeader, (intptr_t)((packet_vkCreateSwapchainKHR*)pHeader->pBody)->pCreateInfo);
+        if (pSwapchainCreateInfo->oldSwapchain != VK_NULL_HANDLE) {
+            trim::ObjectInfo* pScInfo = get_SwapchainKHR_objectInfo(pSwapchainCreateInfo->oldSwapchain);
+            if (pScInfo == nullptr) {
+                pSwapchainCreateInfo->oldSwapchain = VK_NULL_HANDLE;
+            }
+        }
+
         vktrace_write_trace_packet(obj->second.ObjectInfo.SwapchainKHR.pCreatePacket, vktrace_trace_get_trace_file());
         vktrace_delete_trace_packet_no_lock(&(obj->second.ObjectInfo.SwapchainKHR.pCreatePacket));
 
@@ -4236,7 +4381,9 @@ void recreate_pipelines(StateTracker &stateTracker) {
                                         : obj->second.ObjectInfo.Pipeline.computePipelineCreateInfo.stage.module;
 
             auto shaderModuleObj = stateTracker.createdShaderModules.find(module);
+            auto destroyedShader = stateTracker.destroyedShaderModules.find(module);
             if (shaderModuleObj == stateTracker.createdShaderModules.end() ||
+                destroyedShader != stateTracker.destroyedShaderModules.end() ||
                 (g_trimPostProcess && !shaderModuleObj->second.bReferencedInTrim)) {
                 // the shader module does not yet exist, so create it specifically for this pipeline
                 vktrace_trace_packet_header *pCreateShaderModule = generate::vkCreateShaderModule(
@@ -4295,12 +4442,24 @@ void recreate_pipelines(StateTracker &stateTracker) {
                                         : obj->second.ObjectInfo.Pipeline.computePipelineCreateInfo.stage.module;
 
             auto shaderModuleObj = stateTracker.createdShaderModules.find(module);
+            auto destroyedShader = stateTracker.destroyedShaderModules.find(module);
             if (shaderModuleObj == stateTracker.createdShaderModules.end() ||
+                destroyedShader != stateTracker.destroyedShaderModules.end() ||
                 (g_trimPostProcess && !shaderModuleObj->second.bReferencedInTrim)) {
                 // the shader module did not previously exist, so delete it.
                 vktrace_trace_packet_header *pDestroyShaderModule = generate::vkDestroyShaderModule(false, device, module, nullptr);
                 vktrace_write_trace_packet(pDestroyShaderModule, vktrace_trace_get_trace_file());
                 vktrace_delete_trace_packet(&pDestroyShaderModule);
+            }
+            if (shaderModuleObj != stateTracker.createdShaderModules.end() &&
+                destroyedShader != stateTracker.destroyedShaderModules.end()) {
+                // repeat the original shader
+                VkShaderModule shaderModule = static_cast<VkShaderModule>(shaderModuleObj->first);
+                vktrace_trace_packet_header *pHeader =
+                    generate::vkCreateShaderModule(false, shaderModuleObj->second.belongsToDevice, &shaderModuleObj->second.ObjectInfo.ShaderModule.createInfo,
+                                                    shaderModuleObj->second.ObjectInfo.ShaderModule.pAllocator, &shaderModule);
+                vktrace_write_trace_packet(pHeader, vktrace_trace_get_trace_file());
+                vktrace_delete_trace_packet(&pHeader);
             }
         }
     }

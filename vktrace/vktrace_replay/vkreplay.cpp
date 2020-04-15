@@ -33,7 +33,7 @@
 #include "vktrace_tracelog.h"
 
 static vkreplayer_settings s_defaultVkReplaySettings = {NULL, 1, UINT_MAX, UINT_MAX, true, false, NULL, NULL, NULL,
-                                                        NULL, "xcb", FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, 50, FALSE, FALSE, NULL};
+                                                        NULL, "xcb", FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, 50, FALSE, FALSE, NULL};
 
 vkReplay* g_pReplayer = NULL;
 VKTRACE_CRITICAL_SECTION g_handlerLock;
@@ -127,6 +127,10 @@ vktrace_trace_packet_header* VKTRACER_CDECL VkReplayInterpret(vktrace_trace_pack
     vktrace_trace_packet_header* pInterpretedHeader = interpret_trace_packet_vk(pPacket);
     if (pInterpretedHeader == NULL) {
         vktrace_LogError("Unrecognized Vulkan packet_id: %u", pPacket->packet_id);
+    } else {
+        if (nullptr != g_pReplayer) {
+            g_pReplayer->post_interpret(pPacket);
+        }
     }
 
     return pInterpretedHeader;

@@ -77,7 +77,7 @@ const uint32_t kVersionDevsimImplementation = VK_MAKE_VERSION(kVersionDevsimMajo
 // Properties of this layer:
 const VkLayerProperties kLayerProperties[] = {{
     "VK_LAYER_LUNARG_device_simulation",       // layerName
-    VK_MAKE_VERSION(1, 0, VK_HEADER_VERSION),  // specVersion
+    VK_MAKE_VERSION(1, 0, 68),                 // specVersion (clamped to final 1.0 spec version)
     kVersionDevsimImplementation,              // implementationVersion
     "LunarG device simulation layer"           // description
 }};

@@ -58,6 +58,12 @@ void vktrace_SettingGroup_print(const vktrace_SettingGroup* pSettingGroup) {
     }
 }
 
+#if defined(PLATFORM_LINUX) || defined(PLATFORM_OSX)
+#define STRNCASECMP strncasecmp
+#elif defined(PLATFORM_WINDOWS)
+#define STRNCASECMP _strnicmp
+#endif
+
 // ------------------------------------------------------------------------------------------------
 BOOL vktrace_SettingInfo_parse_value(vktrace_SettingInfo* pSetting, const char* arg) {
     switch (pSetting->type) {
@@ -66,13 +72,14 @@ BOOL vktrace_SettingInfo_parse_value(vktrace_SettingInfo* pSetting, const char* 
             *pSetting->Data.ppChar = vktrace_allocate_and_copy(arg);
         } break;
         case VKTRACE_SETTING_BOOL: {
-            BOOL bTrue = FALSE;
-#if defined(PLATFORM_LINUX) || defined(PLATFORM_OSX)
-            bTrue = (strncasecmp(arg, "true", 4) == 0);
-#elif defined(PLATFORM_WINDOWS)
-            bTrue = (_strnicmp(arg, "true", 4) == 0);
-#endif
-            *pSetting->Data.pBool = bTrue;
+            if (STRNCASECMP(arg, "true", 4) == 0) {
+                *pSetting->Data.pBool = TRUE;
+            } else if (STRNCASECMP(arg, "false", 5) == 0) {
+                *pSetting->Data.pBool = FALSE;
+            } else {
+                vktrace_LogError("Invalid boolean setting: '%s'.", arg);
+                return FALSE;
+            }
         } break;
         case VKTRACE_SETTING_UINT: {
             if (sscanf(arg, "%u", pSetting->Data.pUint) != 1) {

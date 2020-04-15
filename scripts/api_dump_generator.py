@@ -83,7 +83,7 @@ COMMON_CODEGEN = """
 inline void dump_head_{funcName}(ApiDumpInstance& dump_inst, {funcTypedParams})
 {{
     if (!dump_inst.shouldDumpOutput()) return ;
-    loader_platform_thread_lock_mutex(dump_inst.outputMutex());
+    dump_inst.outputMutex()->lock();
     switch(dump_inst.settings().format())
     {{
     case ApiDumpFormat::Text:
@@ -96,7 +96,7 @@ inline void dump_head_{funcName}(ApiDumpInstance& dump_inst, {funcTypedParams})
         dump_json_head_{funcName}(dump_inst, {funcNamedParams});
         break;
     }}
-    loader_platform_thread_unlock_mutex(dump_inst.outputMutex());
+    //Keep lock
 }}
 @end function
 
@@ -105,7 +105,7 @@ inline void dump_body_{funcName}(ApiDumpInstance& dump_inst, {funcReturn} result
 {{
     if (!dump_inst.shouldDumpOutput()) return;
 
-    loader_platform_thread_lock_mutex(dump_inst.outputMutex());
+    //Lock is already held
     switch(dump_inst.settings().format())
     {{
     case ApiDumpFormat::Text:
@@ -118,7 +118,7 @@ inline void dump_body_{funcName}(ApiDumpInstance& dump_inst, {funcReturn} result
         dump_json_body_{funcName}(dump_inst, result, {funcNamedParams});
         break;
     }}
-    loader_platform_thread_unlock_mutex(dump_inst.outputMutex());
+    dump_inst.outputMutex()->unlock();
 }}
 @end function
 
@@ -126,7 +126,7 @@ inline void dump_body_{funcName}(ApiDumpInstance& dump_inst, {funcReturn} result
 inline void dump_body_{funcName}(ApiDumpInstance& dump_inst, {funcTypedParams})
 {{
     if (!dump_inst.shouldDumpOutput()) return ;
-    loader_platform_thread_lock_mutex(dump_inst.outputMutex());
+    //Lock is already held
     switch(dump_inst.settings().format())
     {{
     case ApiDumpFormat::Text:
@@ -139,7 +139,7 @@ inline void dump_body_{funcName}(ApiDumpInstance& dump_inst, {funcTypedParams})
         dump_json_body_{funcName}(dump_inst, {funcNamedParams});
         break;
     }}
-    loader_platform_thread_unlock_mutex(dump_inst.outputMutex());
+    dump_inst.outputMutex()->unlock();
 }}
 @end function
 
@@ -147,7 +147,7 @@ inline void dump_body_{funcName}(ApiDumpInstance& dump_inst, {funcTypedParams})
 @foreach function where('{funcName}' == 'vkDebugMarkerSetObjectNameEXT')
 inline void dump_head_{funcName}(ApiDumpInstance& dump_inst, {funcTypedParams})
 {{
-    loader_platform_thread_lock_mutex(dump_inst.outputMutex());
+    dump_inst.outputMutex()->lock();
 
     if (pNameInfo->pObjectName)
     {{
@@ -173,14 +173,14 @@ inline void dump_head_{funcName}(ApiDumpInstance& dump_inst, {funcTypedParams})
         }}
     }}
 
-    loader_platform_thread_unlock_mutex(dump_inst.outputMutex());
+    //Keep lock
 }}
 @end function
 
 @foreach function where('{funcName}' == 'vkDebugMarkerSetObjectNameEXT')
 inline void dump_body_{funcName}(ApiDumpInstance& dump_inst, {funcReturn} result, {funcTypedParams})
 {{
-    loader_platform_thread_lock_mutex(dump_inst.outputMutex());
+    //Lock is already held
     if (dump_inst.shouldDumpOutput()) {{
         switch(dump_inst.settings().format())
         {{
@@ -196,14 +196,14 @@ inline void dump_body_{funcName}(ApiDumpInstance& dump_inst, {funcReturn} result
         }}
     }}
 
-    loader_platform_thread_unlock_mutex(dump_inst.outputMutex());
+    dump_inst.outputMutex()->unlock();
 }}
 @end function
 
 @foreach function where('{funcName}' == 'vkSetDebugUtilsObjectNameEXT')
 inline void dump_head_{funcName}(ApiDumpInstance& dump_inst, {funcTypedParams})
 {{
-    loader_platform_thread_lock_mutex(dump_inst.outputMutex());
+    dump_inst.outputMutex()->lock();
     if (pNameInfo->pObjectName)
     {{
         dump_inst.object_name_map.insert(std::make_pair<uint64_t, std::string>((uint64_t &&)pNameInfo->objectHandle, pNameInfo->pObjectName));
@@ -226,14 +226,14 @@ inline void dump_head_{funcName}(ApiDumpInstance& dump_inst, {funcTypedParams})
             break;
         }}
     }}
-    loader_platform_thread_unlock_mutex(dump_inst.outputMutex());
+    //Keep lock
 }}
 @end function
 
 @foreach function where('{funcName}' == 'vkSetDebugUtilsObjectNameEXT')
 inline void dump_body_{funcName}(ApiDumpInstance& dump_inst, {funcReturn} result, {funcTypedParams})
 {{
-    loader_platform_thread_lock_mutex(dump_inst.outputMutex());
+    //Lock is already held
     if (dump_inst.shouldDumpOutput()) {{
         switch(dump_inst.settings().format())
         {{
@@ -248,7 +248,7 @@ inline void dump_body_{funcName}(ApiDumpInstance& dump_inst, {funcReturn} result
             break;
         }}
     }}
-    loader_platform_thread_unlock_mutex(dump_inst.outputMutex());
+    dump_inst.outputMutex()->unlock();
 }}
 @end function
 
@@ -354,7 +354,7 @@ VK_LAYER_EXPORT VKAPI_ATTR {funcReturn} VKAPI_CALL {funcName}({funcTypedParams})
     static const VkLayerProperties layerProperties[] = {{
         {{
             "VK_LAYER_LUNARG_api_dump",
-            VK_MAKE_VERSION(1, 0, VK_HEADER_VERSION), // specVersion
+            VK_MAKE_VERSION(1, 2, VK_HEADER_VERSION), // specVersion
             VK_MAKE_VERSION(0, 2, 0), // implementationVersion
             "layer: api_dump",
         }}
@@ -370,7 +370,7 @@ VK_LAYER_EXPORT VKAPI_ATTR {funcReturn} VKAPI_CALL {funcName}({funcTypedParams})
     static const VkLayerProperties layerProperties[] = {{
         {{
             "VK_LAYER_LUNARG_api_dump",
-            VK_MAKE_VERSION(1, 0, VK_HEADER_VERSION),
+            VK_MAKE_VERSION(1, 2, VK_HEADER_VERSION),
             VK_MAKE_VERSION(0, 2, 0),
             "layer: api_dump",
         }}

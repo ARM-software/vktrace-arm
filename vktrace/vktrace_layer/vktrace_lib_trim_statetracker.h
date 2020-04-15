@@ -16,6 +16,7 @@
 #pragma once
 
 #include <unordered_map>
+#include <unordered_set>
 #include <list>
 #include <vector>
 #include <set>
@@ -501,5 +502,7 @@ class StateTracker {
     std::unordered_map<VkDescriptorSetLayout, ObjectInfo> createdDescriptorSetLayouts;
     std::unordered_map<VkDescriptorUpdateTemplate, ObjectInfo> createdDescriptorUpdateTemplates;
     std::unordered_map<VkDescriptorSet, ObjectInfo> createdDescriptorSets;
+
+    std::unordered_set<VkShaderModule> destroyedShaderModules;
 };
 }

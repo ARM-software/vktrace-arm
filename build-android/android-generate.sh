@@ -119,5 +119,6 @@ REGISTRY=${REGISTRY_PATH}/vk.xml
 
 ( pushd ${LVL_BASE}/build-android; rm -rf generated; mkdir -p generated/include generated/common; popd )
 ( cd generated/include; cp -rf * ${LVL_BASE}/build-android/generated/include )
+( cp ${LVL_BASE}/layers/generated/vk_validation_error_messages.h generated/include )
 
 exit 0

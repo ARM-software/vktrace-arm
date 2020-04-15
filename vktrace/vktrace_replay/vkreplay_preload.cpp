@@ -186,12 +186,61 @@ static uint64_t load_packet(FileLike* file, void* load_addr, uint64_t packet_siz
             } else {
                 vktrace_LogError("Bad packet type id=%d, index=%d.", pHeader->packet_id, pHeader->global_packet_index);
             }
-            if (pHeader->packet_id == VKTRACE_TPI_VK_vkFlushMappedMemoryRanges) {
-                extern vkReplay* g_pReplayer;
-                if (replaySettings.premapping && g_pReplayer->premap_FlushMappedMemoryRanges(pHeader)) {
-                    pHeader->packet_id += PREMAP_SHIFT;
+            extern vkReplay* g_pReplayer;
+            switch (pHeader->packet_id) {
+                case VKTRACE_TPI_VK_vkFlushMappedMemoryRanges: {
+                    if (replaySettings.premapping && g_pReplayer->premap_FlushMappedMemoryRanges(pHeader)) {
+                        pHeader->packet_id += PREMAP_SHIFT;
+                    }
+                    break;
+                }
+                case VKTRACE_TPI_VK_vkUpdateDescriptorSets: {
+                    if (replaySettings.premapping && g_pReplayer->premap_UpdateDescriptorSets(pHeader)) {
+                        pHeader->packet_id += PREMAP_SHIFT;
+                    }
+                    break;
+                }
+                case VKTRACE_TPI_VK_vkCmdBindDescriptorSets: {
+                    if (replaySettings.premapping && g_pReplayer->premap_CmdBindDescriptorSets(pHeader)) {
+                        pHeader->packet_id += PREMAP_SHIFT;
+                    }
+                    break;
+                }
+                case VKTRACE_TPI_VK_vkCmdDrawIndexed: {
+                    if (replaySettings.premapping && g_pReplayer->premap_CmdDrawIndexed(pHeader)) {
+                        pHeader->packet_id += PREMAP_SHIFT;
+                    }
+                    break;
+                }
+                case VKTRACE_TPI_VK_vkCreatePipelineCache: {
+                    if (replaySettings.enablePipelineCache) {
+                        packet_vkCreatePipelineCache *pPacket = reinterpret_cast<packet_vkCreatePipelineCache *>(pHeader->pBody);
+                        if (NULL != pPacket) {
+                            auto accessor = g_pReplayer->get_pipelinecache_accessor();
+                            assert(NULL != accessor);
+                            const VkPipelineCache cache_handle = *(pPacket->pPipelineCache);
+                            // We don't have gpu info and pipeline cache uuid info in this period
+                            // so we only use cache handle to search cache file.
+                            std::string &&full_path = accessor->FindFile(cache_handle);
+                            if (false == full_path.empty()) {
+                                if (accessor->LoadPipelineCache(full_path)) {
+                                    auto cache_data = accessor->GetPipelineCache(cache_handle);
+                                    if (nullptr != cache_data.first) {
+                                        VkPipelineCacheCreateInfo *pCreateInfo = const_cast<VkPipelineCacheCreateInfo *>(pPacket->pCreateInfo);
+                                        pCreateInfo->pInitialData = cache_data.first;
+                                        pCreateInfo->initialDataSize = cache_data.second;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    break;
+                }
+                default: {
+                    break;
                 }
             }
+            break;
         }
     }
 

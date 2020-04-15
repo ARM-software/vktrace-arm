@@ -850,11 +850,6 @@ void vkreplay_interpret_pnext_pointers(vktrace_trace_packet_header* pHeader, voi
                 break;
 #endif
             case VK_STRUCTURE_TYPE_PRESENT_TIMES_INFO_GOOGLE:
-#if defined(__i386__)
-                if (sizeof(VkMemoryHeap_padding) == (sizeof(VkMemoryHeap) + sizeof(uint32_t))) {
-                    assert(!"VkPresentTimesInfoGOOGLE padding not supported!");
-                }
-#endif
                 InterpretPointerInPNext(VkPresentTimesInfoGOOGLE, VkPresentTimeGOOGLE, pTimes);
                 break;
             case VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO_EXT:
@@ -867,14 +862,5 @@ void vkreplay_interpret_pnext_pointers(vktrace_trace_packet_header* pHeader, voi
                 break;
         }
         struct_ptr = (VkApplicationInfo*)((VkApplicationInfo*)struct_ptr)->pNext;
-    }
-}
-
-void check_devicefeature(VkSamplerCreateInfo* pCreateInfo)
-{
-    if (NULL == pCreateInfo || NULL == g_pReplaySettings) return;
-    if (g_pReplaySettings->forceDisableAF && pCreateInfo->anisotropyEnable) {
-        pCreateInfo->anisotropyEnable = VK_FALSE;
-        pCreateInfo->maxAnisotropy = 1.0f;
     }
 }
