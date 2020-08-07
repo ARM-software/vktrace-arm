@@ -15,6 +15,8 @@
  * limitations under the License.
  */
 
+#include <pthread.h>
+
 #include "vktrace_common.h"
 #include "vktrace_pageguard_memorycopy.h"
 #include "vktrace_lib_pagestatusarray.h"
@@ -158,6 +160,19 @@ bool getEnablePageGuardLazyCopyFlag() {
         FirstTimeRun = false;
     }
     return EnablePageGuardLazyCopyFlag;
+}
+
+uint32_t getCheckHandlerFrames() {
+    static uint32_t frames = 0;
+    static bool FirstTimeRun = true;
+    if (FirstTimeRun) {
+        FirstTimeRun = false;
+        const char* env_value_str = vktrace_get_global_var(VKTRACE_CHECK_PAGEGUARD_HANDLER_IN_FRAMES_ENV);
+        if (env_value_str) {
+            sscanf(env_value_str, "%d", &frames);
+        }
+    }
+    return frames;
 }
 
 #if defined(PLATFORM_LINUX)
@@ -435,6 +450,56 @@ void PageGuardExceptionHandler(int sig, siginfo_t* si, void* unused) {
     }
 }
 #endif
+
+static pthread_t g_handlerCheckThread;
+static bool g_enableHandlerCheck = false;
+
+void* checkPageguardHandler(void *parameters) {
+    while (g_enableHandlerCheck)
+    {
+        struct sigaction cur_sa;
+        if (OPTHandler && !sigaction(SIGSEGV, NULL, &cur_sa) && cur_sa.sa_sigaction != PageGuardExceptionHandler) {
+            // Restore the handler
+            struct sigaction sa;
+            sa.sa_flags = SA_SIGINFO;
+            sigemptyset(&sa.sa_mask);
+            sa.sa_sigaction = PageGuardExceptionHandler;
+            if (sigaction(SIGSEGV, &sa, NULL) == -1) {
+                vktrace_LogError("Restore the page guard exception handler failed !");
+            }
+            vktrace_LogAlways("Restore the handler !");
+        }
+        usleep(100);
+    }
+    return NULL;
+}
+
+bool createPageguardHandlerCheckThread() {
+    bool create_thread_ok = false;
+    if (pthread_create(&g_handlerCheckThread, NULL, checkPageguardHandler, NULL) == 0) {
+        create_thread_ok = true;
+    }
+    return create_thread_ok;
+}
+
+void enableHandlerCheck() {
+    if (!g_enableHandlerCheck) {
+        g_enableHandlerCheck = true;
+        if (!createPageguardHandlerCheckThread()) {
+            vktrace_LogError("Create pageguard handler check thread failed !");
+            g_enableHandlerCheck = false;
+        }
+        vktrace_LogAlways("Pageguard handler check thread is created !");
+    }
+}
+
+void disableHandlerCheck() {
+    if (g_enableHandlerCheck) {
+        g_enableHandlerCheck = false;
+        pthread_join(g_handlerCheckThread, NULL);
+        g_handlerCheckThread = 0;
+    }
+}
 
 // The function source code is modified from __HOOKED_vkFlushMappedMemoryRanges
 // for coherent map, need this function to dump data so simulate target application write data when playback.

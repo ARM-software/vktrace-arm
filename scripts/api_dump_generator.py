@@ -413,7 +413,7 @@ VK_LAYER_EXPORT VKAPI_ATTR {funcReturn} VKAPI_CALL {funcName}({funcTypedParams})
     dump_head_{funcName}(ApiDumpInstance::current(), {funcNamedParams});
     instance_dispatch_table({funcDispatchParam})->{funcShortName}({funcNamedParams});
     {funcStateTrackingCode}
-    dump_body_{funcName}(ApiDumpInstance::current(), {funcNamedParams});    
+    dump_body_{funcName}(ApiDumpInstance::current(), {funcNamedParams});
 }}
 @end function
 
@@ -517,9 +517,9 @@ std::ostream& dump_text_pNext_trampoline(const void* object, const ApiDumpSettin
     case {sctStructureTypeIndex}:
         dump_text_pNext<const {sctName}>(static_cast<const {sctName}*>(object), settings, "{sctName}", indents, dump_text_{sctName});
         break;
-        @end if    
+        @end if
     @end struct
-    
+
     case 47: // VK_STRUCTURE_TYPE_LOADER_INSTANCE_CREATE_INFO
     case 48: // VK_STRUCTURE_TYPE_LOADER_DEVICE_CREATE_INFO
         if(static_cast<const VkBaseInStructure*>(object)->pNext != nullptr){{
@@ -533,19 +533,19 @@ std::ostream& dump_text_pNext_trampoline(const void* object, const ApiDumpSettin
         settings.formatNameType(settings.stream(), indents, "pNext", "const void*");
         settings.stream() << "UNKNOWN (" << (int64_t) (static_cast<const VkBaseInStructure*>(object)->sType) << ")\\n";
     }}
-    return settings.stream(); 
+    return settings.stream();
 }}
 
 inline std::ostream& dump_text_pNext_trampoline(const void* object, const ApiDumpSettings& settings, int indents, bool is_dynamic_viewport, bool is_dynamic_scissor)
 {{
     dump_text_pNext<const VkPipelineViewportStateCreateInfo>(static_cast<const VkPipelineViewportStateCreateInfo*>(object), settings, "VkPipelineViewportStateCreateInfo", indents, dump_text_VkPipelineViewportStateCreateInfo, is_dynamic_viewport, is_dynamic_scissor);
-    return settings.stream(); 
+    return settings.stream();
 }}
 
 inline std::ostream& dump_text_pNext_trampoline(const void* object, const ApiDumpSettings& settings, int indents, VkCommandBuffer cmd_buffer)
 {{
     dump_text_pNext<const VkCommandBufferBeginInfo>(static_cast<const VkCommandBufferBeginInfo*>(object), settings, "VkCommandBufferBeginInfo", indents, dump_text_VkCommandBufferBeginInfo, cmd_buffer);
-    return settings.stream(); 
+    return settings.stream();
 }}
 
 //=========================== Type Implementations ==========================//
@@ -689,7 +689,7 @@ std::ostream& dump_text_{sctName}(const {sctName}& object, const ApiDumpSettings
     @if({memPtrLevel} == 0)
         @if('{memName}' != 'pNext')
     dump_text_value<const {memBaseType}>(object.{memName}, settings, "{memType}", "{memName}", indents + 1, dump_text_{memTypeID}{memInheritedConditions});
-        @end if 
+        @end if
         @if('{memName}' == 'pNext')
     if(object.pNext != nullptr){{
         dump_text_pNext_trampoline(object.{memName}, settings, indents + 1);
@@ -711,7 +711,7 @@ std::ostream& dump_text_{sctName}(const {sctName}& object, const ApiDumpSettings
     @if('{sctName}' == 'VkShaderModuleCreateInfo')
     @if('{memName}' == 'pCode')
     if(settings.showShader())
-        dump_text_array<const {memBaseType}>(object.{memName}, object.{memLength}, settings, "{memType}", "{memChildType}", "{memName}", indents + 1, dump_text_{memTypeID}{memInheritedConditions});
+        dump_text_array_hex<const {memBaseType}>(object.{memName}, object.{memLength}, settings, "{memType}", "{memChildType}", "{memName}", indents + 1, dump_text_{memTypeID}{memInheritedConditions});
     else
         dump_text_special("SHADER DATA", settings, "{memType}", "{memName}", indents + 1);
     @end if
@@ -802,11 +802,14 @@ std::ostream& dump_text_head_{funcName}(ApiDumpInstance& dump_inst, {funcTypedPa
 {{
     const ApiDumpSettings& settings(dump_inst.settings());
     settings.stream() << "Thread " << dump_inst.threadID() << ", Frame " << dump_inst.frameCount();
+    @if('{funcName}' in ['vkCmdDraw', 'vkCmdDrawIndexed', 'vkCmdDrawIndirect', 'vkCmdDrawIndexedIndirect'])
+    settings.stream() << ", Drawcall " << dump_inst.nextDrawcall();
+    @end if
     if(settings.showTimestamp()) {{
         settings.stream() << ", Time " << dump_inst.current_time_since_start().count() << " us:\\n";
     }} else {{
         settings.stream() << ":\\n";
-    }} 
+    }}
     settings.stream() << "{funcName}({funcNamedParams}) returns {funcReturn}";
 
     return settings.shouldFlush() ? settings.stream() << std::flush : settings.stream();
@@ -822,7 +825,7 @@ std::ostream& dump_text_body_{funcName}(ApiDumpInstance& dump_inst, {funcTypedPa
 @end if
 {{
     const ApiDumpSettings& settings(dump_inst.settings());
-    
+
     @if('{funcReturn}' != 'void')
     settings.stream() << " ";
     dump_text_{funcReturn}(result, settings, 0);
@@ -910,9 +913,9 @@ std::ostream& dump_html_pNext_trampoline(const void* object, const ApiDumpSettin
     case {sctStructureTypeIndex}:
         dump_html_pNext<const {sctName}>(static_cast<const {sctName}*>(object), settings, "{sctName}", indents, dump_html_{sctName});
         break;
-        @end if    
+        @end if
     @end struct
-    
+
     case 47: // VK_STRUCTURE_TYPE_LOADER_INSTANCE_CREATE_INFO
     case 48: // VK_STRUCTURE_TYPE_LOADER_DEVICE_CREATE_INFO
         if(static_cast<const VkBaseInStructure*>(object)->pNext != nullptr){{
@@ -928,19 +931,19 @@ std::ostream& dump_html_pNext_trampoline(const void* object, const ApiDumpSettin
         dump_html_nametype(settings.stream(), settings.showType(), "pNext", "const void*");
         settings.stream() << "<div class='val'>UNKNOWN (" << (int64_t) (static_cast<const VkBaseInStructure*>(object)->sType) <<")</div></summary></details>";
     }}
-    return settings.stream(); 
+    return settings.stream();
 }}
 
 inline std::ostream& dump_html_pNext_trampoline(const void* object, const ApiDumpSettings& settings, int indents, bool is_dynamic_viewport, bool is_dynamic_scissor)
 {{
     dump_html_pNext<const VkPipelineViewportStateCreateInfo>(static_cast<const VkPipelineViewportStateCreateInfo*>(object), settings, "VkPipelineViewportStateCreateInfo", indents, dump_html_VkPipelineViewportStateCreateInfo, is_dynamic_viewport, is_dynamic_scissor);
-    return settings.stream(); 
+    return settings.stream();
 }}
 
 inline std::ostream& dump_html_pNext_trampoline(const void* object, const ApiDumpSettings& settings, int indents, VkCommandBuffer cmd_buffer)
 {{
     dump_html_pNext<const VkCommandBufferBeginInfo>(static_cast<const VkCommandBufferBeginInfo*>(object), settings, "VkCommandBufferBeginInfo", indents, dump_html_VkCommandBufferBeginInfo, cmd_buffer);
-    return settings.stream(); 
+    return settings.stream();
 }}
 
 //=========================== Type Implementations ==========================//
@@ -1091,7 +1094,7 @@ std::ostream& dump_html_{sctName}(const {sctName}& object, const ApiDumpSettings
     @if({memPtrLevel} == 0)
         @if('{memName}' != 'pNext')
     dump_html_value<const {memBaseType}>(object.{memName}, settings, "{memType}", "{memName}", indents + 1, dump_html_{memTypeID}{memInheritedConditions});
-        @end if 
+        @end if
         @if('{memName}' == 'pNext')
     if(object.pNext != nullptr){{
         dump_html_pNext_trampoline(object.{memName}, settings, indents + 1);
@@ -1222,11 +1225,11 @@ std::ostream& dump_html_head_{funcName}(ApiDumpInstance& dump_inst, {funcTypedPa
 @foreach function where('{funcName}' not in ['vkGetDeviceProcAddr', 'vkGetInstanceProcAddr'])
 @if('{funcReturn}' != 'void')
 std::ostream& dump_html_body_{funcName}(ApiDumpInstance& dump_inst, {funcReturn} result, {funcTypedParams})
-@end if 
+@end if
 @if('{funcReturn}' == 'void')
 std::ostream& dump_html_body_{funcName}(ApiDumpInstance& dump_inst, {funcTypedParams})
 @end if
-{{ 
+{{
     const ApiDumpSettings& settings(dump_inst.settings());
 
     @if('{funcReturn}' != 'void')
@@ -1316,9 +1319,9 @@ std::ostream& dump_json_pNext_trampoline(const void* object, const ApiDumpSettin
     case {sctStructureTypeIndex}:
         dump_json_pNext<const {sctName}>(static_cast<const {sctName}*>(object), settings, "{sctName}", indents, dump_json_{sctName});
         break;
-        @end if    
+        @end if
     @end struct
-    
+
     case 47: // VK_STRUCTURE_TYPE_LOADER_INSTANCE_CREATE_INFO
     case 48: // VK_STRUCTURE_TYPE_LOADER_DEVICE_CREATE_INFO
         if(static_cast<const VkBaseInStructure*>(object)->pNext != nullptr){{
@@ -1338,19 +1341,19 @@ std::ostream& dump_json_pNext_trampoline(const void* object, const ApiDumpSettin
         settings.stream() << settings.indentation(indents + 1) << "\\"value\\" : \\"UNKNOWN (\\"" << (int64_t) (static_cast<const VkBaseInStructure*>(object)->sType) << "\\")\\n";
         settings.stream() << settings.indentation(indents) << "}}";
     }}
-    return settings.stream(); 
+    return settings.stream();
 }}
 
 inline std::ostream& dump_json_pNext_trampoline(const void* object, const ApiDumpSettings& settings, int indents, bool is_dynamic_viewport, bool is_dynamic_scissor)
 {{
     dump_json_pNext<const VkPipelineViewportStateCreateInfo>(static_cast<const VkPipelineViewportStateCreateInfo*>(object), settings, "VkPipelineViewportStateCreateInfo", indents, dump_json_VkPipelineViewportStateCreateInfo, is_dynamic_viewport, is_dynamic_scissor);
-    return settings.stream(); 
+    return settings.stream();
 }}
 
 inline std::ostream& dump_json_pNext_trampoline(const void* object, const ApiDumpSettings& settings, int indents, VkCommandBuffer cmd_buffer)
 {{
     dump_json_pNext<const VkCommandBufferBeginInfo>(static_cast<const VkCommandBufferBeginInfo*>(object), settings, "VkCommandBufferBeginInfo", indents, dump_json_VkCommandBufferBeginInfo, cmd_buffer);
-    return settings.stream(); 
+    return settings.stream();
 }}
 
 //=========================== Type Implementations ==========================//
@@ -1491,7 +1494,7 @@ std::ostream& dump_json_{sctName}(const {sctName}& object, const ApiDumpSettings
     @if({memPtrLevel} == 0)
         @if('{memName}' != 'pNext')
     dump_json_value<const {memBaseType}>(object.{memName}, settings, "{memType}", "{memName}", indents + 1, dump_json_{memTypeID}{memInheritedConditions});
-        @end if 
+        @end if
         @if('{memName}' == 'pNext')
     if(object.pNext != nullptr){{
         dump_json_pNext_trampoline(object.{memName}, settings, indents + 1);
@@ -1681,7 +1684,7 @@ std::ostream& dump_json_body_{funcName}(ApiDumpInstance& dump_inst, {funcTypedPa
 
         settings.stream() << settings.indentation(3) << "\\\"args\\\" :\\n";
         settings.stream() << settings.indentation(3) << "[\\n";
-        
+
         @foreach parameter
         if (needParameterComma) settings.stream() << ",\\n";
         @if({prmPtrLevel} == 0)
@@ -1695,7 +1698,7 @@ std::ostream& dump_json_body_{funcName}(ApiDumpInstance& dump_inst, {funcTypedPa
         @end if
         needParameterComma = true;
         @end parameter
-        
+
         settings.stream() << "\\n" << settings.indentation(3) << "]\\n";
     }}
     settings.stream() << settings.indentation(2) << "}}";
@@ -2318,8 +2321,8 @@ class VulkanEnum:
             self.name = name
             self.comment = comment
             self.multiValue = None
-            
-            if value is not None:         
+
+            if value is not None:
 
                 self.multiValue = not isPow2(StrToInt(value))
 
@@ -2365,7 +2368,7 @@ class VulkanEnum:
                 childValue = extBase + (extNum - 1) * extBlockSize + extOffset
                 if ('dir' in child.keys()):
                     childValue = -childValue
-               
+
             # Check for duplicates, TODO: Maybe solve up a level
             duplicate = False
             for o in self.options:
@@ -2504,7 +2507,7 @@ class VulkanFunction:
         else:
             self.dispatchType = 'device'
 
-        if self.name in extensions and extensions[self.name].type == 'instance':    
+        if self.name in extensions and extensions[self.name].type == 'instance':
             self.type = 'instance'
         else:
             self.type = self.dispatchType
@@ -2527,7 +2530,7 @@ class VulkanFunction:
             'funcNamedParams': self.namedParams,
             'funcTypedParams': self.typedParams,
             'funcDispatchParam': self.parameters[0].name,
-            'funcDispatchType' : self.dispatchType, 
+            'funcDispatchType' : self.dispatchType,
             'funcStateTrackingCode': self.stateTrackingCode,
             'funcSafeToPrint': self.safeToPrint,
         }
@@ -2600,7 +2603,7 @@ class VulkanStruct:
                     self.conditionVars += ', ' + state['type'] + ' ' + state['name']
 
         self.structureIndex = -1
-        
+
         if(self.structExtends is not None):
             for member in self.members:
                 if(member.structValues is not None):
@@ -2609,7 +2612,7 @@ class VulkanStruct:
                             for opt in enum.options:
                                 if(member.structValues  == opt.name):
                                     self.structureIndex = opt.value
-              
+
     def values(self):
         return {
             'sctName': self.name,

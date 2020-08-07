@@ -31,6 +31,7 @@ extern "C" {
 
 #include "vkreplay_preload.h"
 #include "vkreplay_factory.h"
+#include "decompressor.h"
 
 /* Class to handle fetching and sequencing packets from a tracefile.
  * Contains no knowledge of type of tracer needed to process packet.
@@ -52,7 +53,7 @@ class AbstractSequencer {
 
 class Sequencer : public AbstractSequencer {
    public:
-    Sequencer(FileLike *pFile) : m_lastPacket(NULL), m_pFile(pFile), m_chunkEnabled(false) {}
+    Sequencer(FileLike *pFile, decompressor* decom, uint64_t filesize) : m_lastPacket(NULL), m_pFile(pFile), m_chunkEnabled(false), m_decompressor(decom), m_decompressFilesize(filesize) {}
     ~Sequencer() { this->clean_up(); }
 
     void clean_up() {
@@ -68,8 +69,9 @@ class Sequencer : public AbstractSequencer {
     void get_bookmark(seqBookmark &bookmark);
     void set_bookmark(const seqBookmark &bookmark);
     void record_bookmark();
-    bool start_preload(vktrace_replay::vktrace_trace_packet_replay_library *replayer_array[]) {
-        m_chunkEnabled = init_preload(m_pFile, replayer_array);
+    void set_lastPacket(vktrace_trace_packet_header *newPacket);
+    bool start_preload(vktrace_replay::vktrace_trace_packet_replay_library *replayer_array[], decompressor* decompressor) {
+        m_chunkEnabled = init_preload(m_pFile, replayer_array, decompressor, m_decompressFilesize);
         return m_chunkEnabled;
     };
 
@@ -78,6 +80,8 @@ class Sequencer : public AbstractSequencer {
     seqBookmark m_bookmark;
     FileLike *m_pFile;
     bool m_chunkEnabled;
+    decompressor* m_decompressor;
+    uint64_t m_decompressFilesize = 0;
 };
 
 } /* namespace vktrace_replay */

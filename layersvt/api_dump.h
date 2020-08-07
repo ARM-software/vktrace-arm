@@ -711,6 +711,15 @@ class ApiDumpInstance {
         return *dump_settings;
     }
 
+    inline const ApiDumpSettings &resetDumpFileName(const char* dump_file_name) {
+        if (dump_settings != NULL) delete dump_settings;
+        if (dump_file_name != nullptr) {
+            setLayerOption("lunarg_api_dump.log_filename", dump_file_name);
+        }
+        dump_settings = new ApiDumpSettings();
+        return *dump_settings;
+    }
+
     uint32_t nextDrawcall() {
         return draw_call_count++;
     }
@@ -873,7 +882,7 @@ inline void dump_text_array(const T *array, size_t len, const ApiDumpSettings &s
 }
 
 template <typename T, typename... Args>
-inline void dump_text_array_hex(const uint32_t *array, size_t len, const ApiDumpSettings &settings, const char *type_string,
+inline void dump_text_array_hex(const T *array, size_t len, const ApiDumpSettings &settings, const char *type_string,
                                 const char *child_type, const char *name, int indents,
                                 std::ostream &(*dump)(const T, const ApiDumpSettings &, int, Args... args), Args... args) {
     settings.formatNameType(settings.stream(), indents, name, type_string);
@@ -886,32 +895,32 @@ inline void dump_text_array_hex(const uint32_t *array, size_t len, const ApiDump
     else
         settings.stream() << "address";
 
-    std::stringstream stream;
-    const uint8_t *arraybyte = reinterpret_cast<const uint8_t *>(array);
-    for (size_t i = 0; i < (len * 4) && array != NULL; ++i) {
-        stream << std::hex << std::setw(2) << std::setfill('0') << (int)arraybyte[i] << " ";
-        if (i % 32 == 31) {
-            stream << "\n";
-        }
-    }
 
     if (settings.stream().rdbuf() == std::cout.rdbuf()) {
-        settings.stream() << "\n" << stream.str() << "\n";
+        settings.stream() << "\n";
+        const uint8_t *arraybyte = reinterpret_cast<const uint8_t *>(array);
+        for (size_t i = 0; i < (len * 4) && array != NULL; ++i) {
+            settings.stream() << std::hex << std::setw(2) << std::setfill('0') << (int)arraybyte[i] << " ";
+            if (i % 32 == 31) {
+                settings.stream() << "\n";
+            }
+        }
+        settings.stream() << "\n";
     } else {
         static uint64_t shaderDumpIndex = 0;
         std::stringstream shaderDumpFileName;
-        shaderDumpFileName << settings.directory() << "shader_" << shaderDumpIndex << ".hex";
+        shaderDumpFileName << settings.directory() << "shader_" << shaderDumpIndex << ".bin";
         settings.stream() << " (" << shaderDumpFileName.str() << ")\n";
         ++shaderDumpIndex;
         std::ofstream shaderDumpFile;
-        shaderDumpFile.open(shaderDumpFileName.str(), std::ofstream::out | std::ostream::trunc);
-        shaderDumpFile << stream.str() << "\n";
+        shaderDumpFile.open(shaderDumpFileName.str(), std::ofstream::out | std::ostream::trunc | std::ostream::binary);
+        shaderDumpFile.write(reinterpret_cast<const char*>(array), len * sizeof(array[0]));
         shaderDumpFile.close();
     }
 }
 
 template <typename T, typename... Args>
-inline void dump_text_array_hex(const uint32_t *array, size_t len, const ApiDumpSettings &settings, const char *type_string,
+inline void dump_text_array_hex(const T *array, size_t len, const ApiDumpSettings &settings, const char *type_string,
                                 const char *child_type, const char *name, int indents,
                                 std::ostream &(*dump)(const T &, const ApiDumpSettings &, int, Args... args), Args... args) {
     settings.formatNameType(settings.stream(), indents, name, type_string);

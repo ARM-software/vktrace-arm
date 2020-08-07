@@ -29,7 +29,8 @@
 #define VKTRACE_TRACE_FILE_VERSION_5 0x0005
 #define VKTRACE_TRACE_FILE_VERSION_6 0x0006
 #define VKTRACE_TRACE_FILE_VERSION_7 0x0007  // Vulkan 1.1
-#define VKTRACE_TRACE_FILE_VERSION VKTRACE_TRACE_FILE_VERSION_7
+#define VKTRACE_TRACE_FILE_VERSION_8 0x0008  // Compression format
+#define VKTRACE_TRACE_FILE_VERSION VKTRACE_TRACE_FILE_VERSION_8
 
 // vkreplay can replay version 6 (the last Vulkan 1.0 format)
 #define VKTRACE_TRACE_FILE_VERSION_MINIMUM_COMPATIBLE VKTRACE_TRACE_FILE_VERSION_6
@@ -41,7 +42,8 @@
 typedef enum VKTRACE_TRACER_ID {
     VKTRACE_TID_RESERVED = 0,
     VKTRACE_TID_GL_FPS,
-    VKTRACE_TID_VULKAN
+    VKTRACE_TID_VULKAN,
+    VKTRACE_TID_VULKAN_COMPRESSED,
     // Max enum must be less than VKTRACE_MAX_TRACER_ID_ARRAY_SIZE
 } VKTRACE_TRACER_ID;
 
@@ -57,7 +59,7 @@ static const VKTRACE_TRACER_REPLAYER_INFO gs_tracerReplayerInfo[VKTRACE_MAX_TRAC
     {VKTRACE_TID_RESERVED, FALSE, "", ""},
     {VKTRACE_TID_GL_FPS, FALSE, "", ""},
     {VKTRACE_TID_VULKAN, TRUE, VKTRACE_LIBRARY_NAME(vulkan_replay), VKTRACE_LIBRARY_NAME(vktraceviewer_vk)},
-    {VKTRACE_TID_RESERVED, FALSE, "", ""},  // this can be updated as new tracers are added
+    {VKTRACE_TID_VULKAN_COMPRESSED, TRUE, VKTRACE_LIBRARY_NAME(vulkan_replay), VKTRACE_LIBRARY_NAME(vktraceviewer_vk)},
     {VKTRACE_TID_RESERVED, FALSE, "", ""},  // this can be updated as new tracers are added
     {VKTRACE_TID_RESERVED, FALSE, "", ""},  // this can be updated as new tracers are added
     {VKTRACE_TID_RESERVED, FALSE, "", ""},  // this can be updated as new tracers are added
@@ -384,6 +386,10 @@ typedef enum _VKTRACE_TRACE_PACKET_ID_VK {
     VKTRACE_TPI_VK_vkGetBufferDeviceAddress = 306,
     VKTRACE_TPI_VK_vkGetBufferOpaqueCaptureAddress = 307,
     VKTRACE_TPI_VK_vkGetDeviceMemoryOpaqueCaptureAddress = 308,
+    VKTRACE_TPI_VK_vkCreateRenderPass2KHR = 309,
+    VKTRACE_TPI_VK_vkCmdBeginRenderPass2KHR = 310,
+    VKTRACE_TPI_VK_vkCmdNextSubpass2KHR = 311,
+    VKTRACE_TPI_VK_vkCmdEndRenderPass2KHR = 312,
 } VKTRACE_TRACE_PACKET_ID_VK;
 
 #define VKTRACE_BIG_ENDIAN 1
@@ -409,9 +415,16 @@ typedef struct {
     ALIGN8 uint64_t gpu_drv_vers;
 } struct_gpuinfo;
 
+typedef enum VKTRACE_COMPRESS_TYPE {
+    VKTRACE_COMPRESS_TYPE_NONE   = 0,
+    VKTRACE_COMPRESS_TYPE_LZ4    = 1,
+    VKTRACE_COMPRESS_TYPE_SNAPPY = 2,
+} VKTRACE_COMPRESS_TYPE;
+
 typedef struct {
     uint16_t trace_file_version;
-    uint16_t reserved1[3];
+    uint16_t reserved1[2];
+    uint16_t compress_type;
     ALIGN8 uint64_t magic;
     uint32_t uuid[4];
     ALIGN8 uint64_t first_packet_offset;  // Size of header including gpu array below
@@ -428,8 +441,8 @@ typedef struct {
     ALIGN8 uint64_t os;
 
     // Reserve some spaece in case more fields need to be added in the future
-    ALIGN8 uint64_t reserved2[8];
-
+    ALIGN8 uint64_t reserved2[7];
+    ALIGN8 uint64_t decompress_file_size;
     // The header ends with number of gpus and a gpu_id/drv_vers pair for each gpu
     ALIGN8 uint64_t n_gpuinfo;
     // A struct_gpuinfo array of length n_gpuinfo follows this
@@ -446,8 +459,15 @@ typedef struct {
     ALIGN8 uint64_t entrypoint_end_time;
     ALIGN8 uint64_t vktrace_end_time;     // end of measuring vktrace's overhead related to this packet
     ALIGN8 uint64_t next_buffers_offset;  // used for tracking the addition of buffers to the trace packet
-    ALIGN8 uintptr_t pBody;               // points to the body of the packet
+    ALIGN8 uintptr_t pBody;               // points to the body of the packet; if the packet is compressed,
+                                          // the pBody will point to the vktrace_trace_packet_header_compression_ext
+                                          // structure
 } vktrace_trace_packet_header;
+
+typedef struct {
+    ALIGN8 uint64_t decompressed_size;
+    ALIGN8 uintptr_t pBody;             // points to the compressed packet data
+} vktrace_trace_packet_header_compression_ext;
 
 typedef struct {
     vktrace_trace_packet_header* pHeader;

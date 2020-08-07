@@ -46,6 +46,8 @@ extern "C" {
 #include "vktrace_trace_packet_utils.h"
 #include "vktrace_vk_packet_id.h"
 }
+#include "compressor.h"
+#include <cstddef>
 
 const unsigned long kWatchDogPollTime = 250;
 
@@ -210,6 +212,14 @@ bool CreateAdditionalRecordTraceThread(vktrace_process_info* pInfo) {
     return create_additional_record_trace_thread;
 }
 
+VKTRACE_COMPRESS_TYPE compressTypeConvert(const char *name) {
+    if (strcmp(name, "lz4") == 0)
+        return VKTRACE_COMPRESS_TYPE_LZ4;
+    else if (strcmp(name, "snappy") == 0)
+        return VKTRACE_COMPRESS_TYPE_SNAPPY;
+    return VKTRACE_COMPRESS_TYPE_NONE;
+}
+
 // ------------------------------------------------------------------------------------------------
 VKTRACE_THREAD_ROUTINE_RETURN_TYPE Process_RunRecordTraceThread(LPVOID _threadInfo) {
     vktrace_process_capture_trace_thread_info* pInfo = (vktrace_process_capture_trace_thread_info*)_threadInfo;
@@ -254,6 +264,14 @@ VKTRACE_THREAD_ROUTINE_RETURN_TYPE Process_RunRecordTraceThread(LPVOID _threadIn
           vktrace_LogError(
               "Some process of the title will not be captured into trace file due to failure on creating record thread!");
         }
+    }
+
+    compressor* g_compressor = NULL;
+    if (strcmp(g_settings.compressType, "snappy") == 0) {
+        g_compressor = create_compressor(VKTRACE_COMPRESS_TYPE_SNAPPY);
+    }
+    else if (strcmp(g_settings.compressType, "lz4") == 0) {
+        g_compressor = create_compressor(VKTRACE_COMPRESS_TYPE_LZ4);
     }
 
     // create trace file
@@ -314,6 +332,8 @@ VKTRACE_THREAD_ROUTINE_RETURN_TYPE Process_RunRecordTraceThread(LPVOID _threadIn
     assert(rval != SIG_ERR);
 #endif
 
+    std::vector<uint64_t> portabilityTable;
+    uint64_t decompress_file_size = fileOffset;
     while (!terminationSignalArrived && pInfo->serverRequestsTermination == FALSE) {
         // get a packet
         // vktrace_LogDebug("Waiting for a packet...");
@@ -351,9 +371,15 @@ VKTRACE_THREAD_ROUTINE_RETURN_TYPE Process_RunRecordTraceThread(LPVOID _threadIn
                 vktrace_LogVerbose("Thread_CaptureTrace is exiting.");
                 break;
             }
-
             if (pInfo->pTraceFile != NULL) {
+                decompress_file_size += pHeader->size;
                 vktrace_enter_critical_section(&pInfo->pProcessInfo->traceFileCriticalSection);
+                if ((strcmp(g_settings.compressType, "lz4") == 0 || strcmp(g_settings.compressType, "snappy") == 0) &&
+                        pHeader->size - sizeof(vktrace_trace_packet_header) > g_settings.compressThreshold) {
+                    if (compress_packet(g_compressor, pHeader) != 0) {
+                        vktrace_LogError("Failed to compress the packet for packet_id = %hu", pHeader->packet_id);
+                    }
+                }
                 bytes_written = fwrite(pHeader, 1, (size_t)pHeader->size, pInfo->pTraceFile);
                 fflush(pInfo->pTraceFile);
                 vktrace_leave_critical_section(&pInfo->pProcessInfo->traceFileCriticalSection);
@@ -362,15 +388,7 @@ VKTRACE_THREAD_ROUTINE_RETURN_TYPE Process_RunRecordTraceThread(LPVOID _threadIn
                 }
 
                 // If the packet is one we need to track, add it to the table
-                if (pHeader->packet_id == VKTRACE_TPI_VK_vkBindImageMemory ||
-                    pHeader->packet_id == VKTRACE_TPI_VK_vkBindBufferMemory ||
-                    pHeader->packet_id == VKTRACE_TPI_VK_vkBindImageMemory2KHR ||
-                    pHeader->packet_id == VKTRACE_TPI_VK_vkBindBufferMemory2KHR ||
-                    pHeader->packet_id == VKTRACE_TPI_VK_vkBindImageMemory2 ||
-                    pHeader->packet_id == VKTRACE_TPI_VK_vkBindBufferMemory2 ||
-                    pHeader->packet_id == VKTRACE_TPI_VK_vkAllocateMemory || pHeader->packet_id == VKTRACE_TPI_VK_vkDestroyImage ||
-                    pHeader->packet_id == VKTRACE_TPI_VK_vkDestroyBuffer || pHeader->packet_id == VKTRACE_TPI_VK_vkFreeMemory ||
-                    pHeader->packet_id == VKTRACE_TPI_VK_vkCreateBuffer || pHeader->packet_id == VKTRACE_TPI_VK_vkCreateImage) {
+                if (vktrace_append_portabilitytable(pHeader->packet_id)) {
                     vktrace_LogDebug("Add packet to portability table: %s",
                                      vktrace_vk_packet_id_name((VKTRACE_TRACE_PACKET_ID_VK)pHeader->packet_id));
                     portabilityTable.push_back(fileOffset);
@@ -385,14 +403,21 @@ VKTRACE_THREAD_ROUTINE_RETURN_TYPE Process_RunRecordTraceThread(LPVOID _threadIn
         // clean up
         vktrace_delete_trace_packet_no_lock(&pHeader);
     }
-
-    vktrace_appendPortabilityPacket(pInfo->pTraceFile);
+    decompress_file_size += (sizeof(vktrace_trace_packet_header) + (portabilityTable.size() + 1)* sizeof(uint64_t));
+    vktrace_appendPortabilityPacket(pInfo->pTraceFile, portabilityTable);
+    vktrace_resetFilesize(pInfo->pTraceFile, decompress_file_size);
 
 #if defined(WIN32)
     PostThreadMessage(pInfo->pProcessInfo->parentThreadId, VKTRACE_WM_COMPLETE, 0, 0);
 #endif
 
+    if (g_compressor && g_compressor->compress_packet_counter > 0) {
+        fseek(pInfo->pTraceFile, offsetof(vktrace_trace_file_header, compress_type), SEEK_SET);
+        VKTRACE_COMPRESS_TYPE type = compressTypeConvert(g_settings.compressType);
+        bytes_written = fwrite(&type, sizeof(uint16_t), 1, pInfo->pTraceFile);
+    }
     fclose(pInfo->pTraceFile);
+    delete g_compressor;
 
     VKTRACE_DELETE(fileLikeSocket);
     vktrace_MessageStream_destroy(&pMessageStream);

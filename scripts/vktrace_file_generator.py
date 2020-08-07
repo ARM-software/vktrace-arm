@@ -137,6 +137,7 @@ approved_ext = [
                 'VK_KHR_memory2',
                 'VK_KHR_protected_memory',
                 'VK_KHX_subgroup',
+                'VK_KHR_create_renderpass2',
                 ]
 
 api_exclusions = [
@@ -928,6 +929,7 @@ class VkTraceFileOutputGenerator(OutputGenerator):
                                  'CreatePipelineLayout',
                                  'CreateRenderPass',
                                  'CreateRenderPass2',
+                                 'CreateRenderPass2KHR',
                                  'CmdBeginRenderPass',
                                  'CmdBindDescriptorSets',
                                  'CmdBindVertexBuffers',
@@ -1245,9 +1247,6 @@ class VkTraceFileOutputGenerator(OutputGenerator):
                     replay_gen_source += '            vkreplay_process_pnext_structs(pPacket->header, (void *)pPacket->pYcbcrConversion);\n'
                 elif 'GetPhysicalDeviceFormatProperties2' in cmdname:
                     replay_gen_source += '            vkreplay_process_pnext_structs(pPacket->header, (void *)pPacket->pFormatProperties);\n'
-                elif 'GetPhysicalDeviceImageFormatProperties2' in cmdname:
-                    replay_gen_source += '            vkreplay_process_pnext_structs(pPacket->header, (void *)pPacket->pImageFormatInfo);\n'
-                    replay_gen_source += '            vkreplay_process_pnext_structs(pPacket->header, (void *)pPacket->pImageFormatProperties);\n'
                 elif 'GetPhysicalDeviceQueueFamilyProperties2' in cmdname:
                     replay_gen_source += '            for (uint32_t i=0; i<*pPacket->pQueueFamilyPropertyCount; i++)\n'
                     replay_gen_source += '                vkreplay_process_pnext_structs(pPacket->header, (void *)(&pPacket->pQueueFamilyProperties[i]));\n'
@@ -1272,7 +1271,7 @@ class VkTraceFileOutputGenerator(OutputGenerator):
                     replay_gen_source += '                if (full_path.empty()) {\n'
                     replay_gen_source += '                    m_pipelinecache_accessor->CollectPacketInfo(pPacket->device, cache_handle);\n'
                     replay_gen_source += '                } else {\n'
-                    replay_gen_source += '                    if (!g_pReplaySettings->preloadTraceFile && m_pipelinecache_accessor->LoadPipelineCache(full_path)) {\n'
+                    replay_gen_source += '                    if (!(g_pReplaySettings->preloadTraceFile && vktrace_replay::timerStarted()) && m_pipelinecache_accessor->LoadPipelineCache(full_path)) {\n'
                     replay_gen_source += '                        // We only load pipeline cache data here if the preLoadTraceFile flag is not true,\n'
                     replay_gen_source += '                        auto cache_data = m_pipelinecache_accessor->GetPipelineCache(cache_handle);\n'
                     replay_gen_source += '                        if (nullptr != cache_data.first) {\n'
@@ -1303,6 +1302,13 @@ class VkTraceFileOutputGenerator(OutputGenerator):
                     replay_gen_source += '                }\n'
                     replay_gen_source += '                m_pipelinecache_accessor->RemoveCollectedPacketInfo(pPacket->device, pPacket->pipelineCache);\n'
                     replay_gen_source += '            }\n'
+                elif cmdname == 'GetSemaphoreFdKHR':
+                    replay_gen_source += '            VkSemaphore semaphore = m_objMapper.remap_semaphores(pPacket->pGetFdInfo->semaphore);\n'
+                    replay_gen_source += '            if (pPacket->pGetFdInfo->semaphore != VK_NULL_HANDLE && semaphore == VK_NULL_HANDLE) {\n'
+                    replay_gen_source += '                vktrace_LogError("Error detected in GetSemaphoreFdKHR() due to invalid remapped VkSemaphore.");\n'
+                    replay_gen_source += '                return vktrace_replay::VKTRACE_REPLAY_ERROR;\n'
+                    replay_gen_source += '            }\n'
+                    replay_gen_source += '            const_cast<VkSemaphoreGetFdInfoKHR*>(pPacket->pGetFdInfo)->semaphore = semaphore;\n'
                 # Build the call to the "real_" entrypoint
                 if cmdname == 'GetRefreshCycleDurationGOOGLE' or cmdname == 'GetPastPresentationTimingGOOGLE':
                     replay_gen_source += '            if (m_vkDeviceFuncs.%s) {\n' % cmdname
@@ -1403,7 +1409,9 @@ class VkTraceFileOutputGenerator(OutputGenerator):
                 elif 'DestroyInstance' in cmdname:
                     replay_gen_source += '            // TODO need to handle multiple instances and only clearing maps within an instance.\n'
                     replay_gen_source += '            // TODO this only works with a single instance used at any given time.\n'
-                    replay_gen_source += '            m_objMapper.clear_all_map_handles();\n'
+                    replay_gen_source += '            m_instCount--;\n'
+                    replay_gen_source += '            if (!m_instCount)\n'
+                    replay_gen_source += '                m_objMapper.clear_all_map_handles();\n'
                     replay_gen_source += '            m_display->m_initedVK = false;\n'
                 elif 'MergePipelineCaches' in cmdname:
                     replay_gen_source += '            delete[] remappedpSrcCaches;\n'
@@ -2876,7 +2884,14 @@ class VkTraceFileOutputGenerator(OutputGenerator):
         dump_gen_source += '#include "api_dump_text.h"\n'
         dump_gen_source += '#include "api_dump_html.h"\n'
         dump_gen_source += '#include "api_dump_json.h"\n'
-        dump_gen_source += '#include "vktracedump_main.h"'
+        dump_gen_source += '#include "vktracedump_main.h"\n'
+        dump_gen_source += '\n'
+        dump_gen_source += 'void reset_dump_file_name(const char* dump_file_name) { \n'
+        dump_gen_source += '    if (dump_file_name) {\n'
+        dump_gen_source += '        ApiDumpInstance& dump_inst = ApiDumpInstance::current();\n'
+        dump_gen_source += '        dump_inst.resetDumpFileName(dump_file_name);\n'
+        dump_gen_source += '    }\n'
+        dump_gen_source += '}\n'
         dump_gen_source += '\n'
         dump_gen_source += 'void dump_packet(const vktrace_trace_packet_header* packet) {\n'
         dump_gen_source += '    switch (packet->packet_id) {\n'
@@ -3134,6 +3149,7 @@ class VkTraceFileOutputGenerator(OutputGenerator):
         trace_vk_src += '#endif\n'
         trace_vk_src += '\n'
         trace_vk_src += 'extern VKTRACE_CRITICAL_SECTION g_memInfoLock;\n'
+        trace_vk_src += 'extern std::unordered_map<VkCommandBuffer, std::list<VkBuffer>> g_cmdBufferToBuffers;\n'
         trace_vk_src += '\n'
         trace_vk_src += '#ifdef WIN32\n'
         trace_vk_src += 'BOOL CALLBACK InitTracer(_Inout_ PINIT_ONCE initOnce, _Inout_opt_ PVOID param, _Out_opt_ PVOID *lpContext) {\n'
@@ -3190,6 +3206,7 @@ class VkTraceFileOutputGenerator(OutputGenerator):
                                          'vkCreatePipelineCache',
                                          'vkCreateRenderPass',
                                          'vkCreateRenderPass2',
+                                         'vkCreateRenderPass2KHR',
                                          'vkGetPipelineCacheData',
                                          'vkCreateGraphicsPipelines',
                                          'vkCreateComputePipelines',
@@ -3397,6 +3414,12 @@ class VkTraceFileOutputGenerator(OutputGenerator):
                     trace_vk_src += '        replayCreateInfo.usage |= VK_BUFFER_USAGE_TRANSFER_DST_BIT;\n'
                     trace_vk_src += '        pCreateInfo = &replayCreateInfo;\n'
                     trace_vk_src += '    }\n'
+                elif proto.name == 'vkCmdCopyBuffer':
+                    trace_vk_src += '#if defined(USE_PAGEGUARD_SPEEDUP) && !defined(PAGEGUARD_ADD_PAGEGUARD_ON_REAL_MAPPED_MEMORY)\n'
+                    trace_vk_src += '    if (!UseMappedExternalHostMemoryExtension()) {\n'
+                    trace_vk_src += '        g_cmdBufferToBuffers[commandBuffer].push_back(dstBuffer);\n'
+                    trace_vk_src += '    }\n'
+                    trace_vk_src += '#endif\n'
                 if in_data_size:
                     trace_vk_src += '    _dataSize = (pDataSize == NULL || pData == NULL) ? 0 : *pDataSize;\n'
                 trace_vk_src += '    pPacket = interpret_body_as_%s(pHeader);\n' % proto.name
@@ -3417,6 +3440,8 @@ class VkTraceFileOutputGenerator(OutputGenerator):
                             trace_vk_src += '    vktrace_add_pnext_structs_to_trace_packet(pHeader, (void *)pPacket->pCreateInfo, (void *)pCreateInfo);\n'
                         if '(pPacket->pBeginInfo)' in pp_dict['add_txt']:
                             trace_vk_src += '    vktrace_add_pnext_structs_to_trace_packet(pHeader, (void *)pPacket->pBeginInfo, (void *)pBeginInfo);\n'
+                        if '(pPacket->pGetFdInfo)' in pp_dict['add_txt']:
+                            trace_vk_src += '    vktrace_add_pnext_structs_to_trace_packet(pHeader, (void*)pPacket->pGetFdInfo, pGetFdInfo);\n'
                         if '(pPacket->pAllocateInfo)' in pp_dict['add_txt']:
                             trace_vk_src += '    vktrace_add_pnext_structs_to_trace_packet(pHeader, (void *)pPacket->pAllocateInfo, (void *)pAllocateInfo);\n'
                         if '(pPacket->pReserveSpaceInfo)' in pp_dict['add_txt']:
@@ -3677,6 +3702,7 @@ class VkTraceFileOutputGenerator(OutputGenerator):
         # TODO : This code is now too large and complex, need to make codegen smarter for pointers embedded in struct params to handle those cases automatically
         custom_case_dict = { 'CreateRenderPass' : {'param': 'pCreateInfo', 'txt': create_rp_interp},
                              'CreateRenderPass2' : {'param': 'pCreateInfo', 'txt': create_rp2_interp},
+                             'CreateRenderPass2KHR' : {'param': 'pCreateInfo', 'txt': create_rp2_interp},
                              'CreateDescriptorUpdateTemplate' : {'param': 'pCreateInfo', 'txt': ['*((VkDescriptorUpdateTemplateCreateInfo **)&pPacket->pCreateInfo->pDescriptorUpdateEntries) = (VkDescriptorUpdateTemplateCreateInfo*) vktrace_trace_packet_interpret_buffer_pointer(pHeader, (intptr_t)pPacket->pCreateInfo->pDescriptorUpdateEntries);']},
                              'CreateDescriptorUpdateTemplateKHR' : {'param': 'pCreateInfo', 'txt': ['*((VkDescriptorUpdateTemplateCreateInfoKHR **)&pPacket->pCreateInfo->pDescriptorUpdateEntries) = (VkDescriptorUpdateTemplateCreateInfoKHR*) vktrace_trace_packet_interpret_buffer_pointer(pHeader, (intptr_t)pPacket->pCreateInfo->pDescriptorUpdateEntries);']},
                              'CreatePipelineCache' : {'param': 'pCreateInfo', 'txt': [

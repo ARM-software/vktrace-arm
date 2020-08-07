@@ -1,11 +1,12 @@
 /*
- * Copyright (c) 2019 ARM Limited. All rights reserved.
+ * (C) COPYRIGHT 2020 ARM Limited
+ * ALL RIGHTS RESERVED
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ *     LICENSE-2.0" target="_blank" rel="nofollow">http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -16,5 +17,11 @@
 
 #pragma once
 
-void dump_packet(const vktrace_trace_packet_header* packet);
-void reset_dump_file_name(const char* dump_file_name);
+#if defined(__ANDROID__)
+#include <android/log.h>
+#endif
+
+#if defined(__ANDROID__)
+#define printf(...) __android_log_print(ANDROID_LOG_DEBUG, "SYSTRACE: ", __VA_ARGS__);
+#endif
+

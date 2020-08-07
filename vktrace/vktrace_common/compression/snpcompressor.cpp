@@ -1,5 +1,6 @@
 /*
- * Copyright (c) 2019 ARM Limited. All rights reserved.
+ * (C) COPYRIGHT 2020 ARM Limited
+ * ALL RIGHTS RESERVED
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -12,9 +13,25 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
+ *
  */
 
-#pragma once
+#include "snappy.h"
 
-void dump_packet(const vktrace_trace_packet_header* packet);
-void reset_dump_file_name(const char* dump_file_name);
+#include "snpcompressor.h"
+
+snpcompressor::~snpcompressor() {
+
+}
+
+// snappy compressor doesn't need outputLength parameter
+int snpcompressor::compress(const char* input, size_t inputLength, char* output, size_t outputLength) {
+    size_t compressLength;
+    snappy::RawCompress(input, inputLength, output, &compressLength);
+    return compressLength;
+}
+
+int snpcompressor::getMaxCompressedLength(size_t size)
+{
+    return snappy::MaxCompressedLength(size);
+}

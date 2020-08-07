@@ -96,6 +96,7 @@ bool UseMappedExternalHostMemoryExtension();
 bool getPageGuardEnableFlag();
 bool getEnableReadPMBFlag();
 bool getEnablePageGuardLazyCopyFlag();
+uint32_t getCheckHandlerFrames();
 void setPageGuardExceptionHandler();
 void removePageGuardExceptionHandler();
 uint64_t pageguardGetAdjustedSize(uint64_t size);
@@ -125,3 +126,6 @@ VkResult vkFlushMappedMemoryRangesWithoutAPICall(VkDevice device, uint32_t memor
                                                  const VkMappedMemoryRange* pMemoryRanges, bool apiFlush);
 
 PageGuardCapture& getPageGuardControlInstance();
+
+void enableHandlerCheck();
+void disableHandlerCheck();

@@ -28,6 +28,8 @@
 #include "vktrace_lib_pageguardcapture.h"
 #include "vktrace_lib_pageguard.h"
 
+extern uint64_t g_trimFrameCounter;
+
 VkDevice &PageGuardMappedMemory::getMappedDevice() { return MappedDevice; }
 
 VkDeviceMemory &PageGuardMappedMemory::getMappedMemory() { return MappedMemory; }
@@ -389,6 +391,9 @@ bool PageGuardMappedMemory::vkMapMemoryPageGuardHandle(VkDevice device, VkDevice
     bool setPageGuard = !UseMappedExternalHostMemoryExtension();
     if (setPageGuard) {
         setPageGuardExceptionHandler();
+        if (g_trimFrameCounter < getCheckHandlerFrames()) {
+            enableHandlerCheck();
+        }
     }
     PageSizeLeft = (size + StartingAddressOffset) % PageGuardSize;
     PageGuardAmount = (size + StartingAddressOffset) / PageGuardSize;

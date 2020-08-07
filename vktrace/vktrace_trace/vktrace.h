@@ -25,6 +25,7 @@ extern "C" {
 }
 
 #include <vector>
+#include "vktrace_trace_packet_identifiers.h"
 
 #if defined(WIN32)
 #define VKTRACE_WM_COMPLETE (WM_USER + 0)
@@ -47,17 +48,14 @@ typedef struct vktrace_settings {
     BOOL enable_trim_post_processing;
     BOOL enable_trace_lock;
     const char* trimCmdBatchSizeStr;
+    const char* compressType;
+    unsigned int compressThreshold;
 } vktrace_settings;
 
 extern vktrace_settings g_settings;
-
-// Portability table - Table of trace file offsets to packets
-// we need to access to determine what memory index should be used
-// in vkAllocateMemory during trace playback. This table is appended
-// to the trace file.
-extern std::vector<uint64_t> portabilityTable;
 extern uint32_t lastPacketThreadId;
 extern uint64_t lastPacketIndex;
 extern uint64_t lastPacketEndTime;
 
-void vktrace_appendPortabilityPacket(FILE* pTraceFile);
+void vktrace_appendPortabilityPacket(FILE* pTraceFile, std::vector<uint64_t>& portabilityTable);
+void vktrace_resetFilesize(FILE* pTraceFile, uint64_t decompressFilesize);

@@ -338,8 +338,7 @@ static void add_VkGraphicsPipelineCreateInfos_to_trace_packet(vktrace_trace_pack
             for (j = 0; j < pParam[i].stageCount; j++) {
                 add_VkPipelineShaderStageCreateInfo_to_trace_packet(
                     pHeader, (VkPipelineShaderStageCreateInfo *)&pPacket[i].pStages[j], &pParam[i].pStages[j]);
-                vktrace_add_pnext_structs_to_trace_packet(pHeader, (void **)&(pPacket[i].pStages[j]),
-                                                          (void *)&pParam[i].pStages[j]);
+                vktrace_add_pnext_structs_to_trace_packet(pHeader, (void *)&(pPacket[i].pStages[j]), (void *)&(pParam[i].pStages[j]));
             }
             vktrace_finalize_buffer_address(pHeader, (void **)&(pPacket[i].pStages));
 
@@ -347,8 +346,7 @@ static void add_VkGraphicsPipelineCreateInfos_to_trace_packet(vktrace_trace_pack
             if (pParam[i].pVertexInputState) {
                 vktrace_add_buffer_to_trace_packet(pHeader, (void **)&(pPacket[i].pVertexInputState),
                                                    sizeof(VkPipelineVertexInputStateCreateInfo), pParam[i].pVertexInputState);
-                vktrace_add_pnext_structs_to_trace_packet(pHeader, (void **)&(pPacket[i].pVertexInputState),
-                                                          pParam[i].pVertexInputState);
+                vktrace_add_pnext_structs_to_trace_packet(pHeader, (void *)pPacket[i].pVertexInputState, pParam[i].pVertexInputState);
                 vktrace_add_buffer_to_trace_packet(
                     pHeader, (void **)&(pPacket[i].pVertexInputState->pVertexBindingDescriptions),
                     pParam[i].pVertexInputState->vertexBindingDescriptionCount * sizeof(VkVertexInputBindingDescription),
@@ -365,23 +363,21 @@ static void add_VkGraphicsPipelineCreateInfos_to_trace_packet(vktrace_trace_pack
             if (pParam[i].pInputAssemblyState) {
                 vktrace_add_buffer_to_trace_packet(pHeader, (void **)&(pPacket[i].pInputAssemblyState),
                                                    sizeof(VkPipelineInputAssemblyStateCreateInfo), pParam[i].pInputAssemblyState);
-                vktrace_add_pnext_structs_to_trace_packet(pHeader, (void **)&(pPacket[i].pInputAssemblyState),
-                                                          pParam[i].pInputAssemblyState);
+                vktrace_add_pnext_structs_to_trace_packet(pHeader, (void *)pPacket[i].pInputAssemblyState, pParam[i].pInputAssemblyState);
                 vktrace_finalize_buffer_address(pHeader, (void **)&(pPacket[i].pInputAssemblyState));
             }
             // Tesselation State
             if (pParam[i].pTessellationState) {
                 vktrace_add_buffer_to_trace_packet(pHeader, (void **)&(pPacket[i].pTessellationState),
                                                    sizeof(VkPipelineTessellationStateCreateInfo), pParam[i].pTessellationState);
-                vktrace_add_pnext_structs_to_trace_packet(pHeader, (void **)&(pPacket[i].pTessellationState),
-                                                          pParam[i].pTessellationState);
+                vktrace_add_pnext_structs_to_trace_packet(pHeader, (void *)pPacket[i].pTessellationState, pParam[i].pTessellationState);
                 vktrace_finalize_buffer_address(pHeader, (void **)&(pPacket[i].pTessellationState));
             }
             // Viewport State
             if (pParam[i].pViewportState) {
                 vktrace_add_buffer_to_trace_packet(pHeader, (void **)&(pPacket[i].pViewportState),
                                                    sizeof(VkPipelineViewportStateCreateInfo), pParam[i].pViewportState);
-                vktrace_add_pnext_structs_to_trace_packet(pHeader, (void **)&(pPacket[i].pViewportState), pParam[i].pViewportState);
+                vktrace_add_pnext_structs_to_trace_packet(pHeader, (void *)pPacket[i].pViewportState, pParam[i].pViewportState);
                 vktrace_add_buffer_to_trace_packet(pHeader, (void **)&(pPacket[i].pViewportState->pViewports),
                                                    sizeof(VkViewport) * pParam[i].pViewportState->viewportCount,
                                                    pParam[i].pViewportState->pViewports);
@@ -397,45 +393,14 @@ static void add_VkGraphicsPipelineCreateInfos_to_trace_packet(vktrace_trace_pack
             if (pParam[i].pRasterizationState) {
                 vktrace_add_buffer_to_trace_packet(pHeader, (void **)&(pPacket[i].pRasterizationState),
                                                    sizeof(VkPipelineRasterizationStateCreateInfo), pParam[i].pRasterizationState);
-                vktrace_add_pnext_structs_to_trace_packet(pHeader, (void **)&(pPacket[i].pRasterizationState),
-                                                          pParam[i].pRasterizationState);
-                if (pParam[i].pRasterizationState->pNext != nullptr) {
-                    // there's an extension struct here, we need to handle it. Without the extension handling,
-                    // some tile crash during playback and the reason is the extension struct data is not
-                    // recorded during capture, so when playback, an invalid pNext point is given to driver
-                    // and cause crash. The whole handing include two parts:
-                    //    1. for capture, we need record the content of the extension struct.
-                    //    2. for playback, we need to make sure interpret the pNext pointer
-                    //       and load the extension struct.
-                    // The following source code is part 1, part 2 is in playback source code.
-
-                    // We don't know what type of extension struct here, so we first use
-                    // VkApplicationInfo type to cast, what we want to detect is its
-                    // sType which is included in all Vulkan struct definition.
-                    const VkApplicationInfo *pNextStruct =
-                        reinterpret_cast<const VkApplicationInfo *>(pParam[i].pRasterizationState->pNext);
-                    if (pNextStruct->sType ==
-                        VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_RASTERIZATION_ORDER_AMD) {  // it's an AMD extension.
-
-                        // add this extension struct to trace packet
-                        vktrace_add_buffer_to_trace_packet(pHeader, const_cast<void **>(&(pPacket[i].pRasterizationState->pNext)),
-                                                           sizeof(VkPipelineRasterizationStateRasterizationOrderAMD),
-                                                           pParam[i].pRasterizationState->pNext);
-                        vktrace_finalize_buffer_address(pHeader, const_cast<void **>(&(pPacket[i].pRasterizationState->pNext)));
-                    } else {
-                        // so far we only handle this extension, more extension
-                        // handling can be added here;
-                        assert(false);
-                    }
-                }
+                vktrace_add_pnext_structs_to_trace_packet(pHeader, (void *)pPacket[i].pRasterizationState, pParam[i].pRasterizationState);
                 vktrace_finalize_buffer_address(pHeader, (void **)&(pPacket[i].pRasterizationState));
             }
             // MultiSample State
             if (pParam[i].pMultisampleState) {
                 vktrace_add_buffer_to_trace_packet(pHeader, (void **)&(pPacket[i].pMultisampleState),
                                                    sizeof(VkPipelineMultisampleStateCreateInfo), pParam[i].pMultisampleState);
-                vktrace_add_pnext_structs_to_trace_packet(pHeader, (void **)&(pPacket[i].pMultisampleState),
-                                                          pParam[i].pMultisampleState);
+                vktrace_add_pnext_structs_to_trace_packet(pHeader, (void *)pPacket[i].pMultisampleState, pParam[i].pMultisampleState);
                 vktrace_add_buffer_to_trace_packet(pHeader, (void **)&(pPacket[i].pMultisampleState->pSampleMask),
                     sizeof(VkSampleMask)*((pParam[i].pMultisampleState->rasterizationSamples / 32) + 1), pParam[i].pMultisampleState->pSampleMask);
                 vktrace_finalize_buffer_address(pHeader, (void **)&(pPacket[i].pMultisampleState->pSampleMask));
@@ -446,8 +411,7 @@ static void add_VkGraphicsPipelineCreateInfos_to_trace_packet(vktrace_trace_pack
             if (pParam[i].pDepthStencilState) {
                 vktrace_add_buffer_to_trace_packet(pHeader, (void **)&(pPacket[i].pDepthStencilState),
                                                    sizeof(VkPipelineDepthStencilStateCreateInfo), pParam[i].pDepthStencilState);
-                vktrace_add_pnext_structs_to_trace_packet(pHeader, (void **)&(pPacket[i].pDepthStencilState),
-                                                          pParam[i].pDepthStencilState);
+                vktrace_add_pnext_structs_to_trace_packet(pHeader, (void *)pPacket[i].pDepthStencilState, pParam[i].pDepthStencilState);
                 vktrace_finalize_buffer_address(pHeader, (void **)&(pPacket[i].pDepthStencilState));
             }
 
@@ -455,8 +419,7 @@ static void add_VkGraphicsPipelineCreateInfos_to_trace_packet(vktrace_trace_pack
             if (pParam[i].pColorBlendState) {
                 vktrace_add_buffer_to_trace_packet(pHeader, (void **)&(pPacket[i].pColorBlendState),
                                                    sizeof(VkPipelineColorBlendStateCreateInfo), pParam[i].pColorBlendState);
-                vktrace_add_pnext_structs_to_trace_packet(pHeader, (void **)&(pPacket[i].pColorBlendState),
-                                                          pParam[i].pColorBlendState);
+                vktrace_add_pnext_structs_to_trace_packet(pHeader, (void *)pPacket[i].pColorBlendState, pParam[i].pColorBlendState);
                 vktrace_add_buffer_to_trace_packet(
                     pHeader, (void **)&(pPacket[i].pColorBlendState->pAttachments),
                     pParam[i].pColorBlendState->attachmentCount * sizeof(VkPipelineColorBlendAttachmentState),
@@ -469,7 +432,7 @@ static void add_VkGraphicsPipelineCreateInfos_to_trace_packet(vktrace_trace_pack
             if (pParam[i].pDynamicState) {
                 vktrace_add_buffer_to_trace_packet(pHeader, (void **)&(pPacket[i].pDynamicState),
                                                    sizeof(VkPipelineDynamicStateCreateInfo), pParam[i].pDynamicState);
-                vktrace_add_pnext_structs_to_trace_packet(pHeader, (void **)&(pPacket[i].pDynamicState), pParam[i].pDynamicState);
+                vktrace_add_pnext_structs_to_trace_packet(pHeader, (void *)pPacket[i].pDynamicState, pParam[i].pDynamicState);
                 vktrace_add_buffer_to_trace_packet(pHeader, (void **)&(pPacket[i].pDynamicState->pDynamicStates),
                                                    pParam[i].pDynamicState->dynamicStateCount * sizeof(VkDynamicState),
                                                    pParam[i].pDynamicState->pDynamicStates);

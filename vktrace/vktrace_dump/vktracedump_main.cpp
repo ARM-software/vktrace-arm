@@ -27,6 +27,7 @@
 #include "vktrace_filelike.h"
 #include "vktrace_trace_packet_utils.h"
 #include "vktrace_vk_packet_id.h"
+#include "decompressor.h"
 
 #include "vktracedump_main.h"
 
@@ -36,12 +37,14 @@ struct vktracedump_params {
     const char* traceFile = NULL;
     const char* simpleDumpFile = NULL;
     const char* fullDumpFile = NULL;
+    const char* dumpFileFrameNum = nullptr;
     bool noAddr = false;
     bool dumpShader = false;
     bool saveAsHtml = false;
     bool saveAsJson = false;
 } g_params;
 
+char g_dump_file_name[1024] = {0};
 const char* DUMP_SETTING_FILE = "vk_layer_settings.txt";
 const char* FULL_DUMP_FILE_UNSET = "full_dump_file_unset";
 const char* SEPARATOR = " : ";
@@ -56,6 +59,8 @@ static void print_usage() {
          << endl;
     cout << "    -f <fullDumpFile>     (Optional) The file to save the outputs of full/detailed API dump. Use 'stdout' to send "
             "outputs to stdout."
+         << endl;
+    cout << "    -fn <dumpFileFrameNum>   (Optional) Set dump file frame number, The default is 0."
          << endl;
     cout << "    -ds                   Dump the shader binary code in pCode to shader dump files shader_<index>.hex (when "
             "<fullDumpFile> is a file) or to stdout (when <fullDumpFile> is stdout).  Only works with \"-f <fullDumpFile>\" option."
@@ -86,6 +91,9 @@ static int parse_args(int argc, char** argv) {
             i = i + 2;
         } else if (arg.compare("-f") == 0) {
             g_params.fullDumpFile = argv[i + 1];
+            i = i + 2;
+        } else if (arg.compare("-fn") == 0) {
+            g_params.dumpFileFrameNum = argv[i + 1];
             i = i + 2;
         } else if (arg.compare("-ds") == 0) {
             g_params.dumpShader = true;
@@ -201,7 +209,7 @@ static void dump_full_setup() {
         } else {
             settingFile << "lunarg_api_dump.file = TRUE" << endl;
         }
-        settingFile << "lunarg_api_dump.log_filename = " << g_params.fullDumpFile << endl;
+        settingFile << "lunarg_api_dump.log_filename = " << g_dump_file_name << endl;
         settingFile << "lunarg_api_dump.flush = TRUE" << endl;
         settingFile << "lunarg_api_dump.indent_size = 4" << endl;
         settingFile << "lunarg_api_dump.show_types = TRUE" << endl;
@@ -217,11 +225,54 @@ static void dump_full_setup() {
     }
 }
 
+static bool change_dump_file_name(const char* dump_file_name_org, uint32_t cur_frame_index) {
+    uint32_t dump_file_frame_num = 0;
+    if (cur_frame_index == 0) {
+        strncpy(g_dump_file_name, dump_file_name_org, strlen(dump_file_name_org));
+    }
+    if (g_params.dumpFileFrameNum != nullptr) {
+        dump_file_frame_num = atoi(g_params.dumpFileFrameNum);
+    }
+    if (dump_file_frame_num == 0) {
+        if (cur_frame_index == 0) {
+            return true;
+        } else {
+            return false;
+        }
+    } else {
+        int remainder = cur_frame_index % dump_file_frame_num;
+        if (remainder != 0) {
+            return false;
+        }
+
+        memset(g_dump_file_name, 0, 1024);
+        char buffer[32] = {0};
+        sprintf(buffer, "_%d", cur_frame_index / dump_file_frame_num);
+        char* dotpos = strrchr(const_cast<char*>(dump_file_name_org), '.');
+        if (dotpos == nullptr) {
+            strncpy(g_dump_file_name, dump_file_name_org, strlen(dump_file_name_org));
+            strcat(g_dump_file_name, buffer);
+        } else {
+            strncpy(g_dump_file_name, dump_file_name_org, strlen(dump_file_name_org) - strlen(dotpos));
+            strcat(g_dump_file_name, buffer);
+            strcat(g_dump_file_name, dotpos);
+        }
+        return true;
+    }
+    return false;
+}
+
 int main(int argc, char** argv) {
     if (parse_args(argc, argv) < 0) {
         cout << "Error: invalid parameters!" << endl;
         print_usage();
         return -1;
+    }
+    if (g_params.fullDumpFile != nullptr && (!strcmp(g_params.fullDumpFile, "STDOUT") || !strcmp(g_params.fullDumpFile, "stdout"))) {
+        g_params.dumpFileFrameNum = nullptr;
+    }
+    if (g_params.simpleDumpFile != nullptr && (!strcmp(g_params.simpleDumpFile, "STDOUT") || !strcmp(g_params.simpleDumpFile, "stdout"))) {
+        g_params.dumpFileFrameNum = nullptr;
     }
 
     FILE* tracefp = fopen(g_params.traceFile, "rb");
@@ -270,18 +321,22 @@ int main(int argc, char** argv) {
             ret = -1;
         } else {
             streambuf* buf = NULL;
+            ostream* pSimpleDumpFile = nullptr;
             ofstream fileOutput;
-            if (g_params.simpleDumpFile) {
-                if (!strcmp(g_params.simpleDumpFile, "STDOUT") || !strcmp(g_params.simpleDumpFile, "stdout")) {
+            if (g_params.simpleDumpFile && change_dump_file_name(g_params.simpleDumpFile, 0)) {
+                if (!strcmp(g_dump_file_name, "STDOUT") || !strcmp(g_dump_file_name, "stdout")) {
                     buf = cout.rdbuf();
                 } else {
-                    fileOutput.open(g_params.simpleDumpFile);
+                    fileOutput.open(g_dump_file_name);
                     buf = fileOutput.rdbuf();
                 }
+                pSimpleDumpFile = new ostream(buf);
+                if (pSimpleDumpFile == nullptr) {
+                    vktrace_LogError("Cannot new ostream.");
+                    ret = -1;
+                }
             }
-            ostream simpleDumpFile(buf);
-
-            if (g_params.fullDumpFile) {
+            if (g_params.fullDumpFile && change_dump_file_name(g_params.fullDumpFile, 0)) {
                 dump_full_setup();
             }
             bool hideBriefInfo = false;
@@ -324,14 +379,36 @@ int main(int argc, char** argv) {
                 char* pEngineName = NULL;
                 uint32_t engineVersion = 0;
                 char deviceName[VK_MAX_PHYSICAL_DEVICE_NAME_SIZE] = "";
+                decompressor* decomp = nullptr;
+                if (fileHeader.compress_type != VKTRACE_COMPRESS_TYPE_NONE) {
+                    decomp = create_decompressor((VKTRACE_COMPRESS_TYPE)fileHeader.compress_type);
+                    if (decomp == nullptr) {
+                        vktrace_LogError("Create decompressor error.");
+                        fclose(tracefp);
+                        vktrace_free(traceFile);
+                        if (tmpfile) {
+                            remove(tmpfile);
+                        }
+                        return -1;
+                    }
+                }
                 while (true) {
                     uint64_t currentPosition = vktrace_FileLike_GetCurrentPosition(traceFile);
                     vktrace_trace_packet_header* packet = vktrace_read_trace_packet(traceFile);
                     if (!packet) break;
+
+                    if (packet->tracer_id == VKTRACE_TID_VULKAN_COMPRESSED) {
+                        ret = decompress_packet(decomp,packet);
+                        if (ret != 0) {
+                            vktrace_LogError("Decompress packet error.");
+                            break;
+                        }
+                    }
+
                     if (packet->packet_id >= VKTRACE_TPI_VK_vkApiVersion) {
                         vktrace_trace_packet_header* pInterpretedHeader = interpret_trace_packet_vk(packet);
                         if (g_params.simpleDumpFile) {
-                            dump_packet_brief(simpleDumpFile, frameNumber, pInterpretedHeader, currentPosition);
+                            dump_packet_brief(*pSimpleDumpFile, frameNumber, pInterpretedHeader, currentPosition);
                         }
                         if (g_params.fullDumpFile) {
                             dump_packet(pInterpretedHeader);
@@ -339,6 +416,16 @@ int main(int argc, char** argv) {
                         switch (pInterpretedHeader->packet_id) {
                             case VKTRACE_TPI_VK_vkQueuePresentKHR: {
                                 frameNumber++;
+                                if (g_params.simpleDumpFile && change_dump_file_name(g_params.simpleDumpFile, frameNumber)) {
+                                    fileOutput.close();
+                                    fileOutput.open(g_dump_file_name);
+                                    buf = fileOutput.rdbuf();
+                                    pSimpleDumpFile->rdbuf(buf);
+                                }
+                                if (g_params.fullDumpFile && change_dump_file_name(g_params.fullDumpFile, frameNumber)) {
+                                    reset_dump_file_name(g_dump_file_name);
+                                }
+
                             } break;
                             case VKTRACE_TPI_VK_vkGetPhysicalDeviceProperties: {
                                 if (!hideBriefInfo) {
@@ -384,6 +471,9 @@ int main(int argc, char** argv) {
                     }
                     vktrace_delete_trace_packet_no_lock(&packet);
                 }
+                if (decomp != nullptr) {
+                    delete decomp;
+                }
                 if (!hideBriefInfo) {
                     if (deviceApiVersion != UINT32_MAX) {
                         cout << setw(COLUMN_WIDTH) << left << "Device Name:" << deviceName << endl;
@@ -415,8 +505,8 @@ int main(int argc, char** argv) {
                     cout << setw(COLUMN_WIDTH) << left << "Frames:" << frameNumber << endl;
                 }
             }
-            if (g_params.simpleDumpFile && !strcmp(g_params.simpleDumpFile, "STDOUT") &&
-                !strcmp(g_params.simpleDumpFile, "stdout")) {
+            if (g_params.simpleDumpFile && strcmp(g_params.simpleDumpFile, "STDOUT") && strcmp(g_params.simpleDumpFile, "stdout")) {
+                if (pSimpleDumpFile != nullptr) delete pSimpleDumpFile;
                 fileOutput.close();
             }
             if (g_params.fullDumpFile) {

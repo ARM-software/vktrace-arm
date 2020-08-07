@@ -62,7 +62,7 @@ vkReplay* g_replay = nullptr;
 vkReplay::vkReplay(vkreplayer_settings *pReplaySettings, vktrace_trace_file_header *pFileHeader,
                    vktrace_replay::ReplayDisplayImp *display)
     : m_objMapper(pReplaySettings->premapping)
-    , initialized_screenshot_list("") 
+    , initialized_screenshot_list("")
     , m_pipelinecache_accessor(std::make_shared<vktrace_replay::PipelineCacheAccessor>()) {
     g_pReplaySettings = pReplaySettings;
     m_pDSDump = NULL;
@@ -611,6 +611,7 @@ VkResult vkReplay::manually_replay_vkCreateInstance(packet_vkCreateInstance *pPa
                 (PFN_vkCreateHeadlessSurfaceARM)m_vkFuncs.GetInstanceProcAddr(inst, "vkCreateHeadlessSurfaceARM");
         }
 #endif
+        m_instCount++;
     } else if (replayResult == VK_ERROR_LAYER_NOT_PRESENT) {
         vktrace_LogVerbose("vkCreateInstance failed with VK_ERROR_LAYER_NOT_PRESENT");
         vktrace_LogVerbose("List of requested layers:");
@@ -2254,12 +2255,29 @@ VkResult vkReplay::manually_replay_vkCreateRenderPass2(packet_vkCreateRenderPass
     VkResult replayResult = VK_ERROR_VALIDATION_FAILED_EXT;
     VkDevice remappedDevice = m_objMapper.remap_devices(pPacket->device);
     if (remappedDevice == VK_NULL_HANDLE) {
-        vktrace_LogError("Skipping vkCreateRenderPass() due to invalid remapped VkDevice.");
+        vktrace_LogError("Skipping vkCreateRenderPass2() due to invalid remapped VkDevice.");
         return VK_ERROR_VALIDATION_FAILED_EXT;
     }
 
     VkRenderPass local_renderpass;
     replayResult = m_vkDeviceFuncs.CreateRenderPass2(remappedDevice, pPacket->pCreateInfo, NULL, &local_renderpass);
+    if (replayResult == VK_SUCCESS) {
+        m_objMapper.add_to_renderpasss_map(*(pPacket->pRenderPass), local_renderpass);
+        replayRenderPassToDevice[local_renderpass] = remappedDevice;
+    }
+    return replayResult;
+}
+
+VkResult vkReplay::manually_replay_vkCreateRenderPass2KHR(packet_vkCreateRenderPass2KHR *pPacket) {
+    VkResult replayResult = VK_ERROR_VALIDATION_FAILED_EXT;
+    VkDevice remappedDevice = m_objMapper.remap_devices(pPacket->device);
+    if (remappedDevice == VK_NULL_HANDLE) {
+        vktrace_LogError("Skipping vkCreateRenderPass2KHR() due to invalid remapped VkDevice.");
+        return VK_ERROR_VALIDATION_FAILED_EXT;
+    }
+
+    VkRenderPass local_renderpass;
+    replayResult = m_vkDeviceFuncs.CreateRenderPass2KHR(remappedDevice, pPacket->pCreateInfo, NULL, &local_renderpass);
     if (replayResult == VK_SUCCESS) {
         m_objMapper.add_to_renderpasss_map(*(pPacket->pRenderPass), local_renderpass);
         replayRenderPassToDevice[local_renderpass] = remappedDevice;
@@ -3093,21 +3111,6 @@ VkResult vkReplay::manually_replay_vkInvalidateMappedMemoryRanges(packet_vkInval
             vktrace_LogError("Skipping vkInvalidsateMappedMemoryRanges() due to invalid remapped VkDeviceMemory.");
             VKTRACE_DELETE(pLocalMems);
             return VK_ERROR_VALIDATION_FAILED_EXT;
-        }
-
-        if (!pLocalMems[i].pGpuMem->isPendingAlloc()) {
-            if (pPacket->pMemoryRanges[i].size != 0) {
-                pLocalMems[i].pGpuMem->copyMappingData(pPacket->ppData[i], false, pPacket->pMemoryRanges[i].size,
-                                                       pPacket->pMemoryRanges[i].offset);
-            }
-        } else {
-            unsigned char *pBuf = (unsigned char *)vktrace_malloc(pLocalMems[i].pGpuMem->getMemoryMapSize());
-            if (!pBuf) {
-                vktrace_LogError("vkInvalidateMappedMemoryRanges() malloc failed.");
-            }
-            pLocalMems[i].pGpuMem->setMemoryDataAddr(pBuf);
-            pLocalMems[i].pGpuMem->copyMappingData(pPacket->ppData[i], false, pPacket->pMemoryRanges[i].size,
-                                                   pPacket->pMemoryRanges[i].offset);
         }
     }
 
@@ -6007,14 +6010,14 @@ void vkReplay::deviceWaitIdle()
 }
 
 void vkReplay::on_terminate() {
-    if (g_pReplaySettings->enablePipelineCache) { 
+    if (g_pReplaySettings->enablePipelineCache) {
         assert(nullptr != m_pipelinecache_accessor);
         auto cache_list = m_pipelinecache_accessor->GetCollectedPacketInfo();
         size_t datasize = 0;
         for (const auto &info: cache_list) {
             std::string &&full_path = m_pipelinecache_accessor->FindFile(info.second, m_replay_gpu, m_replay_pipelinecache_uuid);
             if (false == full_path.empty()) {
-                // Cache data for the pipeline can be found from the disk, 
+                // Cache data for the pipeline can be found from the disk,
                 // no need to write again.
                 continue;
             }

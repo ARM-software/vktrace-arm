@@ -257,6 +257,7 @@ class vkReplay {
     VkResult manually_replay_vkCreateFramebuffer(packet_vkCreateFramebuffer* pPacket);
     VkResult manually_replay_vkCreateRenderPass(packet_vkCreateRenderPass* pPacket);
     VkResult manually_replay_vkCreateRenderPass2(packet_vkCreateRenderPass2* pPacket);
+    VkResult manually_replay_vkCreateRenderPass2KHR(packet_vkCreateRenderPass2KHR* pPacket);
     void manually_replay_vkCmdBeginRenderPass(packet_vkCmdBeginRenderPass* pPacket);
     VkResult manually_replay_vkBeginCommandBuffer(packet_vkBeginCommandBuffer* pPacket);
     VkResult manually_replay_vkAllocateCommandBuffers(packet_vkAllocateCommandBuffers* pPacket);
@@ -447,6 +448,8 @@ class vkReplay {
     std::unordered_map<VkSurfaceKHR, VkSwapchainKHR> replaySurfToSwapchain;
     uint32_t swapchainRefCount = 0;
     uint32_t surfRefCount = 0;
+
+    uint32_t m_instCount = 0;
 
     bool getReplayMemoryTypeIdx(VkDevice traceDevice, VkDevice replayDevice, uint32_t traceIdx,
                                 VkMemoryRequirements* memRequirements, uint32_t* pReplayIdx);

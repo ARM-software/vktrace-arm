@@ -71,6 +71,7 @@ struct preload_context {
     uint32_t    loading_idx   = MAX_CHUNK_COUNT;
     uint32_t    using_idx     = MAX_CHUNK_COUNT;
     uint64_t    next_pkt_size = 0;
+    uint64_t    next_pkt_size_decompressed = 0;
     char*       preload_mem   = nullptr;
     FileLike*   tracefile     = nullptr;
     bool        exiting_thd   = false;
@@ -79,6 +80,10 @@ struct preload_context {
     bool        exceed_preloading_range = false;
     uint64_t    preload_waiting_time = 0;
 } g_preload_context;
+
+vktrace_trace_packet_header g_preload_header;
+vktrace_trace_packet_header_compression_ext g_preload_header_ext;
+static decompressor* g_decompressor = nullptr;
 
 uint64_t get_preload_waiting_time_when_replaying()
 {
@@ -107,12 +112,26 @@ static uint32_t calc_chunk_count(uint64_t sys_mem_size, uint64_t chunk_size, uin
     return chunk_count;
 }
 
-static uint64_t get_packet_size(FileLike* file) {
-    uint64_t packet_size = 0;
-    if (vktrace_FileLike_ReadRaw(file, &packet_size, sizeof(uint64_t)) == FALSE) {
-        return 0;
+static void get_packet_size(FileLike* file) {
+    if (vktrace_FileLike_ReadRaw(file, &g_preload_header, sizeof(vktrace_trace_packet_header)) == FALSE) {
+        g_preload_context.next_pkt_size = 0;
+        g_preload_context.next_pkt_size_decompressed = 0;
+        return;
     }
-    return packet_size;
+    g_preload_context.next_pkt_size = g_preload_header.size;
+    if (g_preload_header.tracer_id == VKTRACE_TID_VULKAN_COMPRESSED) {      // a compressed packet
+        if (vktrace_FileLike_ReadRaw(file, &g_preload_header_ext, sizeof(vktrace_trace_packet_header_compression_ext)) == FALSE) {
+            g_preload_context.next_pkt_size = 0;
+            g_preload_context.next_pkt_size_decompressed = 0;
+            return;
+        }
+        else {
+            g_preload_context.next_pkt_size_decompressed = g_preload_header_ext.decompressed_size + sizeof(vktrace_trace_packet_header);
+        }
+    }
+    else {      // an uncompressed packet
+        g_preload_context.next_pkt_size_decompressed = g_preload_header.size;
+    }
 }
 
 vktrace_replay::vktrace_trace_packet_replay_library **replayerArray;
@@ -122,13 +141,35 @@ static uint64_t load_packet(FileLike* file, void* load_addr, uint64_t packet_siz
     vktrace_trace_packet_header* pHeader = (vktrace_trace_packet_header*)load_addr;
 
     static unsigned int frame_counter = 0;
-    pHeader->size = packet_size;
-    if (vktrace_FileLike_ReadRaw(file,
-            (char*)pHeader + sizeof(uint64_t),
-            (size_t)packet_size - sizeof(uint64_t)) == FALSE) {
-        vktrace_LogError("Failed to read trace packet with size of %llu.", packet_size);
-        return 0;
+    if (g_preload_header.tracer_id == VKTRACE_TID_VULKAN_COMPRESSED) {
+        vktrace_trace_packet_header* preload_mem = (vktrace_trace_packet_header*)vktrace_malloc(g_preload_header.size);
+        memcpy(preload_mem, &g_preload_header, sizeof(vktrace_trace_packet_header));
+        preload_mem->pBody = (uintptr_t)(preload_mem + 1);
+        memcpy(preload_mem + 1, &g_preload_header_ext, sizeof(vktrace_trace_packet_header_compression_ext));
+        vktrace_trace_packet_header_compression_ext *tmp = (vktrace_trace_packet_header_compression_ext *)(preload_mem + 1);
+        tmp->pBody = (uintptr_t)tmp + sizeof(vktrace_trace_packet_header_compression_ext);
+        if (vktrace_FileLike_ReadRaw(file, (char *)preload_mem + sizeof(vktrace_trace_packet_header) + sizeof(vktrace_trace_packet_header_compression_ext),
+                    (size_t)g_preload_header.size - sizeof(vktrace_trace_packet_header) - sizeof(vktrace_trace_packet_header_compression_ext)) == FALSE) {
+            vktrace_LogError("Failed to read trace packet with size of %llu.", g_preload_header.size);
+            return 0;
+        }
+        if (decompress_packet(g_decompressor, preload_mem) != 0) {
+            vktrace_LogError("Failed to decompress trace packet with size of %llu.", g_preload_header.size);
+            return 0;
+        }
+        memcpy(pHeader, preload_mem, preload_mem->size);
+        vktrace_free(preload_mem);
     }
+    else {
+        pHeader->size = g_preload_header.size;
+        memcpy(pHeader, &g_preload_header, sizeof(vktrace_trace_packet_header));
+        if (vktrace_FileLike_ReadRaw(file,
+                (char*)pHeader + sizeof(vktrace_trace_packet_header),
+                (size_t)(pHeader->size) - sizeof(vktrace_trace_packet_header)) == FALSE) {
+            vktrace_LogError("Failed to read trace packet with size of %llu.", packet_size);
+            return 0;
+        }
+     }
 
     if (pHeader->packet_id == VKTRACE_TPI_VK_vkQueuePresentKHR) {
         ++frame_counter;
@@ -268,26 +309,26 @@ static void chunk_loading() {
         mem_chunk_info* cur_chunk = &g_preload_context.chunks[g_preload_context.loading_idx];
 
         if (cur_chunk->status == CHUNK_EMPTY || cur_chunk->status == CHUNK_USING) {
+            cur_chunk->mtx.lock();
+            cur_chunk->status = CHUNK_LOADING;
+
             if (!first_full) {
                 preloaded_whole_range = false;
             }
-            cur_chunk->mtx.lock();
             // loading
             vktrace_LogDebug("Loading chunk %d !", g_preload_context.loading_idx);
-            cur_chunk->status = CHUNK_LOADING;
-
             uint32_t loaded_packet_count = 0;
             char* boundary_addr = cur_chunk->base_address + cur_chunk->chunk_size;
 
             while (!g_preload_context.exiting_thd
-                   && g_preload_context.next_pkt_size
+                   && g_preload_context.next_pkt_size_decompressed
                    && !g_preload_context.exceed_preloading_range
                    && (cur_chunk->current_address + g_preload_context.next_pkt_size) < boundary_addr) {
                 if (!load_packet(g_preload_context.tracefile, cur_chunk->current_address, g_preload_context.next_pkt_size)) {
                     break;
                 }
-                cur_chunk->current_address += g_preload_context.next_pkt_size;
-                g_preload_context.next_pkt_size = get_packet_size(g_preload_context.tracefile);
+                cur_chunk->current_address += g_preload_context.next_pkt_size_decompressed;
+                get_packet_size(g_preload_context.tracefile);
                 loaded_packet_count++;
             }
             cur_chunk->status = CHUNK_READY;
@@ -306,15 +347,16 @@ static void chunk_loading() {
     }
 }
 
-bool init_preload(FileLike* file, vktrace_replay::vktrace_trace_packet_replay_library *replayer_array[]) {
+bool init_preload(FileLike* file, vktrace_replay::vktrace_trace_packet_replay_library *replayer_array[], decompressor* decompressor, uint64_t filesize) {
 
+    g_decompressor = decompressor;
     replayerArray = replayer_array;
     bool ret = true;
     uint64_t system_mem_size = get_system_memory_size();
-    vktrace_LogAlways("Init preload: the total size of system memory = 0x%llX and the size of trace file = 0x%llX", system_mem_size, file->mFileLen);
+    vktrace_LogAlways("Init preload: the total size of system memory = 0x%llX, the decompress size = 0x%llX, original size = 0x%llX of the trace file.", system_mem_size, filesize, file->mFileLen);
 
     static const uint64_t chunk_size  = 400 * SIZE_1M;
-    uint32_t chunk_count = calc_chunk_count(system_mem_size, chunk_size, file->mFileLen);
+    uint32_t chunk_count = calc_chunk_count(system_mem_size, chunk_size, filesize);
     chunk_count = chunk_count < MAX_CHUNK_COUNT ? chunk_count : MAX_CHUNK_COUNT;
 
     char* preload_mem = (char*)vktrace_malloc(chunk_size * chunk_count);
@@ -340,7 +382,7 @@ bool init_preload(FileLike* file, vktrace_replay::vktrace_trace_packet_replay_li
             g_preload_context.chunks[i].current_address = g_preload_context.chunks[i].base_address;
         }
 
-        g_preload_context.next_pkt_size = get_packet_size(g_preload_context.tracefile);
+        get_packet_size(g_preload_context.tracefile);
         g_preload_context.thd_obj = std::thread(chunk_loading);
 
         // waiting for the loading thread full all the chunks
@@ -380,10 +422,16 @@ vktrace_trace_packet_header* preload_get_next_packet()
     cur_chunk->current_address += pHeader->size;
 
     if (cur_chunk->current_address >= boundary_addr) {
+        bool same_chunk = g_preload_context.loading_idx == g_preload_context.using_idx;
         cur_chunk->status = CHUNK_EMPTY;
         cur_chunk->current_address = cur_chunk->base_address;
         g_preload_context.using_idx++;
         cur_chunk->mtx.unlock();
+        if (same_chunk) {
+            while (cur_chunk->status == CHUNK_EMPTY && !g_preload_context.exceed_preloading_range && g_preload_context.next_pkt_size) {
+                std::this_thread::yield();
+            }
+        }
     }
     return pHeader;
 }

@@ -1306,6 +1306,29 @@ VKAPI_ATTR VkResult VKAPI_CALL EnumeratePhysicalDevices(VkInstance instance, uin
     return result;
 }
 
+VKAPI_ATTR VkResult VKAPI_CALL EnumeratePhysicalDeviceGroups(
+    VkInstance instance,
+    uint32_t* pPhysicalDeviceGroupCount,
+    VkPhysicalDeviceGroupProperties* pPhysicalDeviceGroupProperties) {
+    VkResult result;
+
+    VkLayerInstanceDispatchTable *pTable = instance_dispatch_table(instance);
+    result = pTable->EnumeratePhysicalDeviceGroups(instance, pPhysicalDeviceGroupCount, pPhysicalDeviceGroupProperties);
+    if (result == VK_SUCCESS && *pPhysicalDeviceGroupCount > 0 && pPhysicalDeviceGroupProperties) {
+        for (uint32_t i = 0; i < *pPhysicalDeviceGroupCount; i++) {
+            for (uint32_t j = 0; j < pPhysicalDeviceGroupProperties[i].physicalDeviceCount; j++) {
+                // Create a mapping from a physicalDevice to an instance
+                if (physDeviceMap[pPhysicalDeviceGroupProperties[i].physicalDevices[j]] == NULL) {
+                    PhysDeviceMapStruct *physDeviceMapElem = new PhysDeviceMapStruct;
+                    physDeviceMap[pPhysicalDeviceGroupProperties[i].physicalDevices[j]] = physDeviceMapElem;
+                }
+                physDeviceMap[pPhysicalDeviceGroupProperties[i].physicalDevices[j]]->instance = instance;
+            }
+        }
+    }
+    return result;
+}
+
 VKAPI_ATTR void VKAPI_CALL DestroyDevice(VkDevice device, const VkAllocationCallbacks *pAllocator) {
     DeviceMapStruct *devMap = get_dev_info(device);
     assert(devMap);
@@ -1975,6 +1998,7 @@ static PFN_vkVoidFunction intercept_core_instance_command(const char *name) {
         {"vkCreateInstance", reinterpret_cast<PFN_vkVoidFunction>(CreateInstance)},
         {"vkCreateDevice", reinterpret_cast<PFN_vkVoidFunction>(CreateDevice)},
         {"vkEnumeratePhysicalDevices", reinterpret_cast<PFN_vkVoidFunction>(EnumeratePhysicalDevices)},
+        {"vkEnumeratePhysicalDeviceGroups", reinterpret_cast<PFN_vkVoidFunction>(EnumeratePhysicalDeviceGroups)},
         {"vkEnumerateInstanceLayerProperties", reinterpret_cast<PFN_vkVoidFunction>(EnumerateInstanceLayerProperties)},
         {"vkEnumerateDeviceLayerProperties", reinterpret_cast<PFN_vkVoidFunction>(EnumerateDeviceLayerProperties)},
         {"vkEnumerateInstanceExtensionProperties", reinterpret_cast<PFN_vkVoidFunction>(EnumerateInstanceExtensionProperties)},

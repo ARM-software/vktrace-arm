@@ -864,3 +864,14 @@ void vkreplay_interpret_pnext_pointers(vktrace_trace_packet_header* pHeader, voi
         struct_ptr = (VkApplicationInfo*)((VkApplicationInfo*)struct_ptr)->pNext;
     }
 }
+
+BOOL vktrace_append_portabilitytable(uint16_t packet_id) {
+    if (packet_id == VKTRACE_TPI_VK_vkBindImageMemory || packet_id == VKTRACE_TPI_VK_vkBindImageMemory2 || packet_id == VKTRACE_TPI_VK_vkBindImageMemory2KHR ||
+        packet_id == VKTRACE_TPI_VK_vkBindBufferMemory || packet_id == VKTRACE_TPI_VK_vkBindBufferMemory2 || packet_id == VKTRACE_TPI_VK_vkBindBufferMemory2KHR ||
+        packet_id == VKTRACE_TPI_VK_vkAllocateMemory || packet_id == VKTRACE_TPI_VK_vkDestroyImage ||
+        packet_id == VKTRACE_TPI_VK_vkDestroyBuffer || packet_id == VKTRACE_TPI_VK_vkFreeMemory ||
+        packet_id == VKTRACE_TPI_VK_vkCreateBuffer || packet_id == VKTRACE_TPI_VK_vkCreateImage) {
+        return TRUE;
+    }
+    return FALSE;
+}

@@ -140,6 +140,7 @@ void add_VkInstanceCreateInfo_to_packet(vktrace_trace_packet_header* pHeader, Vk
 void add_VkDeviceCreateInfo_to_packet(vktrace_trace_packet_header* pHeader, VkDeviceCreateInfo** ppStruct,
                                       const VkDeviceCreateInfo* pInStruct);
 
+BOOL vktrace_append_portabilitytable(uint16_t packet_id);
 // Interpreting packets TODO: Move to codegen
 VkInstanceCreateInfo* interpret_VkInstanceCreateInfo(vktrace_trace_packet_header* pHeader, intptr_t ptr_variable);
 VkDeviceCreateInfo* interpret_VkDeviceCreateInfo(vktrace_trace_packet_header* pHeader, intptr_t ptr_variable);

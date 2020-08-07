@@ -34,6 +34,13 @@ vktrace_trace_packet_header *Sequencer::get_next_packet() {
     if (!m_chunkEnabled) {  // do not use preload
         vktrace_delete_trace_packet_no_lock(&m_lastPacket);
         m_lastPacket = vktrace_read_trace_packet(m_pFile);
+        if (!m_lastPacket)
+            return 0;
+        if (m_lastPacket->tracer_id == VKTRACE_TID_VULKAN_COMPRESSED) {
+            int ret = decompress_packet(m_decompressor, m_lastPacket);
+            if (ret != 0)
+                return 0;
+        }
     } else {
         if (timerStarted()) // preload, and already in the preloading range
         {
@@ -44,7 +51,11 @@ vktrace_trace_packet_header *Sequencer::get_next_packet() {
             m_lastPacket = vktrace_read_trace_packet(m_pFile);
         }
     }
-    return (m_lastPacket);
+    return m_lastPacket;
+}
+
+void Sequencer::set_lastPacket(vktrace_trace_packet_header *newPacket) {
+    m_lastPacket = newPacket;
 }
 
 void Sequencer::get_bookmark(seqBookmark &bookmark) { bookmark.file_offset = m_bookmark.file_offset; }

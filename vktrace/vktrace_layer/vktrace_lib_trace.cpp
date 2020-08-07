@@ -255,7 +255,8 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkAllocateMemory(VkDevic
         if (ret) {
             vktrace_LogError("AM: Lock the hardware buffer failed !");
         } else {
-            import_buf_size = ahwbuf_desc.stride * ahwbuf_desc.height * getAHardwareBufBPP(ahwbuf_desc.format);
+            uint32_t stride = (ahwbuf_desc.width > ahwbuf_desc.stride) ? ahwbuf_desc.width : ahwbuf_desc.stride;
+            import_buf_size = stride * ahwbuf_desc.height * getAHardwareBufBPP(ahwbuf_desc.format);
             additional_size = sizeof(AHardwareBuffer_Desc) + import_buf_size;
         }
     }
@@ -272,7 +273,7 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkAllocateMemory(VkDevic
         pageguardEnter();
     }
 
-    size_t packetSize = get_struct_chain_size((void*)pAllocateInfo) + sizeof(VkAllocationCallbacks) + sizeof(VkDeviceMemory) * 2;
+    size_t packetSize = get_struct_chain_size((void*)pAllocateInfo) + ROUNDUP_TO_4(sizeof(VkMemoryOpaqueCaptureAddressAllocateInfo)) + sizeof(VkAllocationCallbacks) + sizeof(VkDeviceMemory) * 2;
     CREATE_TRACE_PACKET(vkAllocateMemory, (packetSize + additional_size));
 
     VkImportMemoryHostPointerInfoEXT importMemoryHostPointerInfo = {};
@@ -312,6 +313,14 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkAllocateMemory(VkDevic
         }
     }
 
+    VkMemoryAllocateFlagsInfo *allocateFlagInfo = (VkMemoryAllocateFlagsInfo*)find_ext_struct((const vulkan_struct_header*)pAllocateInfo->pNext, VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO);
+    if (allocateFlagInfo == nullptr) {
+        allocateFlagInfo = (VkMemoryAllocateFlagsInfo*)find_ext_struct((const vulkan_struct_header*)pAllocateInfo->pNext, VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO_KHR);
+    }
+    if (allocateFlagInfo != nullptr && (allocateFlagInfo->flags & VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT_KHR)) {
+        allocateFlagInfo->flags = allocateFlagInfo->flags | VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_CAPTURE_REPLAY_BIT_KHR;
+    }
+
     result = mdd(device)->devTable.AllocateMemory(device, pAllocateInfo, pAllocator, pMemory);
     const_cast<VkMemoryAllocateInfo*>(pAllocateInfo)->allocationSize = original_allocation_size;
     if (UseMappedExternalHostMemoryExtension()) {
@@ -331,6 +340,27 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkAllocateMemory(VkDevic
     }
 
     vktrace_set_packet_entrypoint_end_time(pHeader);
+    VkMemoryOpaqueCaptureAddressAllocateInfo captureAddressAllocateInfo = {};
+    if (allocateFlagInfo != nullptr && (allocateFlagInfo->flags & VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_CAPTURE_REPLAY_BIT_KHR)) {
+        VkDeviceMemoryOpaqueCaptureAddressInfo memoryAddressInfo = {};
+        memoryAddressInfo.sType = VK_STRUCTURE_TYPE_DEVICE_MEMORY_OPAQUE_CAPTURE_ADDRESS_INFO;
+        memoryAddressInfo.memory = *pMemory;
+        uint64_t captureAddress = mdd(device)->devTable.GetDeviceMemoryOpaqueCaptureAddress(device,&memoryAddressInfo);
+        VkMemoryOpaqueCaptureAddressAllocateInfo *pCaptureAddressAllocateInfo = (VkMemoryOpaqueCaptureAddressAllocateInfo*)find_ext_struct((const vulkan_struct_header*)pAllocateInfo->pNext, VK_STRUCTURE_TYPE_MEMORY_OPAQUE_CAPTURE_ADDRESS_ALLOCATE_INFO);
+        if (pCaptureAddressAllocateInfo == nullptr) {
+            pCaptureAddressAllocateInfo = (VkMemoryOpaqueCaptureAddressAllocateInfo*)find_ext_struct((const vulkan_struct_header*)pAllocateInfo->pNext, VK_STRUCTURE_TYPE_MEMORY_OPAQUE_CAPTURE_ADDRESS_ALLOCATE_INFO_KHR);
+        }
+        if (pCaptureAddressAllocateInfo != nullptr) {
+            pCaptureAddressAllocateInfo->opaqueCaptureAddress = captureAddress;
+        } else {
+            captureAddressAllocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_OPAQUE_CAPTURE_ADDRESS_ALLOCATE_INFO;
+            captureAddressAllocateInfo.opaqueCaptureAddress = captureAddress;
+            const void* temp = pAllocateInfo->pNext;
+            const_cast<VkMemoryAllocateInfo*>(pAllocateInfo)->pNext = (const void*)&captureAddressAllocateInfo;
+            captureAddressAllocateInfo.pNext = temp;
+        }
+    }
+
 #if defined(ANDROID)
     if (import_buf_size > 0 && hwbuf_cpu_ptr) {
         PBYTE pdest_addr = (PBYTE)pHeader->pBody + ROUNDUP_TO_8(sizeof(packet_vkAllocateMemory)) + packetSize;
@@ -1616,26 +1646,47 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkCreateRenderPass(VkDev
     return result;
 }
 
-VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkCreateRenderPass2(VkDevice device,
-                                                                            const VkRenderPassCreateInfo2* pCreateInfo,
-                                                                            const VkAllocationCallbacks* pAllocator,
-                                                                            VkRenderPass* pRenderPass) {
-    trim::TraceLock<std::mutex> lock(g_mutex_trace);
-    VkResult result;
-    vktrace_trace_packet_header* pHeader;
-    packet_vkCreateRenderPass2* pPacket = NULL;
-    // begin custom code (get_struct_chain_size)
+VkResult pre_vkCreateRenderPass2(const VkRenderPassCreateInfo2* pCreateInfo) {
+    uint32_t attachmentCount = (pCreateInfo != NULL && (pCreateInfo->pAttachments != NULL)) ? pCreateInfo->attachmentCount : 0;
+    uint32_t dependencyCount = (pCreateInfo != NULL && (pCreateInfo->pDependencies != NULL)) ? pCreateInfo->dependencyCount : 0;
+    uint32_t subpassCount = (pCreateInfo != NULL && (pCreateInfo->pSubpasses != NULL)) ? pCreateInfo->subpassCount : 0;
+
+    // check pNext in Attachments, Dependencies and Subpasses
+    for (uint32_t i = 0; i < attachmentCount; i++) {
+        if (pCreateInfo->pAttachments[i].pNext) {
+            vktrace_LogWarning("The pNext of Attachment is not Null for vkCreateRenderPass2().");
+            break;
+        }
+    }
+    for (uint32_t i = 0; i < dependencyCount; i++) {
+        if (pCreateInfo->pDependencies[i].pNext) {
+            vktrace_LogWarning("The pNext of Dependency is not Null for vkCreateRenderPass2().");
+            break;
+        }
+    }
+    for (uint32_t i = 0; i < subpassCount; i++) {
+        if (pCreateInfo->pSubpasses[i].pNext) {
+            vktrace_LogWarning("The pNext of Subpass is not Null for vkCreateRenderPass2().");
+            break;
+        }
+    }
+    return VK_SUCCESS;
+}
+
+VkResult post_vkCreateRenderPass2(
+    vktrace_trace_packet_header* pHeader,
+    VkDevice device,
+    const VkRenderPassCreateInfo2* pCreateInfo,
+    const VkAllocationCallbacks* pAllocator,
+    VkRenderPass* pRenderPass,
+    VkResult res) {
     uint32_t attachmentCount = (pCreateInfo != NULL && (pCreateInfo->pAttachments != NULL)) ? pCreateInfo->attachmentCount : 0;
     uint32_t dependencyCount = (pCreateInfo != NULL && (pCreateInfo->pDependencies != NULL)) ? pCreateInfo->dependencyCount : 0;
     uint32_t subpassCount = (pCreateInfo != NULL && (pCreateInfo->pSubpasses != NULL)) ? pCreateInfo->subpassCount : 0;
     uint32_t correlatedViewMaskCount =
         (pCreateInfo != NULL && (pCreateInfo->pCorrelatedViewMasks != NULL)) ? pCreateInfo->correlatedViewMaskCount : 0;
-    CREATE_TRACE_PACKET(vkCreateRenderPass2,
-                        get_struct_chain_size((void*)pCreateInfo) + sizeof(VkAllocationCallbacks) + sizeof(VkRenderPass));
-    // end custom code
-    result = mdd(device)->devTable.CreateRenderPass2(device, pCreateInfo, pAllocator, pRenderPass);
-    vktrace_set_packet_entrypoint_end_time(pHeader);
-    pPacket = interpret_body_as_vkCreateRenderPass2(pHeader);
+    packet_vkCreateRenderPass2* pPacket = (packet_vkCreateRenderPass2*)pHeader->pBody;
+
     pPacket->device = device;
     vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pCreateInfo), sizeof(VkRenderPassCreateInfo2), pCreateInfo);
     if (pCreateInfo) vktrace_add_pnext_structs_to_trace_packet(pHeader, (void*)pPacket->pCreateInfo, pCreateInfo);
@@ -1670,13 +1721,62 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkCreateRenderPass2(VkDe
     }
     vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pAllocator), sizeof(VkAllocationCallbacks), NULL);
     vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pRenderPass), sizeof(VkRenderPass), pRenderPass);
-    pPacket->result = result;
+    pPacket->result = res;
     vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pCreateInfo->pAttachments));
     vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pCreateInfo->pDependencies));
     vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pCreateInfo->pSubpasses));
     vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pCreateInfo));
     vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pAllocator));
     vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pRenderPass));
+    return VK_SUCCESS;
+}
+
+VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkCreateRenderPass2(VkDevice device,
+                                                                            const VkRenderPassCreateInfo2* pCreateInfo,
+                                                                            const VkAllocationCallbacks* pAllocator,
+                                                                            VkRenderPass* pRenderPass) {
+    trim::TraceLock<std::mutex> lock(g_mutex_trace);
+    VkResult result;
+    vktrace_trace_packet_header* pHeader;
+    packet_vkCreateRenderPass2* pPacket = NULL;
+
+    pre_vkCreateRenderPass2(pCreateInfo);
+
+    // begin custom code (get_struct_chain_size)
+    CREATE_TRACE_PACKET(vkCreateRenderPass2,
+                        get_struct_chain_size((void*)pCreateInfo) + sizeof(VkAllocationCallbacks) + sizeof(VkRenderPass));
+    // end custom code
+    result = mdd(device)->devTable.CreateRenderPass2(device, pCreateInfo, pAllocator, pRenderPass);
+    vktrace_set_packet_entrypoint_end_time(pHeader);
+    pPacket = interpret_body_as_vkCreateRenderPass2(pHeader);
+
+    post_vkCreateRenderPass2(pPacket->header, device, pCreateInfo, pAllocator, pRenderPass, result);
+
+    FINISH_TRACE_PACKET();  // No trimming support for renderpass2
+    return result;
+}
+
+VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkCreateRenderPass2KHR(VkDevice device,
+                                                                               const VkRenderPassCreateInfo2* pCreateInfo,
+                                                                               const VkAllocationCallbacks* pAllocator,
+                                                                               VkRenderPass* pRenderPass) {
+    trim::TraceLock<std::mutex> lock(g_mutex_trace);
+    VkResult result;
+    vktrace_trace_packet_header* pHeader;
+    packet_vkCreateRenderPass2KHR* pPacket = NULL;
+
+    pre_vkCreateRenderPass2(pCreateInfo);
+
+    // begin custom code (get_struct_chain_size)
+    CREATE_TRACE_PACKET(vkCreateRenderPass2KHR,
+                        get_struct_chain_size((void*)pCreateInfo) + sizeof(VkAllocationCallbacks) + sizeof(VkRenderPass));
+    // end custom code
+    result = mdd(device)->devTable.CreateRenderPass2KHR(device, pCreateInfo, pAllocator, pRenderPass);
+    vktrace_set_packet_entrypoint_end_time(pHeader);
+    pPacket = interpret_body_as_vkCreateRenderPass2KHR(pHeader);
+
+    post_vkCreateRenderPass2(pPacket->header, device, pCreateInfo, pAllocator, pRenderPass, result);
+
     FINISH_TRACE_PACKET();  // No trimming support for renderpass2
     return result;
 }
@@ -2513,44 +2613,42 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkQueueSubmit(VkQueue qu
     vktrace_set_packet_entrypoint_end_time(pHeader);
 #if defined(USE_PAGEGUARD_SPEEDUP) && !defined(PAGEGUARD_ADD_PAGEGUARD_ON_REAL_MAPPED_MEMORY)
     if (!UseMappedExternalHostMemoryExtension() && getPMBSyncGPUDataBackEnableFlag()) {
-        if (fence != VK_NULL_HANDLE) {
-            std::list<const std::list<VkBuffer>*> dstBuffers;
-            for (uint32_t i = 0; i < submitCount; ++i) {
-                for (uint32_t j = 0; j < pSubmits[i].commandBufferCount; ++j) {
-                    if (g_commandBufferToCommandBuffers.find(pSubmits[i].pCommandBuffers[j]) != g_commandBufferToCommandBuffers.end()) {
-                        std::list<VkCommandBuffer>& secondaryCmdBufs = g_commandBufferToCommandBuffers[pSubmits[i].pCommandBuffers[j]];
-                        for (auto it = secondaryCmdBufs.begin(); it != secondaryCmdBufs.end(); it++) {
-                            if (g_cmdBufferToBuffers.find(*it) != g_cmdBufferToBuffers.end()) {
-                                dstBuffers.push_front(&g_cmdBufferToBuffers[*it]);
-                            }
+        std::list<const std::list<VkBuffer>*> dstBuffers;
+        for (uint32_t i = 0; i < submitCount; ++i) {
+            for (uint32_t j = 0; j < pSubmits[i].commandBufferCount; ++j) {
+                if (g_commandBufferToCommandBuffers.find(pSubmits[i].pCommandBuffers[j]) != g_commandBufferToCommandBuffers.end()) {
+                    std::list<VkCommandBuffer>& secondaryCmdBufs = g_commandBufferToCommandBuffers[pSubmits[i].pCommandBuffers[j]];
+                    for (auto it = secondaryCmdBufs.begin(); it != secondaryCmdBufs.end(); it++) {
+                        if (g_cmdBufferToBuffers.find(*it) != g_cmdBufferToBuffers.end()) {
+                            dstBuffers.push_front(&g_cmdBufferToBuffers[*it]);
                         }
-                    } else {
-                        if (g_cmdBufferToBuffers.find(pSubmits[i].pCommandBuffers[j]) != g_cmdBufferToBuffers.end()) {
-                            dstBuffers.push_front(&g_cmdBufferToBuffers[pSubmits[i].pCommandBuffers[j]]);
-                        }
+                    }
+                } else {
+                    if (g_cmdBufferToBuffers.find(pSubmits[i].pCommandBuffers[j]) != g_cmdBufferToBuffers.end()) {
+                        dstBuffers.push_front(&g_cmdBufferToBuffers[pSubmits[i].pCommandBuffers[j]]);
                     }
                 }
             }
-            if (!dstBuffers.empty()) {
-                vktrace_LogWarning("Copy image to dest buffer occurs !");
-                result = mdd(queue)->devTable.QueueWaitIdle(queue);
-                pageguardEnter();
-                for (auto iterBufferList = dstBuffers.begin();
-                     iterBufferList != dstBuffers.end(); ++iterBufferList) {
-                    for (auto iterBuffer = (*iterBufferList)->begin();
-                         iterBuffer != (*iterBufferList)->end(); iterBuffer++) {
-                        VkBuffer buffer = *iterBuffer;
-                        if (g_bufferToDeviceMemory.find(buffer) != g_bufferToDeviceMemory.end()) {
-                            // Sync real mapped memory (recorded in __HOOKED_vkBindBufferMemory) for the dest buffer
-                            // (recorded in __HOOKED_vkCmdCopyImageToBuffer) back to the copy of that memory
-                            VkDevice device = g_bufferToDeviceMemory[buffer].device;
-                            VkDeviceMemory memory = g_bufferToDeviceMemory[buffer].memory;
-                            getPageGuardControlInstance().SyncRealMappedMemoryToMemoryCopyHandle(device, memory);
-                        }
+        }
+        if (!dstBuffers.empty()) {
+            vktrace_LogWarning("Copy image/buffer to dest buffer occurs !");
+            result = mdd(queue)->devTable.QueueWaitIdle(queue);
+            pageguardEnter();
+            for (auto iterBufferList = dstBuffers.begin();
+                    iterBufferList != dstBuffers.end(); ++iterBufferList) {
+                for (auto iterBuffer = (*iterBufferList)->begin();
+                        iterBuffer != (*iterBufferList)->end(); iterBuffer++) {
+                    VkBuffer buffer = *iterBuffer;
+                    if (g_bufferToDeviceMemory.find(buffer) != g_bufferToDeviceMemory.end()) {
+                        // Sync real mapped memory (recorded in __HOOKED_vkBindBufferMemory) for the dest buffer
+                        // (recorded in __HOOKED_vkCmdCopyImageToBuffer) back to the copy of that memory
+                        VkDevice device = g_bufferToDeviceMemory[buffer].device;
+                        VkDeviceMemory memory = g_bufferToDeviceMemory[buffer].memory;
+                        getPageGuardControlInstance().SyncRealMappedMemoryToMemoryCopyHandle(device, memory);
                     }
                 }
-                pageguardExit();
             }
+            pageguardExit();
         }
     }
 #endif
@@ -3575,7 +3673,7 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkCreateBuffer(VkDevice 
     VkResult result;
     vktrace_trace_packet_header* pHeader;
     packet_vkCreateBuffer* pPacket = NULL;
-    CREATE_TRACE_PACKET(vkCreateBuffer, get_struct_chain_size((void*)pCreateInfo) + sizeof(VkAllocationCallbacks) + sizeof(VkBuffer));
+    CREATE_TRACE_PACKET(vkCreateBuffer, get_struct_chain_size((void*)pCreateInfo) + ROUNDUP_TO_4(sizeof(VkBufferOpaqueCaptureAddressCreateInfo)) + sizeof(VkAllocationCallbacks) + sizeof(VkBuffer));
     VkBufferCreateInfo replayCreateInfo = *pCreateInfo;
     VkBufferCreateInfo trimCreateInfo = *pCreateInfo;
     if (g_trimEnabled) {
@@ -3583,8 +3681,35 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkCreateBuffer(VkDevice 
         trimCreateInfo.usage |= VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
         pCreateInfo = &trimCreateInfo;
     }
+
+    if (pCreateInfo->usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT_EXT ) {
+        const_cast<VkBufferCreateInfo*>(pCreateInfo)->flags = pCreateInfo->flags | VK_BUFFER_CREATE_DEVICE_ADDRESS_CAPTURE_REPLAY_BIT_EXT;
+    }
+
     result = mdd(device)->devTable.CreateBuffer(device, pCreateInfo, pAllocator, pBuffer);
     vktrace_set_packet_entrypoint_end_time(pHeader);
+
+    VkBufferOpaqueCaptureAddressCreateInfo captureAddressCreateInfo = {};
+    if (pCreateInfo->flags & VK_BUFFER_CREATE_DEVICE_ADDRESS_CAPTURE_REPLAY_BIT_EXT) {
+        VkBufferDeviceAddressInfo addressInfo = {};
+        addressInfo.sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO;
+        addressInfo.buffer = *pBuffer;
+        uint64_t captureAddress = mdd(device)->devTable.GetBufferOpaqueCaptureAddress(device,&addressInfo);
+        VkBufferOpaqueCaptureAddressCreateInfo *pCaptureAddressCreateInfo = (VkBufferOpaqueCaptureAddressCreateInfo*)find_ext_struct((const vulkan_struct_header*)pCreateInfo->pNext, VK_STRUCTURE_TYPE_BUFFER_OPAQUE_CAPTURE_ADDRESS_CREATE_INFO);
+        if (pCaptureAddressCreateInfo == nullptr) {
+            pCaptureAddressCreateInfo = (VkBufferOpaqueCaptureAddressCreateInfo*)find_ext_struct((const vulkan_struct_header*)pCreateInfo->pNext, VK_STRUCTURE_TYPE_BUFFER_OPAQUE_CAPTURE_ADDRESS_CREATE_INFO_KHR);
+        }
+        if (pCaptureAddressCreateInfo != nullptr) {
+            pCaptureAddressCreateInfo->opaqueCaptureAddress = captureAddress;
+        } else {
+            captureAddressCreateInfo.sType = VK_STRUCTURE_TYPE_BUFFER_OPAQUE_CAPTURE_ADDRESS_CREATE_INFO;
+            captureAddressCreateInfo.opaqueCaptureAddress = captureAddress;
+            const void* temp = pCreateInfo->pNext;
+            const_cast<VkBufferCreateInfo*>(pCreateInfo)->pNext = (const void*)&captureAddressCreateInfo;
+            captureAddressCreateInfo.pNext = temp;
+        }
+    }
+
     if (g_trimEnabled) {
         // need to add TRANSFER_DST usage to the buffer so that we can recreate it.
         replayCreateInfo.usage |= VK_BUFFER_USAGE_TRANSFER_DST_BIT;
@@ -3719,6 +3844,16 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkBindBufferMemory2(
     CREATE_TRACE_PACKET(vkBindBufferMemory2, extra_size);
     result = mdd(device)->devTable.BindBufferMemory2(device, bindInfoCount, pBindInfos);
     vktrace_set_packet_entrypoint_end_time(pHeader);
+#if defined(USE_PAGEGUARD_SPEEDUP) && !defined(PAGEGUARD_ADD_PAGEGUARD_ON_REAL_MAPPED_MEMORY)
+    if (!UseMappedExternalHostMemoryExtension()) {
+        for (uint32_t i = 0; i < bindInfoCount; i++) {
+            DeviceMemory deviceMemory = {};
+            deviceMemory.device = device;
+            deviceMemory.memory = pBindInfos[i].memory;
+            g_bufferToDeviceMemory[pBindInfos[i].buffer] = deviceMemory;
+        }
+    }
+#endif
     pPacket = interpret_body_as_vkBindBufferMemory2(pHeader);
     pPacket->device = device;
     pPacket->bindInfoCount = bindInfoCount;
@@ -4182,6 +4317,9 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkQueuePresentKHR(VkQueu
                 trim::stop();
             }
         }
+    }
+    if (g_trimFrameCounter > getCheckHandlerFrames()) {
+        disableHandlerCheck();
     }
     return result;
 }

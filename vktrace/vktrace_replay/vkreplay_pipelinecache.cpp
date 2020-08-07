@@ -166,7 +166,7 @@ namespace vktrace_replay {
         }
 
         m_cachemap[key] = cache_result;
-        vktrace_LogAlways("Pipelinecache data file %s has been loaded.", full_path.c_str());
+        vktrace_LogAlways("Pipeline cache data file %s has been loaded.", full_path.c_str());
         return true;
     }
 

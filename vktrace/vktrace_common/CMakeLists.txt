@@ -10,6 +10,8 @@ include_directories(
     ${SRC_DIR}/thirdparty
     ${CMAKE_BINARY_DIR}/vktrace
     ${Vulkan-ValidationLayers_INCLUDE_DIR}
+    ${SRC_DIR}/../submodules/lz4/lib/
+    ${SRC_DIR}/../submodules/snappy/
 )
 
 if (${CMAKE_SYSTEM_NAME} MATCHES "Linux")
@@ -39,10 +41,20 @@ set(SRC_LIST
     ${SRC_DIR}/../submodules/zlib/inffast.c
     ${SRC_DIR}/../submodules/zlib/trees.c
     ${SRC_DIR}/../submodules/zlib/zutil.c
+    ${SRC_DIR}/../submodules/lz4/lib/lz4.c
 )
 
 set (CXX_SRC_LIST
      vktrace_pageguard_memorycopy.cpp
+     compression/compressor.cpp
+     compression/decompressor.cpp
+     compression/lz4compressor.cpp
+     compression/lz4decompressor.cpp
+     compression/snpcompressor.cpp
+     compression/snpdecompressor.cpp
+     ${SRC_DIR}/../submodules/snappy/snappy-c.cc
+     ${SRC_DIR}/../submodules/snappy/snappy.cc
+     ${SRC_DIR}/../submodules/snappy/snappy-sinksource.cc
 )
 
 set_source_files_properties( ${SRC_LIST} PROPERTIES LANGUAGE C)

@@ -150,6 +150,22 @@ vktrace_SettingInfo g_settings_info[] = {
      TRUE,
      "Enable locking of API calls during trace if TraceLock is set to TRUE,\n\
                                        default is FALSE in which it is enabled only when trimming is enabled."},
+    {"ct",
+     "CompressType",
+     VKTRACE_SETTING_STRING,
+     {&g_settings.compressType},
+     {&g_default_settings.compressType},
+     TRUE,
+     "The compression library type. no, lz4 and snappy are supported for now.\n\
+                                        no for no compression and it's the default value."},
+    {"cth",
+     "CompressThreshhold",
+     VKTRACE_SETTING_UINT,
+     {&g_settings.compressThreshold},
+     {&g_default_settings.compressThreshold},
+     TRUE,
+     "The compression threashold size. The package would be compressed only if they are larger than this value.\n\
+                                        Default value is 1024(1KB)."},
 };
 
 vktrace_SettingGroup g_settingGroup = {"vktrace", sizeof(g_settings_info) / sizeof(g_settings_info[0]), &g_settings_info[0]};
@@ -235,16 +251,11 @@ void loggingCallback(VktraceLogLevel level, const char* pMessage) {
 #endif
 }
 
-// Portability table - Table of trace file offsets to packets
-// we need to access to determine what memory index should be used
-// in vkAllocateMemory during trace playback. This table is appended
-// to the trace file.
-std::vector<uint64_t> portabilityTable;
 uint32_t lastPacketThreadId;
 uint64_t lastPacketIndex;
 uint64_t lastPacketEndTime;
 
-void vktrace_appendPortabilityPacket(FILE* pTraceFile) {
+void vktrace_appendPortabilityPacket(FILE* pTraceFile, std::vector<uint64_t>& portabilityTable) {
     vktrace_trace_packet_header hdr;
     uint64_t one_64 = 1;
 
@@ -278,6 +289,12 @@ void vktrace_appendPortabilityPacket(FILE* pTraceFile) {
     vktrace_LogVerbose("Post processing of trace file completed");
 }
 
+void vktrace_resetFilesize(FILE* pTraceFile, uint64_t decompressFilesize) {
+    if (0 == Fseek(pTraceFile, offsetof(vktrace_trace_file_header, decompress_file_size), SEEK_SET)) {
+        fwrite(&decompressFilesize, sizeof(uint64_t), 1, pTraceFile);
+    }
+}
+
 // ------------------------------------------------------------------------------------------------
 int main(int argc, char* argv[]) {
     int exitval = 0;
@@ -294,6 +311,8 @@ int main(int argc, char* argv[]) {
     g_default_settings.screenshotColorFormat = NULL;
     g_default_settings.enable_pmb = true;
     g_default_settings.enable_trim_post_processing = false;
+    g_default_settings.compressType = "lz4";
+    g_default_settings.compressThreshold = 1024;
 
     // Check to see if the PAGEGUARD_PAGEGUARD_ENABLE_ENV env var is set.
     // If it is set to anything but "1", set the default to false.

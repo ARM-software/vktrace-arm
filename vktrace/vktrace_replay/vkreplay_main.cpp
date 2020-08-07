@@ -46,9 +46,11 @@
 #include "screenshot_parsing.h"
 #include "vktrace_vk_packet_id.h"
 #include "vkreplay_vkreplay.h"
+#include "decompressor.h"
 
-vkreplayer_settings replaySettings = {NULL, 1, UINT_MAX, UINT_MAX, true, false, NULL, NULL, NULL, NULL, NULL, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, 50, FALSE, FALSE, NULL};
+vkreplayer_settings replaySettings = {NULL, 1, UINT_MAX, UINT_MAX, true, false, NULL, NULL, NULL, NULL, NULL, TRUE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, 50, FALSE, FALSE, NULL};
 extern vkReplay* g_replay;
+static decompressor* g_decompressor = nullptr;
 
 #if defined(ANDROID)
 const char* env_var_screenshot_frames = "debug.vulkan.screenshot";
@@ -312,7 +314,7 @@ int main_loop(vktrace_replay::ReplayDisplay display, Sequencer& seq, vktrace_tra
     if (start_frame == 0) {
         if (replaySettings.preloadTraceFile) {
             vktrace_LogAlways("Preloading trace file...");
-            seq.start_preload(replayerArray);
+            seq.start_preload(replayerArray, g_decompressor);
         }
         timer_started = true;
         vktrace_LogAlways("================== Start timer (Frame: %llu) ==================", start_frame);
@@ -370,7 +372,7 @@ int main_loop(vktrace_replay::ReplayDisplay display, Sequencer& seq, vktrace_tra
                         seq.get_bookmark(startingPacket);
                         if (replaySettings.preloadTraceFile) {
                             vktrace_LogAlways("Preloading trace file...");
-                            seq.start_preload(replayerArray);
+                            seq.start_preload(replayerArray, g_decompressor);
                         }
                         timer_started = true;
                         start_time = vktrace_get_time();
@@ -397,6 +399,8 @@ int main_loop(vktrace_replay::ReplayDisplay display, Sequencer& seq, vktrace_tra
                         continue;
                     }
                     g_replayer_interface = replayerArray[packet->tracer_id];
+                    if (packet->tracer_id == VKTRACE_TID_VULKAN_COMPRESSED)
+                        g_replayer_interface = replayerArray[VKTRACE_TID_VULKAN];
                     if (g_replayer_interface == NULL) {
                         vktrace_LogWarning("Tracer_id %d has no valid replayer.", packet->tracer_id);
                         continue;
@@ -467,6 +471,10 @@ int main_loop(vktrace_replay::ReplayDisplay display, Sequencer& seq, vktrace_tra
 
 out:
     seq.clean_up();
+    if (g_decompressor != nullptr) {
+        delete g_decompressor;
+        g_decompressor = nullptr;
+    }
     if (replaySettings.screenshotList != NULL) {
         vktrace_free((char*)replaySettings.screenshotList);
         replaySettings.screenshotList = NULL;
@@ -827,6 +835,15 @@ int vkreplay_main(int argc, char** argv, vktrace_replay::ReplayDisplayImp* pDisp
         return -1;
     }
 
+    // create decompressor
+    if (pFileHeader->compress_type != VKTRACE_COMPRESS_TYPE_NONE) {
+        g_decompressor = create_decompressor((VKTRACE_COMPRESS_TYPE)pFileHeader->compress_type);
+        if (g_decompressor == nullptr) {
+            vktrace_LogError("Create decompressor failed.");
+            return -1;
+        }
+    }
+
     // read portability table if it exists
     if (pFileHeader->portability_table_valid)
         vktrace_LogAlways("Portability table exists.");
@@ -971,7 +988,8 @@ int vkreplay_main(int argc, char** argv, vktrace_replay::ReplayDisplayImp* pDisp
     }
 
     // main loop
-    Sequencer sequencer(traceFile);
+    uint64_t filesize = (pFileHeader->compress_type == VKTRACE_COMPRESS_TYPE_NONE) ? traceFile->mFileLen : fileHeader.decompress_file_size;
+    Sequencer sequencer(traceFile, g_decompressor, filesize);
     err = vktrace_replay::main_loop(disp, sequencer, replayer);
 
     for (int i = 0; i < VKTRACE_MAX_TRACER_ID_ARRAY_SIZE; i++) {

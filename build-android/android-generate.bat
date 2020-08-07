@@ -76,6 +76,11 @@ echo Generating VT apicost header/source files
 echo ********
 py -3 %VT_SCRIPTS%\vt_genvk.py -registry %REGISTRY% -scripts %REGISTRY_PATH% api_cost.cpp
 
+REM systrace
+echo Generating VT systrace header/source files
+echo ********
+py -3 %VT_SCRIPTS%\vt_genvk.py -registry %REGISTRY% -scripts %REGISTRY_PATH% vktrace_systrace.cpp
+
 REM vktrace
 echo Generating VT vktrace header/source files
 echo ********
