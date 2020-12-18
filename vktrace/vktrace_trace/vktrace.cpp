@@ -157,7 +157,7 @@ vktrace_SettingInfo g_settings_info[] = {
      {&g_default_settings.compressType},
      TRUE,
      "The compression library type. no, lz4 and snappy are supported for now.\n\
-                                        no for no compression and it's the default value."},
+                                        no for no compression and lz4 is the default value."},
     {"cth",
      "CompressThreshhold",
      VKTRACE_SETTING_UINT,

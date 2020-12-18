@@ -347,6 +347,10 @@ int main(int argc, char** argv) {
             }
             if (!hideBriefInfo) {
                 cout << setw(COLUMN_WIDTH) << left << "File Version:" << fileHeader.trace_file_version << endl;
+                if (fileHeader.trace_file_version > VKTRACE_TRACE_FILE_VERSION_8) {
+                    cout << setw(COLUMN_WIDTH) << left << "Tracer Version:"
+                         << version_word_to_str(fileHeader.tracer_version) << endl;
+                }
                 cout << setw(COLUMN_WIDTH) << left << "File Type:" << fileHeader.ptrsize * 8 << "bit" << endl;
                 cout << setw(COLUMN_WIDTH) << left << "Arch:" << (char*)&fileHeader.arch << endl;
                 cout << setw(COLUMN_WIDTH) << left << "OS:" << (char*)&fileHeader.os << endl;

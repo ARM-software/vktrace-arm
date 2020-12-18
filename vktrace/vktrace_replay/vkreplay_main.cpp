@@ -48,7 +48,7 @@
 #include "vkreplay_vkreplay.h"
 #include "decompressor.h"
 
-vkreplayer_settings replaySettings = {NULL, 1, UINT_MAX, UINT_MAX, true, false, NULL, NULL, NULL, NULL, NULL, TRUE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, 50, FALSE, FALSE, NULL};
+vkreplayer_settings replaySettings = {NULL, 1, UINT_MAX, UINT_MAX, true, false, NULL, NULL, NULL, NULL, NULL, TRUE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, 50, FALSE, FALSE, NULL, FALSE};
 extern vkReplay* g_replay;
 static decompressor* g_decompressor = nullptr;
 
@@ -243,7 +243,14 @@ vktrace_SettingInfo g_settings_info[] = {
      {&replaySettings.pipelineCachePath},
      {&replaySettings.pipelineCachePath},
      TRUE,
-     "Set the path for saving the pipeline cache data for the replay."}
+     "Set the path for saving the pipeline cache data for the replay."},
+    {"fsii",
+     "forceSyncImgIdx",
+     VKTRACE_SETTING_BOOL,
+     {&replaySettings.forceSyncImgIdx},
+     {&replaySettings.forceSyncImgIdx},
+     TRUE,
+     "Force sync the acquire next image index."}
 };
 
 vktrace_SettingGroup g_replaySettingGroup = {"vkreplay", sizeof(g_settings_info) / sizeof(g_settings_info[0]), &g_settings_info[0]};
@@ -337,7 +344,11 @@ int main_loop(vktrace_replay::ReplayDisplay display, Sequencer& seq, vktrace_tra
             switch (packet->packet_id) {
                 case VKTRACE_TPI_MESSAGE:
 #if defined(ANDROID) || !defined(ARM_ARCH)
-                    msgPacket = vktrace_interpret_body_as_trace_packet_message(packet);
+                    if (replaySettings.preloadTraceFile) {
+                        msgPacket = (vktrace_trace_packet_message*)packet->pBody;
+                    } else {
+                        msgPacket = vktrace_interpret_body_as_trace_packet_message(packet);
+                    }
                     vktrace_LogAlways("Packet %lu: Traced Message (%s): %s", packet->global_packet_index,
                                       vktrace_LogLevelToShortString(msgPacket->type), msgPacket->message);
 #endif
@@ -449,6 +460,9 @@ int main_loop(vktrace_replay::ReplayDisplay display, Sequencer& seq, vktrace_tra
     vktrace_LogAlways("================== End timer (Frame: %llu) ==================", (end_frame - 1));
     if (end_time > start_time) {
         double fps = static_cast<double>(totalLoopFrames) / (end_time - start_time) * NANOSEC_IN_ONE_SEC;
+        if (g_ruiFrames) {
+            vktrace_LogAlways("NOTE: The number of frames is determined by g_ruiFrames");
+        }
         vktrace_LogAlways("%f fps, %f seconds, %" PRIu64 " frame%s, %" PRIu64 " loop%s, framerange %" PRId64 "-%" PRId64, fps,
                           static_cast<double>(end_time - start_time) / NANOSEC_IN_ONE_SEC, totalLoopFrames, totalLoopFrames > 1 ? "s" : "",
                           totalLoops, totalLoops > 1 ? "s" : "", start_frame, end_frame - 1);

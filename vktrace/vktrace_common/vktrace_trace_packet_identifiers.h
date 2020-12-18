@@ -30,7 +30,8 @@
 #define VKTRACE_TRACE_FILE_VERSION_6 0x0006
 #define VKTRACE_TRACE_FILE_VERSION_7 0x0007  // Vulkan 1.1
 #define VKTRACE_TRACE_FILE_VERSION_8 0x0008  // Compression format
-#define VKTRACE_TRACE_FILE_VERSION VKTRACE_TRACE_FILE_VERSION_8
+#define VKTRACE_TRACE_FILE_VERSION_9 0x0009  // Add tracer version in the file header
+#define VKTRACE_TRACE_FILE_VERSION VKTRACE_TRACE_FILE_VERSION_9
 
 // vkreplay can replay version 6 (the last Vulkan 1.0 format)
 #define VKTRACE_TRACE_FILE_VERSION_MINIMUM_COMPATIBLE VKTRACE_TRACE_FILE_VERSION_6
@@ -423,7 +424,8 @@ typedef enum VKTRACE_COMPRESS_TYPE {
 
 typedef struct {
     uint16_t trace_file_version;
-    uint16_t reserved1[2];
+    uint16_t tracer_version;
+    uint16_t reserved1[1];
     uint16_t compress_type;
     ALIGN8 uint64_t magic;
     uint32_t uuid[4];

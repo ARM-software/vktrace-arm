@@ -58,6 +58,7 @@ namespace {
 #endif // #if defined(PLATFORM_LINUX) && !defined(ANDROID)
 
 vkReplay* g_replay = nullptr;
+int g_ruiFrames = 0;
 
 vkReplay::vkReplay(vkreplayer_settings *pReplaySettings, vktrace_trace_file_header *pFileHeader,
                    vktrace_replay::ReplayDisplayImp *display)
@@ -86,6 +87,7 @@ vkReplay::vkReplay(vkreplayer_settings *pReplaySettings, vktrace_trace_file_head
     m_objMapper.m_adjustForGPU = false;
 
     m_frameNumber = 0;
+    g_ruiFrames = 0;
     m_pFileHeader = pFileHeader;
     m_pGpuinfo = (struct_gpuinfo *)(pFileHeader + 1);
     m_platformMatch = -1;
@@ -747,6 +749,31 @@ void vkReplay::getReplayQueueFamilyIdx(VkDevice traceDevice, VkDevice replayDevi
     getReplayQueueFamilyIdx(tracePhysicalDevice, replayPhysicalDevice, pReplayIdx);
 }
 
+bool vkReplay::findImageFromOtherSwapchain(VkSwapchainKHR swapchain) {
+    bool find = false;
+    auto sc = traceSwapchainToImages.find(swapchain);
+    if (sc != traceSwapchainToImages.end()) {
+        std::vector<VkImage> &scImg = sc->second;
+        for (auto& e : traceSwapchainToImages) {
+            if (e.first == swapchain) {
+                continue;
+            } else {
+                for (auto& img : scImg) {
+                    auto it = std::find(e.second.begin(), e.second.end(), img);
+                    if (it != e.second.end()) {
+                        find = true;
+                        break;
+                    }
+                }
+            }
+            if (find) {
+                break;
+            }
+        }
+    }
+    return find;
+}
+
 VkResult vkReplay::manually_replay_vkCreateDevice(packet_vkCreateDevice *pPacket) {
     VkResult replayResult = VK_ERROR_VALIDATION_FAILED_EXT;
     VkDevice device;
@@ -1304,6 +1331,10 @@ VkResult vkReplay::manually_replay_vkQueueBindSparse(packet_vkQueueBindSparse *p
             }
 
             for (uint32_t bindCountIdx = 0; bindCountIdx < sBMBinf->bindCount; bindCountIdx++) {
+                if (pRemappedBufferMemories[bindCountIdx].memory == VK_NULL_HANDLE) {
+                    continue;
+                }
+
                 devicememoryObj local_mem = m_objMapper.find_devicememory(pRemappedBufferMemories[bindCountIdx].memory);
                 VkDeviceMemory replay_mem = m_objMapper.remap_devicememorys(pRemappedBufferMemories[bindCountIdx].memory);
 
@@ -1334,6 +1365,10 @@ VkResult vkReplay::manually_replay_vkQueueBindSparse(packet_vkQueueBindSparse *p
                     pPacket->header, (intptr_t)remappedBindSparseInfos[bindInfo_idx].pImageBinds->pBinds));
             }
             for (uint32_t bindCountIdx = 0; bindCountIdx < sIMBinf->bindCount; bindCountIdx++) {
+                if (pRemappedImageMemories[bindCountIdx].memory == VK_NULL_HANDLE) {
+                    continue;
+                }
+
                 devicememoryObj local_mem = m_objMapper.find_devicememory(pRemappedImageMemories[bindCountIdx].memory);
                 VkDeviceMemory replay_mem = m_objMapper.remap_devicememorys(pRemappedImageMemories[bindCountIdx].memory);
 
@@ -1364,6 +1399,10 @@ VkResult vkReplay::manually_replay_vkQueueBindSparse(packet_vkQueueBindSparse *p
                     pPacket->header, (intptr_t)remappedBindSparseInfos[bindInfo_idx].pImageOpaqueBinds->pBinds));
             }
             for (uint32_t bindCountIdx = 0; bindCountIdx < sIMOBinf->bindCount; bindCountIdx++) {
+                if (pRemappedImageOpaqueMemories[bindCountIdx].memory == VK_NULL_HANDLE) {
+                    continue;
+                }
+
                 devicememoryObj local_mem =
                     m_objMapper.find_devicememory(pRemappedImageOpaqueMemories[bindCountIdx].memory);
                 VkDeviceMemory replay_mem = m_objMapper.remap_devicememorys(pRemappedImageOpaqueMemories[bindCountIdx].memory);
@@ -1542,7 +1581,7 @@ void vkReplay::manually_replay_vkUpdateDescriptorSets(packet_vkUpdateDescriptorS
 void vkReplay::manually_replay_vkUpdateDescriptorSetsPremapped(packet_vkUpdateDescriptorSets *pPacket) {
     VkDevice remappedDevice = *reinterpret_cast<VkDevice*>(pPacket->device);
     if (remappedDevice == VK_NULL_HANDLE) {
-        vktrace_LogError("Skipping vkUpdateDescriptorSets() due to invalid remapped VkDevice.");
+        vktrace_LogError("Skipping vkUpdateDescriptorSetsPremapped() due to invalid remapped VkDevice.");
         return;
     }
 
@@ -1554,7 +1593,7 @@ void vkReplay::manually_replay_vkUpdateDescriptorSetsPremapped(packet_vkUpdateDe
     for (uint32_t i = 0; i < pPacket->descriptorWriteCount && !errorBadRemap; i++) {
         VkDescriptorSet dstSet = *reinterpret_cast<VkDescriptorSet*>(pPacket->pDescriptorWrites[i].dstSet);
         if (dstSet == VK_NULL_HANDLE) {
-            vktrace_LogError("Skipping vkUpdateDescriptorSets() due to invalid remapped write VkDescriptorSet.");
+            vktrace_LogError("Skipping vkUpdateDescriptorSetsPremapped() due to invalid remapped write VkDescriptorSet.");
             errorBadRemap = true;
             break;
         }
@@ -1568,7 +1607,7 @@ void vkReplay::manually_replay_vkUpdateDescriptorSetsPremapped(packet_vkUpdateDe
                         VkSampler temp = *reinterpret_cast<VkSampler*>(pPacket->pDescriptorWrites[i].pImageInfo[j].sampler);
                         const_cast<VkDescriptorImageInfo *>(pRemappedWrites[i].pImageInfo)[j].sampler = temp;
                         if (pRemappedWrites[i].pImageInfo[j].sampler == VK_NULL_HANDLE) {
-                            vktrace_LogError("Skipping vkUpdateDescriptorSets() due to invalid remapped VkSampler.");
+                            vktrace_LogError("Skipping vkUpdateDescriptorSetsPremapped() due to invalid remapped VkSampler.");
                             errorBadRemap = true;
                             break;
                         }
@@ -1583,7 +1622,7 @@ void vkReplay::manually_replay_vkUpdateDescriptorSetsPremapped(packet_vkUpdateDe
                         VkImageView temp = *reinterpret_cast<VkImageView*>(pPacket->pDescriptorWrites[i].pImageInfo[j].imageView);
                         const_cast<VkDescriptorImageInfo *>(pRemappedWrites[i].pImageInfo)[j].imageView = temp;
                         if (pRemappedWrites[i].pImageInfo[j].imageView == VK_NULL_HANDLE) {
-                            vktrace_LogError("Skipping vkUpdateDescriptorSets() due to invalid remapped VkImageView.");
+                            vktrace_LogError("Skipping vkUpdateDescriptorSetsPremapped() due to invalid remapped VkImageView.");
                             errorBadRemap = true;
                             break;
                         }
@@ -1596,7 +1635,7 @@ void vkReplay::manually_replay_vkUpdateDescriptorSetsPremapped(packet_vkUpdateDe
                         VkSampler temp = *reinterpret_cast<VkSampler*>(pPacket->pDescriptorWrites[i].pImageInfo[j].sampler);
                         const_cast<VkDescriptorImageInfo *>(pRemappedWrites[i].pImageInfo)[j].sampler = temp;
                         if (pRemappedWrites[i].pImageInfo[j].sampler == VK_NULL_HANDLE) {
-                            vktrace_LogError("Skipping vkUpdateDescriptorSets() due to invalid remapped VkSampler.");
+                            vktrace_LogError("Skipping vkUpdateDescriptorSetsPremapped() due to invalid remapped VkSampler.");
                             errorBadRemap = true;
                             break;
                         }
@@ -1605,7 +1644,7 @@ void vkReplay::manually_replay_vkUpdateDescriptorSetsPremapped(packet_vkUpdateDe
                         VkImageView temp = *reinterpret_cast<VkImageView*>(pPacket->pDescriptorWrites[i].pImageInfo[j].imageView);
                         const_cast<VkDescriptorImageInfo *>(pRemappedWrites[i].pImageInfo)[j].imageView = temp;
                         if (pRemappedWrites[i].pImageInfo[j].imageView == VK_NULL_HANDLE) {
-                            vktrace_LogError("Skipping vkUpdateDescriptorSets() due to invalid remapped VkImageView.");
+                            vktrace_LogError("Skipping vkUpdateDescriptorSetsPremapped() due to invalid remapped VkImageView.");
                             errorBadRemap = true;
                             break;
                         }
@@ -1619,7 +1658,7 @@ void vkReplay::manually_replay_vkUpdateDescriptorSetsPremapped(packet_vkUpdateDe
                         VkBufferView temp = *reinterpret_cast<VkBufferView*>(pPacket->pDescriptorWrites[i].pTexelBufferView[j]);
                         const_cast<VkBufferView *>(pRemappedWrites[i].pTexelBufferView)[j] = temp;
                         if (pRemappedWrites[i].pTexelBufferView[j] == VK_NULL_HANDLE) {
-                            vktrace_LogError("Skipping vkUpdateDescriptorSets() due to invalid remapped VkBufferView.");
+                            vktrace_LogError("Skipping vkUpdateDescriptorSetsPremapped() due to invalid remapped VkBufferView.");
                             errorBadRemap = true;
                             break;
                         }
@@ -1635,7 +1674,7 @@ void vkReplay::manually_replay_vkUpdateDescriptorSetsPremapped(packet_vkUpdateDe
                         bufferObj temp = *reinterpret_cast<bufferObj*>(pPacket->pDescriptorWrites[i].pBufferInfo[j].buffer);
                         const_cast<VkDescriptorBufferInfo *>(pRemappedWrites[i].pBufferInfo)[j].buffer = temp.replayBuffer;
                         if (pRemappedWrites[i].pBufferInfo[j].buffer == VK_NULL_HANDLE) {
-                            vktrace_LogError("Skipping vkUpdateDescriptorSets() due to invalid remapped VkBufferView.");
+                            vktrace_LogError("Skipping vkUpdateDescriptorSetsPremapped() due to invalid remapped VkBufferView.");
                             errorBadRemap = true;
                             break;
                         }
@@ -1836,13 +1875,13 @@ void vkReplay::manually_replay_vkCmdBindDescriptorSets(packet_vkCmdBindDescripto
 void vkReplay::manually_replay_vkCmdBindDescriptorSetsPremapped(packet_vkCmdBindDescriptorSets *pPacket) {
     VkCommandBuffer remappedCommandBuffer = *reinterpret_cast<VkCommandBuffer*>(pPacket->commandBuffer);
     if (remappedCommandBuffer == VK_NULL_HANDLE) {
-        vktrace_LogError("Skipping vkCmdBindDescriptorSets() due to invalid remapped VkCommandBuffer.");
+        vktrace_LogError("Skipping vkCmdBindDescriptorSetsPremapped() due to invalid remapped VkCommandBuffer.");
         return;
     }
 
     VkPipelineLayout remappedLayout = *reinterpret_cast<VkPipelineLayout*>(pPacket->layout);
     if (remappedLayout == VK_NULL_HANDLE) {
-        vktrace_LogError("Skipping vkCmdBindDescriptorSets() due to invalid remapped VkPipelineLayout.");
+        vktrace_LogError("Skipping vkCmdBindDescriptorSetsPremapped() due to invalid remapped VkPipelineLayout.");
         return;
     }
 
@@ -1851,7 +1890,7 @@ void vkReplay::manually_replay_vkCmdBindDescriptorSetsPremapped(packet_vkCmdBind
         VkDescriptorSet temp = *reinterpret_cast<VkDescriptorSet*>(pPacket->pDescriptorSets[idx]);
         pRemappedSets[idx] = temp;
         if (pRemappedSets[idx] == VK_NULL_HANDLE && pPacket->pDescriptorSets[idx] != VK_NULL_HANDLE) {
-            vktrace_LogError("Skipping vkCmdBindDescriptorSets() due to invalid remapped VkDescriptorSet.");
+            vktrace_LogError("Skipping vkCmdBindDescriptorSetsPremapped() due to invalid remapped VkDescriptorSet.");
             return;
         }
     }
@@ -2202,7 +2241,7 @@ VkResult vkReplay::manually_replay_vkCreateFramebuffer(packet_vkCreateFramebuffe
         for (uint32_t i = 0; i < pInfo->attachmentCount; i++) {
             VkImageView savedIV = pInfo->pAttachments[i];
             if (curSwapchainImgState.traceImageViewToImageIndex.find(pInfo->pAttachments[i]) != curSwapchainImgState.traceImageViewToImageIndex.end()) {
-                if (m_imageIndex != UINT32_MAX) {
+                if (m_imageIndex != UINT32_MAX && curSwapchainImgState.traceImageIndexToImageView.find(m_imageIndex) != curSwapchainImgState.traceImageIndexToImageView.end()) {
                     curSwapchainImgState.traceFramebufferToImageIndex[*(pPacket->pFramebuffer)] = m_imageIndex;
                     curSwapchainImgState.traceImageIndexToFramebuffer[m_imageIndex] = *(pPacket->pFramebuffer);
                     savedIV = curSwapchainImgState.traceImageIndexToImageView[m_imageIndex];
@@ -2721,7 +2760,8 @@ VkResult vkReplay::manually_replay_vkAllocateMemory(packet_vkAllocateMemory *pPa
             vktrace_LogError("AM: Lock the hardware buffer failed !");
             return VK_ERROR_VALIDATION_FAILED_EXT;
         }
-        uint32_t buf_size = ahwbuf_desc->stride * ahwbuf_desc->height * getAHardwareBufBPP(ahwbuf_desc->format);
+        uint32_t stride = ahwbuf_desc->stride > ahwbuf_desc->width ? ahwbuf_desc->stride : ahwbuf_desc->width;
+        uint32_t buf_size = stride * ahwbuf_desc->height * getAHardwareBufBPP(ahwbuf_desc->format);
         memcpy(ahwbuf_wrt_ptr, importBufData + sizeof(AHardwareBuffer_Desc), buf_size);
         AHardwareBuffer_unlock(importAHWBuf->buffer, NULL);
         traceDeviceMemoryToAHWBuf[*pPacket->pMemory] = importAHWBuf->buffer;
@@ -2988,7 +3028,7 @@ VkResult vkReplay::manually_replay_vkFlushMappedMemoryRangesPremapped(packet_vkF
 
     VkDevice remappedDevice = *(reinterpret_cast<VkDevice*>(pPacket->device));
     if (remappedDevice == VK_NULL_HANDLE) {
-        vktrace_LogError("Skipping vkFlushMappedMemoryRanges() due to invalid remapped VkDevice.");
+        vktrace_LogError("Skipping vkFlushMappedMemoryRangesPremapped() due to invalid remapped VkDevice.");
         return VK_ERROR_VALIDATION_FAILED_EXT;
     }
 
@@ -3006,12 +3046,12 @@ VkResult vkReplay::manually_replay_vkFlushMappedMemoryRangesPremapped(packet_vkF
         localRanges[i].memory = localMem->replayDeviceMemory;
         if (g_pReplaySettings->compatibilityMode && m_pFileHeader->portability_table_valid && !platformMatch() &&
                    traceSkippedDeviceMemories.find(localMem->traceDeviceMemory) != traceSkippedDeviceMemories.end()) {
-            vktrace_LogDebug("Skipping vkFlushMappedMemoryRanges() due to VkDeviceMemory 0x%llX skipped in vkAllocateMemory.",
+            vktrace_LogDebug("Skipping vkFlushMappedMemoryRangesPremapped() due to VkDeviceMemory 0x%llX skipped in vkAllocateMemory.",
                              pPacket->pMemoryRanges[i].memory);
             return VK_SUCCESS;
         }
         if (localRanges[i].memory == VK_NULL_HANDLE || localMem->pGpuMem == NULL) {
-            vktrace_LogError("Skipping vkFlushMappedMemoryRanges() due to invalid remapped VkDeviceMemory.");
+            vktrace_LogError("Skipping vkFlushMappedMemoryRangesPremapped() due to invalid remapped VkDeviceMemory.");
             return VK_ERROR_VALIDATION_FAILED_EXT;
         }
 
@@ -3044,7 +3084,7 @@ VkResult vkReplay::manually_replay_vkFlushMappedMemoryRangesPremapped(packet_vkF
         } else {
             unsigned char *pBuf = (unsigned char *)vktrace_malloc(localMem->pGpuMem->getMemoryMapSize());
             if (!pBuf) {
-                vktrace_LogError("vkFlushMappedMemoryRanges() malloc failed.");
+                vktrace_LogError("vkFlushMappedMemoryRangesPremapped() malloc failed.");
             }
             localMem->pGpuMem->setMemoryDataAddr(pBuf);
 #if defined(USE_PAGEGUARD_SPEEDUP)
@@ -3076,7 +3116,7 @@ void vkReplay::manually_replay_vkCmdDrawIndexedPremapped(packet_vkCmdDrawIndexed
 {
     VkCommandBuffer remappedCommandBuffer = *reinterpret_cast<VkCommandBuffer*>(pPacket->commandBuffer);
     if (pPacket->commandBuffer != VK_NULL_HANDLE && remappedCommandBuffer == VK_NULL_HANDLE) {
-        vktrace_LogError("Error detected in CmdDrawIndexed() due to invalid remapped VkCommandBuffer.");
+        vktrace_LogError("Error detected in CmdDrawIndexedPremapped() due to invalid remapped VkCommandBuffer.");
         return;
     }
     // No need to remap indexCount
@@ -4037,18 +4077,24 @@ void vkReplay::manually_replay_vkDestroySwapchainKHR(packet_vkDestroySwapchainKH
         return;
     }
 
+    bool find = findImageFromOtherSwapchain(pPacket->swapchain);
     // Need to unmap images obtained with vkGetSwapchainImagesKHR
     while (!traceSwapchainToImages[pPacket->swapchain].empty()) {
         VkImage image = traceSwapchainToImages[pPacket->swapchain].back();
-        m_objMapper.rm_from_images_map(image);
+        if (!find) {
+            m_objMapper.rm_from_images_map(image);
+            replaySwapchainImageToDevice.erase(image);
+        }
         traceSwapchainToImages[pPacket->swapchain].pop_back();
-        replaySwapchainImageToDevice.erase(image);
     }
 
     m_vkDeviceFuncs.DestroySwapchainKHR(remappeddevice, remappedswapchain, pPacket->pAllocator);
     m_objMapper.rm_from_swapchainkhrs_map(pPacket->swapchain);
 
-    curSwapchainImgState.reset();
+    if (!find) {
+        curSwapchainImgState.reset();
+    }
+
     m_imageIndex = UINT32_MAX;
     m_pktImgIndex = UINT32_MAX;
 }
@@ -4102,6 +4148,7 @@ VkResult vkReplay::manually_replay_vkGetSwapchainImagesKHR(packet_vkGetSwapchain
                 traceSwapchainToImages[pPacket->swapchain].push_back(packetImage[i]);
                 replaySwapchainImageToDevice[local_imageObj.replayImage] = remappeddevice;
             }
+            swapchainImageAcquireStatus[pPacket->swapchain].resize(*pPacket->pSwapchainImageCount, false);
         }
     }
     return replayResult;
@@ -4210,6 +4257,58 @@ out:
         return pPacket->result;
     }
 
+    return replayResult;
+}
+
+VkResult vkReplay::manually_replay_vkAcquireNextImageKHR(packet_vkAcquireNextImageKHR* pPacket) {
+    VkResult replayResult = VK_SUCCESS;
+    uint32_t local_pImageIndex;
+    VkDevice remappeddevice = m_objMapper.remap_devices(pPacket->device);
+    if (pPacket->device != VK_NULL_HANDLE && remappeddevice == VK_NULL_HANDLE) {
+        vktrace_LogError("Error detected in AcquireNextImageKHR() due to invalid remapped VkDevice.");
+        return VK_ERROR_VALIDATION_FAILED_EXT;
+    }
+    VkSwapchainKHR remappedswapchain = m_objMapper.remap_swapchainkhrs(pPacket->swapchain);
+    if (pPacket->swapchain != VK_NULL_HANDLE && remappedswapchain == VK_NULL_HANDLE) {
+        vktrace_LogError("Error detected in AcquireNextImageKHR() due to invalid remapped VkSwapchainKHR.");
+        return VK_ERROR_VALIDATION_FAILED_EXT;
+    }
+    // No need to remap timeout
+    VkSemaphore remappedsemaphore = m_objMapper.remap_semaphores(pPacket->semaphore);
+    if (pPacket->semaphore != VK_NULL_HANDLE && remappedsemaphore == VK_NULL_HANDLE) {
+        vktrace_LogError("Error detected in AcquireNextImageKHR() due to invalid remapped VkSemaphore.");
+        return VK_ERROR_VALIDATION_FAILED_EXT;
+    }
+    VkFence remappedfence = m_objMapper.remap_fences(pPacket->fence);
+    if (pPacket->fence != VK_NULL_HANDLE && remappedfence == VK_NULL_HANDLE) {
+        vktrace_LogError("Error detected in AcquireNextImageKHR() due to invalid remapped VkFence.");
+        return VK_ERROR_VALIDATION_FAILED_EXT;
+    }
+    if (g_pReplaySettings->forceSyncImgIdx) {
+        uint32_t swapchain_img_count = swapchainImageAcquireStatus[pPacket->swapchain].size();
+        if (*(pPacket->pImageIndex) < swapchain_img_count && swapchainImageAcquireStatus[pPacket->swapchain][*(pPacket->pImageIndex)]) {
+            local_pImageIndex = *(pPacket->pImageIndex);
+            swapchainImageAcquireStatus[pPacket->swapchain][*(pPacket->pImageIndex)] = false;
+        } else {
+            while(true) {
+                replayResult = m_vkDeviceFuncs.AcquireNextImageKHR(remappeddevice, remappedswapchain, pPacket->timeout, remappedsemaphore, remappedfence, &local_pImageIndex);
+                if (replayResult == VK_SUCCESS &&
+                    (local_pImageIndex != *(pPacket->pImageIndex) && *(pPacket->pImageIndex) < swapchain_img_count)) {
+                    swapchainImageAcquireStatus[pPacket->swapchain][local_pImageIndex] = true;
+                    continue;
+                } else {
+                    break;
+                }
+            }
+        }
+    } else {
+        replayResult = m_vkDeviceFuncs.AcquireNextImageKHR(remappeddevice, remappedswapchain, pPacket->timeout, remappedsemaphore, remappedfence, &local_pImageIndex);
+    }
+    if (replayResult == VK_SUCCESS) {
+        m_objMapper.add_to_pImageIndex_map(*(pPacket->pImageIndex), local_pImageIndex);
+        m_pktImgIndex = *(pPacket->pImageIndex);
+        m_imageIndex = local_pImageIndex;
+    }
     return replayResult;
 }
 
@@ -5770,31 +5869,19 @@ VkResult vkReplay::manually_replay_vkEnumerateDeviceExtensionProperties(packet_v
 bool vkReplay::premap_UpdateDescriptorSets(vktrace_trace_packet_header* pHeader)
 {
     packet_vkUpdateDescriptorSets* pPacket = reinterpret_cast<packet_vkUpdateDescriptorSets*>(pHeader->pBody);
-    auto it = m_objMapper.m_indirect_devices.find(pPacket->device);
-    if (it == m_objMapper.m_indirect_devices.end()) {
-        m_objMapper.add_to_devices_map(pPacket->device, VK_NULL_HANDLE);
-    }
-    it = m_objMapper.m_indirect_devices.find(pPacket->device);
-    pPacket->device = reinterpret_cast<VkDevice>(it->second);
+    VkDevice *pDevice = m_objMapper.add_null_to_devices_map(pPacket->device);
+    pPacket->device = reinterpret_cast<VkDevice>(pDevice);
 
     for (uint32_t i = 0; i < pPacket->descriptorWriteCount; i++) {
-        auto it = m_objMapper.m_indirect_descriptorsets.find(pPacket->pDescriptorWrites[i].dstSet);
-        if (it == m_objMapper.m_indirect_descriptorsets.end()) {
-            m_objMapper.add_to_descriptorsets_map(pPacket->pDescriptorWrites[i].dstSet, VK_NULL_HANDLE);
-        }
-        it = m_objMapper.m_indirect_descriptorsets.find(pPacket->pDescriptorWrites[i].dstSet);
-        const_cast<VkWriteDescriptorSet *>(pPacket->pDescriptorWrites)[i].dstSet = reinterpret_cast<VkDescriptorSet>(it->second);
+        VkDescriptorSet *pDescriptorSet = m_objMapper.add_null_to_descriptorsets_map(pPacket->pDescriptorWrites[i].dstSet);
+        const_cast<VkWriteDescriptorSet *>(pPacket->pDescriptorWrites)[i].dstSet = reinterpret_cast<VkDescriptorSet>(pDescriptorSet);
 
         switch (pPacket->pDescriptorWrites[i].descriptorType) {
             case VK_DESCRIPTOR_TYPE_SAMPLER:
                 for (uint32_t j = 0; j < pPacket->pDescriptorWrites[i].descriptorCount; j++) {
                     if (pPacket->pDescriptorWrites[i].pImageInfo[j].sampler != VK_NULL_HANDLE) {
-                        auto it = m_objMapper.m_indirect_samplers.find(pPacket->pDescriptorWrites[i].pImageInfo[j].sampler);
-                        if (it == m_objMapper.m_indirect_samplers.end()) {
-                            m_objMapper.add_to_samplers_map(pPacket->pDescriptorWrites[i].pImageInfo[j].sampler, VK_NULL_HANDLE);
-                        }
-                        it = m_objMapper.m_indirect_samplers.find(pPacket->pDescriptorWrites[i].pImageInfo[j].sampler);
-                        const_cast<VkDescriptorImageInfo *>(pPacket->pDescriptorWrites[i].pImageInfo)[j].sampler = reinterpret_cast<VkSampler>(it->second);
+                        VkSampler *pSampler = m_objMapper.add_null_to_samplers_map(pPacket->pDescriptorWrites[i].pImageInfo[j].sampler);
+                        const_cast<VkDescriptorImageInfo *>(pPacket->pDescriptorWrites[i].pImageInfo)[j].sampler = reinterpret_cast<VkSampler>(pSampler);
                     }
                 }
                 break;
@@ -5803,32 +5890,20 @@ bool vkReplay::premap_UpdateDescriptorSets(vktrace_trace_packet_header* pHeader)
             case VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT:
                 for (uint32_t j = 0; j < pPacket->pDescriptorWrites[i].descriptorCount; j++) {
                     if (pPacket->pDescriptorWrites[i].pImageInfo[j].imageView != VK_NULL_HANDLE) {
-                        auto it = m_objMapper.m_indirect_imageviews.find(pPacket->pDescriptorWrites[i].pImageInfo[j].imageView);
-                        if (it == m_objMapper.m_indirect_imageviews.end()) {
-                            m_objMapper.add_to_imageviews_map(pPacket->pDescriptorWrites[i].pImageInfo[j].imageView, VK_NULL_HANDLE);
-                        }
-                        it = m_objMapper.m_indirect_imageviews.find(pPacket->pDescriptorWrites[i].pImageInfo[j].imageView);
-                        const_cast<VkDescriptorImageInfo *>(pPacket->pDescriptorWrites[i].pImageInfo)[j].imageView = reinterpret_cast<VkImageView>(it->second);
+                        VkImageView *pImageView = m_objMapper.add_null_to_imageviews_map(pPacket->pDescriptorWrites[i].pImageInfo[j].imageView);
+                        const_cast<VkDescriptorImageInfo *>(pPacket->pDescriptorWrites[i].pImageInfo)[j].imageView = reinterpret_cast<VkImageView>(pImageView);
                     }
                 }
                 break;
             case VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER:
                 for (uint32_t j = 0; j < pPacket->pDescriptorWrites[i].descriptorCount; j++) {
                     if (pPacket->pDescriptorWrites[i].pImageInfo[j].sampler != VK_NULL_HANDLE) {
-                        auto it = m_objMapper.m_indirect_samplers.find(pPacket->pDescriptorWrites[i].pImageInfo[j].sampler);
-                        if (it == m_objMapper.m_indirect_samplers.end()) {
-                            m_objMapper.add_to_samplers_map(pPacket->pDescriptorWrites[i].pImageInfo[j].sampler, VK_NULL_HANDLE);
-                        }
-                        it = m_objMapper.m_indirect_samplers.find(pPacket->pDescriptorWrites[i].pImageInfo[j].sampler);
-                        const_cast<VkDescriptorImageInfo *>(pPacket->pDescriptorWrites[i].pImageInfo)[j].sampler = reinterpret_cast<VkSampler>(it->second);
+                        VkSampler *pSampler = m_objMapper.add_null_to_samplers_map(pPacket->pDescriptorWrites[i].pImageInfo[j].sampler);
+                        const_cast<VkDescriptorImageInfo *>(pPacket->pDescriptorWrites[i].pImageInfo)[j].sampler = reinterpret_cast<VkSampler>(pSampler);
                     }
                     if (pPacket->pDescriptorWrites[i].pImageInfo[j].imageView != VK_NULL_HANDLE) {
-                        auto it = m_objMapper.m_indirect_imageviews.find(pPacket->pDescriptorWrites[i].pImageInfo[j].imageView);
-                        if (it == m_objMapper.m_indirect_imageviews.end()) {
-                            m_objMapper.add_to_imageviews_map(pPacket->pDescriptorWrites[i].pImageInfo[j].imageView, VK_NULL_HANDLE);
-                        }
-                        it = m_objMapper.m_indirect_imageviews.find(pPacket->pDescriptorWrites[i].pImageInfo[j].imageView);
-                        const_cast<VkDescriptorImageInfo *>(pPacket->pDescriptorWrites[i].pImageInfo)[j].imageView = reinterpret_cast<VkImageView>(it->second);
+                        VkImageView *pImageView = m_objMapper.add_null_to_imageviews_map(pPacket->pDescriptorWrites[i].pImageInfo[j].imageView);
+                        const_cast<VkDescriptorImageInfo *>(pPacket->pDescriptorWrites[i].pImageInfo)[j].imageView = reinterpret_cast<VkImageView>(pImageView);
                     }
                 }
                 break;
@@ -5836,12 +5911,8 @@ bool vkReplay::premap_UpdateDescriptorSets(vktrace_trace_packet_header* pHeader)
             case VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER:
                 for (uint32_t j = 0; j < pPacket->pDescriptorWrites[i].descriptorCount; j++) {
                     if (pPacket->pDescriptorWrites[i].pTexelBufferView[j] != VK_NULL_HANDLE) {
-                        auto it = m_objMapper.m_indirect_bufferviews.find(pPacket->pDescriptorWrites[i].pTexelBufferView[j]);
-                        if (it == m_objMapper.m_indirect_bufferviews.end()) {
-                            m_objMapper.add_to_bufferviews_map(pPacket->pDescriptorWrites[i].pTexelBufferView[j], VK_NULL_HANDLE);
-                        }
-                        it = m_objMapper.m_indirect_bufferviews.find(pPacket->pDescriptorWrites[i].pTexelBufferView[j]);
-                        const_cast<VkBufferView*>(pPacket->pDescriptorWrites[i].pTexelBufferView)[j] = reinterpret_cast<VkBufferView>(it->second);
+                        VkBufferView *pBufferView = m_objMapper.add_null_to_bufferviews_map(pPacket->pDescriptorWrites[i].pTexelBufferView[j]);
+                        const_cast<VkBufferView*>(pPacket->pDescriptorWrites[i].pTexelBufferView)[j] = reinterpret_cast<VkBufferView>(pBufferView);
                     }
                 }
                 break;
@@ -5851,13 +5922,8 @@ bool vkReplay::premap_UpdateDescriptorSets(vktrace_trace_packet_header* pHeader)
             case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC:
                 for (uint32_t j = 0; j < pPacket->pDescriptorWrites[i].descriptorCount; j++) {
                     if (pPacket->pDescriptorWrites[i].pBufferInfo[j].buffer != VK_NULL_HANDLE) {
-                        auto it = m_objMapper.m_indirect_buffers.find(pPacket->pDescriptorWrites[i].pBufferInfo[j].buffer);
-                        if (it == m_objMapper.m_indirect_buffers.end()) {
-                            bufferObj dummyBufObj;
-                            m_objMapper.add_to_buffers_map(pPacket->pDescriptorWrites[i].pBufferInfo[j].buffer, dummyBufObj);
-                        }
-                        it = m_objMapper.m_indirect_buffers.find(pPacket->pDescriptorWrites[i].pBufferInfo[j].buffer);
-                        const_cast<VkDescriptorBufferInfo*>(pPacket->pDescriptorWrites[i].pBufferInfo)[j].buffer = reinterpret_cast<VkBuffer>(it->second);
+                        bufferObj *pBufferObj = m_objMapper.add_null_to_buffers_map(pPacket->pDescriptorWrites[i].pBufferInfo[j].buffer);
+                        const_cast<VkDescriptorBufferInfo*>(pPacket->pDescriptorWrites[i].pBufferInfo)[j].buffer = reinterpret_cast<VkBuffer>(pBufferObj);
                     }
                 }
                 break;
@@ -5868,18 +5934,10 @@ bool vkReplay::premap_UpdateDescriptorSets(vktrace_trace_packet_header* pHeader)
     }
 
     for (uint32_t i = 0; i < pPacket->descriptorCopyCount; i++) {
-        auto it = m_objMapper.m_indirect_descriptorsets.find(pPacket->pDescriptorCopies[i].dstSet);
-        if (it == m_objMapper.m_indirect_descriptorsets.end()) {
-            m_objMapper.add_to_descriptorsets_map(pPacket->pDescriptorCopies[i].dstSet, VK_NULL_HANDLE);
-        }
-        it = m_objMapper.m_indirect_descriptorsets.find(pPacket->pDescriptorCopies[i].dstSet);
-        const_cast<VkCopyDescriptorSet*>(pPacket->pDescriptorCopies)[i].dstSet = reinterpret_cast<VkDescriptorSet>(it->second);
-        it = m_objMapper.m_indirect_descriptorsets.find(pPacket->pDescriptorCopies[i].srcSet);
-        if (it == m_objMapper.m_indirect_descriptorsets.end()) {
-            m_objMapper.add_to_descriptorsets_map(pPacket->pDescriptorCopies[i].srcSet, VK_NULL_HANDLE);
-        }
-        it = m_objMapper.m_indirect_descriptorsets.find(pPacket->pDescriptorCopies[i].srcSet);
-        const_cast<VkCopyDescriptorSet*>(pPacket->pDescriptorCopies)[i].srcSet = reinterpret_cast<VkDescriptorSet>(it->second);
+        VkDescriptorSet *pDescriptorSet = m_objMapper.add_null_to_descriptorsets_map(pPacket->pDescriptorCopies[i].dstSet);
+        const_cast<VkCopyDescriptorSet *>(pPacket->pDescriptorCopies)[i].dstSet = reinterpret_cast<VkDescriptorSet>(pDescriptorSet);
+        pDescriptorSet = m_objMapper.add_null_to_descriptorsets_map(pPacket->pDescriptorCopies[i].srcSet);
+        const_cast<VkCopyDescriptorSet *>(pPacket->pDescriptorCopies)[i].srcSet = reinterpret_cast<VkDescriptorSet>(pDescriptorSet);
     }
 
     return true;
@@ -5888,24 +5946,13 @@ bool vkReplay::premap_UpdateDescriptorSets(vktrace_trace_packet_header* pHeader)
 bool vkReplay::premap_FlushMappedMemoryRanges(vktrace_trace_packet_header* pHeader)
 {
     packet_vkFlushMappedMemoryRanges* pPacket = reinterpret_cast<packet_vkFlushMappedMemoryRanges*>(pHeader->pBody);
-    auto it = m_objMapper.m_indirect_devices.find(pPacket->device);
-    if (it == m_objMapper.m_indirect_devices.end()) {
-        m_objMapper.add_to_devices_map(pPacket->device, VK_NULL_HANDLE);
-    }
-    for (uint32_t i = 0; i < pPacket->memoryRangeCount; i++) {
-        auto it = m_objMapper.m_indirect_devicememorys.find(pPacket->pMemoryRanges[i].memory);
-        if (it == m_objMapper.m_indirect_devicememorys.end()) {
-            m_objMapper.add_to_devicememorys_map(pPacket->pMemoryRanges[i].memory, devicememoryObj(NULL, VK_NULL_HANDLE, pPacket->pMemoryRanges[i].memory));
-        }
-    }
-
-    it = m_objMapper.m_indirect_devices.find(pPacket->device);
-    pPacket->device = reinterpret_cast<VkDevice>(it->second);
+    VkDevice *pDevice = m_objMapper.add_null_to_devices_map(pPacket->device);
+    pPacket->device = reinterpret_cast<VkDevice>(pDevice);
 
     VkMappedMemoryRange* localRanges = const_cast<VkMappedMemoryRange*>(pPacket->pMemoryRanges);
     for (uint32_t i = 0; i < pPacket->memoryRangeCount; i++) {
-        auto it = m_objMapper.m_indirect_devicememorys.find(pPacket->pMemoryRanges[i].memory);
-        localRanges[i].memory = reinterpret_cast<VkDeviceMemory>(it->second);
+        devicememoryObj *pDevicememoryObj = m_objMapper.add_null_to_devicememorys_map(pPacket->pMemoryRanges[i].memory);
+        localRanges[i].memory = reinterpret_cast<VkDeviceMemory>(pDevicememoryObj);
     }
 
     return true;
@@ -5914,27 +5961,15 @@ bool vkReplay::premap_FlushMappedMemoryRanges(vktrace_trace_packet_header* pHead
 bool vkReplay::premap_CmdBindDescriptorSets(vktrace_trace_packet_header* pHeader)
 {
     packet_vkCmdBindDescriptorSets* pPacket = reinterpret_cast<packet_vkCmdBindDescriptorSets*>(pHeader->pBody);
-    auto it = m_objMapper.m_indirect_commandbuffers.find(pPacket->commandBuffer);
-    if (it == m_objMapper.m_indirect_commandbuffers.end()) {
-        m_objMapper.add_to_commandbuffers_map(pPacket->commandBuffer, VK_NULL_HANDLE);
-    }
-    it = m_objMapper.m_indirect_commandbuffers.find(pPacket->commandBuffer);
-    pPacket->commandBuffer = reinterpret_cast<VkCommandBuffer>(it->second);
+    VkCommandBuffer *pCommandBuffer = m_objMapper.add_null_to_commandbuffers_map(pPacket->commandBuffer);
+    pPacket->commandBuffer = reinterpret_cast<VkCommandBuffer>(pCommandBuffer);
 
-    auto it2 = m_objMapper.m_indirect_pipelinelayouts.find(pPacket->layout);
-    if (it2 == m_objMapper.m_indirect_pipelinelayouts.end()) {
-        m_objMapper.add_to_pipelinelayouts_map(pPacket->layout, VK_NULL_HANDLE);
-    }
-    it2 = m_objMapper.m_indirect_pipelinelayouts.find(pPacket->layout);
-    pPacket->layout = reinterpret_cast<VkPipelineLayout>(it2->second);
+    VkPipelineLayout *pPipelineLayout = m_objMapper.add_null_to_pipelinelayouts_map(pPacket->layout);
+    pPacket->layout = reinterpret_cast<VkPipelineLayout>(pPipelineLayout);
 
     for (uint32_t idx = 0; idx < pPacket->descriptorSetCount && pPacket->pDescriptorSets != NULL; idx++) {
-        auto it = m_objMapper.m_indirect_descriptorsets.find(pPacket->pDescriptorSets[idx]);
-        if (it == m_objMapper.m_indirect_descriptorsets.end()) {
-            m_objMapper.add_to_descriptorsets_map(pPacket->pDescriptorSets[idx], VK_NULL_HANDLE);
-        }
-        it = m_objMapper.m_indirect_descriptorsets.find(pPacket->pDescriptorSets[idx]);
-        const_cast<VkDescriptorSet*>(pPacket->pDescriptorSets)[idx] = reinterpret_cast<VkDescriptorSet>(it->second);
+        VkDescriptorSet *pDescriptorSet = m_objMapper.add_null_to_descriptorsets_map(pPacket->pDescriptorSets[idx]);
+        const_cast<VkDescriptorSet*>(pPacket->pDescriptorSets)[idx] = reinterpret_cast<VkDescriptorSet>(pDescriptorSet);
     }
 
     return true;
@@ -5943,12 +5978,8 @@ bool vkReplay::premap_CmdBindDescriptorSets(vktrace_trace_packet_header* pHeader
 bool vkReplay::premap_CmdDrawIndexed(vktrace_trace_packet_header* pHeader)
 {
     packet_vkCmdDrawIndexed* pPacket = reinterpret_cast<packet_vkCmdDrawIndexed*>(pHeader->pBody);
-    auto it = m_objMapper.m_indirect_commandbuffers.find(pPacket->commandBuffer);
-    if (it == m_objMapper.m_indirect_commandbuffers.end()) {
-        m_objMapper.add_to_commandbuffers_map(pPacket->commandBuffer, VK_NULL_HANDLE);
-    }
-    it = m_objMapper.m_indirect_commandbuffers.find(pPacket->commandBuffer);
-    pPacket->commandBuffer = reinterpret_cast<VkCommandBuffer>(it->second);
+    VkCommandBuffer *pCommandBuffer = m_objMapper.add_null_to_commandbuffers_map(pPacket->commandBuffer);
+    pPacket->commandBuffer = reinterpret_cast<VkCommandBuffer>(pCommandBuffer);
 
     return true;
 }

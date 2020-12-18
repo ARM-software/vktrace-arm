@@ -875,3 +875,22 @@ BOOL vktrace_append_portabilitytable(uint16_t packet_id) {
     }
     return FALSE;
 }
+
+uint16_t vktrace_version() {
+    uint16_t major = 0;
+    uint16_t minor = 0;
+    uint16_t point = 0;
+
+    sscanf(VKTRACE_VERSION, "%hd.%hd.%hd", &major, &minor, &point);
+    return ENCODE_VKTRACE_VER(major, minor, point);
+}
+
+const char* version_word_to_str(uint16_t ver) {
+    static char ver_str[20];
+    uint16_t major = DECODE_VKTRACE_VER_MAJOR(ver);
+    uint16_t minor = DECODE_VKTRACE_VER_MINOR(ver);
+    uint16_t point = DECODE_VKTRACE_VER_POINT(ver);
+
+    sprintf(ver_str, "%hd.%hd.%hd", major, minor, point);
+    return ver_str;
+}

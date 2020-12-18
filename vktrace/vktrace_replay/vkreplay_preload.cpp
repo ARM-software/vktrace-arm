@@ -422,12 +422,11 @@ vktrace_trace_packet_header* preload_get_next_packet()
     cur_chunk->current_address += pHeader->size;
 
     if (cur_chunk->current_address >= boundary_addr) {
-        bool same_chunk = g_preload_context.loading_idx == g_preload_context.using_idx;
         cur_chunk->status = CHUNK_EMPTY;
         cur_chunk->current_address = cur_chunk->base_address;
         g_preload_context.using_idx++;
         cur_chunk->mtx.unlock();
-        if (same_chunk) {
+        if (g_preload_context.loading_idx == g_preload_context.using_idx) {
             while (cur_chunk->status == CHUNK_EMPTY && !g_preload_context.exceed_preloading_range && g_preload_context.next_pkt_size) {
                 std::this_thread::yield();
             }

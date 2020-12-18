@@ -44,14 +44,14 @@ void vktrace_SettingInfo_print(const vktrace_SettingInfo* pSetting) {
 #else
         snprintf(tmpStr, sizeof(tmpStr), "-%s, --%s %s", pSetting->pShortName, pSetting->pLongName, pStrParams);
 #endif
-        printf("    %-33s  %s\n", tmpStr, pSetting->pDesc);
+        vktrace_LogAlways("    %-33s  %s\n", tmpStr, pSetting->pDesc);
     }
 }
 
 // ------------------------------------------------------------------------------------------------
 void vktrace_SettingGroup_print(const vktrace_SettingGroup* pSettingGroup) {
     unsigned int i;
-    printf("%s %s available options:\n", pSettingGroup->pName, VKTRACE_VERSION);
+    vktrace_LogAlways("%s %s available options:\n", pSettingGroup->pName, VKTRACE_VERSION);
 
     for (i = 0; i < pSettingGroup->numSettings; i++) {
         vktrace_SettingInfo_print(&(pSettingGroup->pSettings[i]));

@@ -141,6 +141,17 @@ else
     rm -rf ${dir}/dbuild_${TARGET}
 fi
 
+cd submodules/snappy
+git clean -fdx
+if [ ${TARGET} == "android" ]; then
+NDK=`which ndk-build`
+NDK=${NDK}/../
+cmake -DCMAKE_TOOLCHAIN_FILE=$NDK/build/cmake/android.toolchain.cmake -DANDROID_ABI=armeabi-v7a -DANDROID_NATIVE_API_LEVEL=27 .
+else
+cmake .
+fi
+cd -
+
 if [ ${TARGET} == "android" ]; then
     cd ${dir}/build-android
     if [ ${UPDATE_EXTERNAL} == "true" ] || [ ! -d ${dir}/build-android/third_party ]; then

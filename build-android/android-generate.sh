@@ -52,16 +52,15 @@ if ! [[ ${BUILD_TYPE_LIST} =~ (^|[[:space:]])${BUILD_TYPE}($|[[:space:]]) ]]; th
     exit 1
 fi
 
-if [ $BUILD_TYPE == "release" ]
-then
-    sed -i "s/debuggable=\"true\"/debuggable=\"false\"/" ${dir}/vkreplay/AndroidManifest.xml
-    sed -i "s/debuggable=\"true\"/debuggable=\"false\"/" ${dir}/AndroidManifest.xml
-    sed -i "/.*DEBUG$/d" ${dir}/jni/Application.mk
+if [ $BUILD_TYPE == "release" ]; then
+    DBG_FLAG=
+else
+    DBG_FLAG=-D_DEBUG
 fi
 
 sed -i "s/versionName=\"1.0\"/versionName=\"${VERSION}\"/" ${dir}/vkreplay/AndroidManifest.xml
-echo "APP_CFLAGS += -DVKTRACE_VERSION=\"\\\"${VERSION}\\\"\"" >> ${dir}/jni/Application.mk
-echo "APP_CPPFLAGS += -DVKTRACE_VERSION=\"\\\"${VERSION}\\\"\"" >> ${dir}/jni/Application.mk
+echo "APP_CFLAGS += ${DBG_FLAG} -DVKTRACE_VERSION=\"\\\"${VERSION}\\\"\"" >> ${dir}/jni/Application.mk
+echo "APP_CPPFLAGS += ${DBG_FLAG} -DVKTRACE_VERSION=\"\\\"${VERSION}\\\"\"" >> ${dir}/jni/Application.mk
 
 rm -rf generated
 mkdir -p generated/include generated/common
@@ -106,6 +105,9 @@ REGISTRY=${REGISTRY_PATH}/vk.xml
 
 # systrace
 ( cd generated/include; python3 ${VT_SCRIPTS}/vt_genvk.py -registry ${REGISTRY} -scripts ${REGISTRY_PATH} vktrace_systrace.cpp )
+
+# emptydriver
+( cd generated/include; python3 ${VT_SCRIPTS}/vt_genvk.py -registry ${REGISTRY} -scripts ${REGISTRY_PATH} vktrace_emptydriver.cpp )
 
 # vktrace
 ( cd generated/include; python3 ${VT_SCRIPTS}/vt_genvk.py -registry ${REGISTRY} -scripts ${REGISTRY_PATH} vktrace_vk_vk.h )

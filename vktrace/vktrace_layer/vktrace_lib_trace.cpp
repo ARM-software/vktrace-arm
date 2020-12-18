@@ -1353,6 +1353,7 @@ static bool send_vk_trace_file_header(VkInstance instance) {
 
     memset(pHeader, 0, header_size);
     pHeader->trace_file_version = VKTRACE_TRACE_FILE_VERSION;
+    pHeader->tracer_version = vktrace_version();
     pHeader->magic = VKTRACE_FILE_MAGIC;
     vktrace_gen_uuid(pHeader->uuid);
     pHeader->first_packet_offset = header_size;
@@ -2818,7 +2819,7 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkQueueBindSparse(VkQueu
 
         vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pBindInfo[i].pImageBinds),
                                            pPacket->pBindInfo[i].imageBindCount * sizeof(VkSparseImageMemoryBindInfo),
-                                           pBindInfo[i].pImageOpaqueBinds);
+                                           pBindInfo[i].pImageBinds);
         for (uint32_t j = 0; j < pPacket->pBindInfo[i].imageBindCount; j++) {
             VkSparseImageMemoryBindInfo* pSparseImageMemoryBindInfo =
                 (VkSparseImageMemoryBindInfo*)&pPacket->pBindInfo[i].pImageBinds[j];

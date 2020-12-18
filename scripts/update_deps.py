@@ -451,7 +451,7 @@ class GoodRepo(object):
                     cmake_cmd.append("-DBUILD_CUBE=OFF")
                     cmake_cmd.append("-DBUILD_VULKANINFO=OFF")
             # Check if it is EUHPC
-            if "el6.x86_64" in platform.uname()[2] and "Vulkan-" in self.build_dir and "Headers" not in self.build_dir:
+            if ("el6.x86_64" in platform.uname()[2] or "el7.x86_64" in platform.uname()[2]) and "Vulkan-" in self.build_dir and "Headers" not in self.build_dir:
                 print("Building on EUHPC")
                 cmake_cmd.append("-DBUILD_WSI_WAYLAND_SUPPORT=OFF")
                 cmake_cmd.append("-DBUILD_WSI_XCB_SUPPORT=OFF")
@@ -522,7 +522,7 @@ class GoodRepo(object):
         self.CMakeConfig(repos)
 
         # Build and execute CMake command for the build
-        if "Vulkan-Tools" in self.build_dir and ("arm_" in self._args.arch or "el6.x86_64" in platform.uname()[2]):
+        if "Vulkan-Tools" in self.build_dir and ("arm_" in self._args.arch or "el6.x86_64" in platform.uname()[2] or "el7.x86_64" in platform.uname()[2]):
             print("Skip building Vulkan-Tools")
         else:
             self.CMakeBuild()

@@ -52,7 +52,15 @@ using namespace std;
 
 #include <android/log.h>
 #include <sys/system_properties.h>
+#include "vktrace_common.h"
+struct AHWBufInfo {
+    AHardwareBuffer* buffer;
+    uint32_t   stride;
+    uint32_t   height;
+};
 
+static int g_ruiFrameNumber = 0;
+static std::unordered_map<VkDeviceMemory, AHWBufInfo> deviceMemoryToAHWBufInfo;
 static char android_env[64] = {};
 const char *env_var_frames = "debug.vulkan.screenshot";
 const char *env_var_old = env_var_frames;
@@ -1909,6 +1917,102 @@ VKAPI_ATTR VkResult VKAPI_CALL QueueSubmit(VkQueue queue, uint32_t submitCount, 
     return result;
 }
 
+#ifdef ANDROID
+static void saveUIFrame(int frameNumber) {
+    const int filenamelength = 48;
+    char filename[filenamelength] = {0};
+    int i = 0;
+    for (auto e : deviceMemoryToAHWBufInfo) {
+        sprintf(filename, "%s%d_%d.ppm", screenshotPrefix.c_str(), frameNumber, i);
+        std::ofstream file(filename, ios::binary);
+        if (!file.is_open()) {
+            __android_log_print(ANDROID_LOG_ERROR, "screenshot", "Save UI frame failed, file open error.");
+            return ;
+        }
+        void* ahwBuf = nullptr;
+        int ret = AHardwareBuffer_lock(e.second.buffer, AHARDWAREBUFFER_USAGE_CPU_READ_RARELY, -1, nullptr, &ahwBuf);
+        if (ret != 0) {
+            file.close();
+            __android_log_print(ANDROID_LOG_ERROR, "screenshot", "Save UI frame %s failed, hardware buffer lock error.", filename);
+            continue;
+        }
+        // ppm file head
+        file << "P6\n";
+        file << e.second.stride << "\n";
+        file << e.second.height << "\n";
+        file << 255 << "\n";
+        char* ptemp = (char*)ahwBuf;
+        uint32_t size = e.second.stride * e.second.height;
+        for (uint32_t pix = 0; pix < size; pix++) {
+            file.write(ptemp, 3);  //3 is RGB channel
+            ptemp = ptemp + 4;     //4 is RGBA channel
+        }
+        AHardwareBuffer_unlock(e.second.buffer, nullptr);
+        file.close();
+        i++;
+    }
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL CreateSemaphore(VkDevice device, const VkSemaphoreCreateInfo* pCreateInfo, const VkAllocationCallbacks* pAllocator, VkSemaphore* pSemaphore) {
+    DeviceMapStruct *devMap = get_dev_info(device);
+    assert(devMap);
+    VkLayerDispatchTable *pDisp = devMap->device_dispatch_table;
+    VkResult result = pDisp->CreateSemaphore(device, pCreateInfo, pAllocator, pSemaphore);
+    if (pCreateInfo->pNext != nullptr && g_frameNumber == 0) {
+        VkExportSemaphoreCreateInfo* pInfo = (VkExportSemaphoreCreateInfo*)pCreateInfo->pNext;
+        if (pInfo->sType == VK_STRUCTURE_TYPE_EXPORT_SEMAPHORE_CREATE_INFO && pInfo->pNext == nullptr && pInfo->handleTypes == VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_SYNC_FD_BIT) {
+            g_ruiFrameNumber++;
+        }
+    }
+    if (g_frameNumber != 0) {
+        g_ruiFrameNumber = 0;
+    }
+    if (g_frameNumber == 0 && g_ruiFrameNumber != 0 && screenshotFrames.find(g_ruiFrameNumber) != screenshotFrames.end()) {
+        saveUIFrame(g_ruiFrameNumber);
+    }
+    return result;
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL AllocateMemory(VkDevice device, const VkMemoryAllocateInfo* pAllocateInfo, const VkAllocationCallbacks* pAllocator, VkDeviceMemory* pMemory) {
+    DeviceMapStruct *devMap = get_dev_info(device);
+    assert(devMap);
+    VkLayerDispatchTable *pDisp = devMap->device_dispatch_table;
+    VkResult result = pDisp->AllocateMemory(device, pAllocateInfo, pAllocator, pMemory);
+    if (g_ruiFrameNumber == 0) {
+        return result;
+    }
+    VkMemoryDedicatedAllocateInfo* memoryDedicatedAllocateInfo = (VkMemoryDedicatedAllocateInfo*)find_ext_struct( (const vulkan_struct_header*)pAllocateInfo, VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO);
+    if (memoryDedicatedAllocateInfo == nullptr) {
+        return result;
+    }
+    VkImportAndroidHardwareBufferInfoANDROID* importAHWBuf = (VkImportAndroidHardwareBufferInfoANDROID*)find_ext_struct( (const vulkan_struct_header*)pAllocateInfo, VK_STRUCTURE_TYPE_IMPORT_ANDROID_HARDWARE_BUFFER_INFO_ANDROID);
+    if (importAHWBuf == nullptr || importAHWBuf->buffer == nullptr) {
+        return result;
+    }
+    AHardwareBuffer_Desc ahwbuf_desc;
+    AHardwareBuffer_describe(importAHWBuf->buffer, &ahwbuf_desc);
+    if (memoryDedicatedAllocateInfo->pNext && memoryDedicatedAllocateInfo->image != VK_NULL_HANDLE && memoryDedicatedAllocateInfo->buffer == VK_NULL_HANDLE && ahwbuf_desc.format == AHARDWAREBUFFER_FORMAT_R8G8B8A8_UNORM) {
+        AHWBufInfo bufInfo = {importAHWBuf->buffer, (ahwbuf_desc.stride > ahwbuf_desc.width) ? ahwbuf_desc.stride : ahwbuf_desc.width, ahwbuf_desc.height};
+        deviceMemoryToAHWBufInfo[*pMemory] = bufInfo;
+    }
+    return result;
+}
+
+VKAPI_ATTR void VKAPI_CALL FreeMemory(VkDevice device, VkDeviceMemory memory, const VkAllocationCallbacks* pAllocator) {
+    DeviceMapStruct *devMap = get_dev_info(device);
+    assert(devMap);
+    VkLayerDispatchTable *pDisp = devMap->device_dispatch_table;
+    pDisp->FreeMemory(device, memory, pAllocator);
+    if (g_ruiFrameNumber == 0) {
+        return;
+    }
+    if (deviceMemoryToAHWBufInfo.find(memory) != deviceMemoryToAHWBufInfo.end()) {
+        deviceMemoryToAHWBufInfo.erase(memory);
+    }
+}
+
+#endif
+
 // Unused, but this could be provided as an extension or utility to the
 // application in the future.
 VKAPI_ATTR VkResult VKAPI_CALL SpecifyScreenshotFrames(const char *frameList) {
@@ -2029,6 +2133,11 @@ static PFN_vkVoidFunction intercept_core_device_command(const char *name) {
         {"vkCreateImageView", reinterpret_cast<PFN_vkVoidFunction>(CreateImageView)},
         {"vkCreateFramebuffer", reinterpret_cast<PFN_vkVoidFunction>(CreateFramebuffer)},
         {"vkQueueSubmit", reinterpret_cast<PFN_vkVoidFunction>(QueueSubmit)},
+#ifdef ANDROID
+        {"vkCreateSemaphore", reinterpret_cast<PFN_vkVoidFunction>(CreateSemaphore)},
+        {"vkAllocateMemory", reinterpret_cast<PFN_vkVoidFunction>(AllocateMemory)},
+        {"vkFreeMemory", reinterpret_cast<PFN_vkVoidFunction>(FreeMemory)},
+#endif
     };
 
     for (size_t i = 0; i < ARRAY_SIZE(core_device_commands); i++) {

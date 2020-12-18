@@ -30,6 +30,7 @@
 
 #include "vulkan/vulkan.h"
 
+#include "vktrace_version.h"
 #include "vktrace_platform.h"
 
 #include "vktrace_memory.h"

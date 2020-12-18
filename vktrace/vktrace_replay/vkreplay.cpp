@@ -156,7 +156,13 @@ int VKTRACER_CDECL VkReplayDump() {
 
 int VKTRACER_CDECL VkReplayGetFrameNumber() {
     if (g_pReplayer != NULL) {
-        return g_pReplayer->get_frame_number();
+        int frames = g_pReplayer->get_frame_number();
+        if (frames == 0) {
+            frames = g_ruiFrames;
+        } else {
+            g_ruiFrames = 0;
+        }
+        return frames;
     }
     return -1;
 }

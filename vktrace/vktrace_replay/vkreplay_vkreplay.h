@@ -113,6 +113,7 @@ extern "C" {
 #define PREMAP_SHIFT (0x1 << 15)
 
 extern vkreplayer_settings* g_pReplaySettings;
+extern int g_ruiFrames;
 
 class vkReplay {
    public:
@@ -292,6 +293,7 @@ class vkReplay {
     void manually_replay_vkDestroySwapchainKHR(packet_vkDestroySwapchainKHR* pPacket);
     VkResult manually_replay_vkGetSwapchainImagesKHR(packet_vkGetSwapchainImagesKHR* pPacket);
     VkResult manually_replay_vkQueuePresentKHR(packet_vkQueuePresentKHR* pPacket);
+    VkResult manually_replay_vkAcquireNextImageKHR(packet_vkAcquireNextImageKHR* pPacket);
     VkResult manually_replay_vkCreateXcbSurfaceKHR(packet_vkCreateXcbSurfaceKHR* pPacket);
     VkBool32 manually_replay_vkGetPhysicalDeviceXcbPresentationSupportKHR(
         packet_vkGetPhysicalDeviceXcbPresentationSupportKHR* pPacket);
@@ -422,6 +424,7 @@ class vkReplay {
         }
     } curSwapchainImgState;
     std::stack<SwapchainImageState> savedSwapchainImgStates;
+    std::unordered_map< VkSwapchainKHR, std::vector<bool> > swapchainImageAcquireStatus;
 
     // Map VkImage to VkMemoryRequirements
     std::unordered_map<VkImage, VkMemoryRequirements> replayGetImageMemoryRequirements;
@@ -458,7 +461,7 @@ class vkReplay {
     void getReplayQueueFamilyIdx(VkDevice traceDevice, VkDevice replayDevice, uint32_t* pIdx);
 
     void remapHandlesInDescriptorSetWithTemplateData(VkDescriptorUpdateTemplateKHR remappedDescriptorUpdateTemplate, char* pData);
-
+    bool findImageFromOtherSwapchain(VkSwapchainKHR swapchain);
 
     vktrace_replay::PipelineCacheAccessor::Ptr    m_pipelinecache_accessor;
 };

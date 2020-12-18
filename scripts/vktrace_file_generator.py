@@ -495,6 +495,7 @@ class VkTraceFileOutputGenerator(OutputGenerator):
         replay_objmapper_header += '#include <list>\n'
         replay_objmapper_header += '#include <vector>\n'
         replay_objmapper_header += '#include <string>\n'
+        replay_objmapper_header += '#include <mutex>\n\n'
         replay_objmapper_header += '#include "vulkan/vulkan.h"\n'
         replay_objmapper_header += '#include "vktrace_pageguard_memorycopy.h"\n'
         replay_objmapper_header += '\n'
@@ -585,7 +586,8 @@ class VkTraceFileOutputGenerator(OutputGenerator):
             replay_objmapper_header += '    void (vkReplayObjMapper::*add_to_%s_map_ptr)(%s pTraceVal, %s pReplayVal);\n' % (map_name, item, item)
             replay_objmapper_header += '    void (vkReplayObjMapper::*rm_from_%s_map_ptr)(const %s& key);\n' % (map_name, item)
             replay_objmapper_header += '    %s (vkReplayObjMapper::*remap_%s_ptr)(const %s& value);\n' % (item, map_name, item)
-            replay_objmapper_header += '    std::list<%s> m_actual_%s;\n\n' % (item, map_name)
+            replay_objmapper_header += '    std::list<%s> m_actual_%s;\n' % (item, map_name)
+            replay_objmapper_header += '    std::mutex m_mutex_%s;\n\n' % (map_name)
 
             replay_objmapper_header += '    void add_to_%s_map_origin(%s pTraceVal, %s pReplayVal) {\n' % (map_name, item, item)
             replay_objmapper_header += '        m_%s[pTraceVal] = pReplayVal;\n' % (map_name)
@@ -603,6 +605,7 @@ class VkTraceFileOutputGenerator(OutputGenerator):
             replay_objmapper_header += '    }\n\n'
 
             replay_objmapper_header += '    void add_to_%s_map_premapped(%s pTraceVal, %s pReplayVal) {\n' % (map_name, item, item)
+            replay_objmapper_header += '        std::lock_guard<std::mutex> lock(m_mutex_%s);\n\n' % (map_name)
             replay_objmapper_header += '        auto it = m_indirect_%s.find(pTraceVal);\n' % (map_name)
             replay_objmapper_header += '        if (it == m_indirect_%s.end()) {\n' % (map_name)
             replay_objmapper_header += '            m_actual_%s.push_back(pReplayVal);\n' % (map_name)
@@ -616,6 +619,7 @@ class VkTraceFileOutputGenerator(OutputGenerator):
             replay_objmapper_header += '    }\n\n'
 
             replay_objmapper_header += '    void rm_from_%s_map_premapped(const %s& key) {\n' % (map_name, item)
+            replay_objmapper_header += '        std::lock_guard<std::mutex> lock(m_mutex_%s);\n\n' % (map_name)
             replay_objmapper_header += '        auto it = m_indirect_%s.find(key);\n' % (map_name)
             replay_objmapper_header += '        if (it != m_indirect_%s.end()) {\n' % (map_name)
             replay_objmapper_header += '            *it->second = VK_NULL_HANDLE;\n'
@@ -624,6 +628,7 @@ class VkTraceFileOutputGenerator(OutputGenerator):
 
             replay_objmapper_header += '    %s remap_%s_premapped(const %s& value) {\n' % (item, map_name, item)
             replay_objmapper_header += '        if (value == 0) { return 0; }\n'
+            replay_objmapper_header += '        std::lock_guard<std::mutex> lock(m_mutex_%s);\n\n' % (map_name)
             replay_objmapper_header += '        std::unordered_map<%s, %s*>::const_iterator q = m_indirect_%s.find(value);\n' % (item, item, map_name)
             replay_objmapper_header += '        if (q == m_indirect_%s.end()) { vktrace_LogError("Failed to remap %s."); return VK_NULL_HANDLE; }\n' % (map_name, item)
             replay_objmapper_header += '        return *(q->second);\n'
@@ -645,6 +650,17 @@ class VkTraceFileOutputGenerator(OutputGenerator):
             replay_objmapper_header += '        return (this->*remap_%s_ptr)(value);\n' % (map_name)
             replay_objmapper_header += '    }\n\n'
 
+            replay_objmapper_header += '    %s* add_null_to_%s_map(%s pTraceVal) {\n' % (item, map_name, item)
+            replay_objmapper_header += '        std::lock_guard<std::mutex> lock(m_mutex_%s);\n\n' % (map_name)
+            replay_objmapper_header += '        auto it = m_indirect_%s.find(pTraceVal);\n' % (map_name)
+            replay_objmapper_header += '        if (it == m_indirect_%s.end()) {\n' % (map_name)
+            replay_objmapper_header += '            m_actual_%s.push_back(VK_NULL_HANDLE);\n' % (map_name)
+            replay_objmapper_header += '            m_indirect_%s[pTraceVal] = &(m_actual_%s.back());\n' % (map_name, map_name)
+            replay_objmapper_header += '            it = m_indirect_%s.find(pTraceVal);\n' % (map_name)
+            replay_objmapper_header += '        }\n'
+            replay_objmapper_header += '        return it->second;\n'
+            replay_objmapper_header += '    }\n\n'
+
         ##########################################################################
 
         replay_objmapper_header += 'private:\n'
@@ -655,6 +671,8 @@ class VkTraceFileOutputGenerator(OutputGenerator):
         replay_objmapper_header += '    const bufferObj &(vkReplayObjMapper::*find_buffer_ptr)(const VkBuffer &deviceMem);\n'
         replay_objmapper_header += '    std::list<bufferObj> m_actual_buffers;\n'
         replay_objmapper_header += '    bufferObj dummyBufferObj;\n'
+        replay_objmapper_header += '    std::mutex m_mutex_buffers;\n\n'
+        replay_objmapper_header += '    std::unordered_map<VkBuffer, bufferObj*> m_indirect_buffers;\n'
 
         replay_objmapper_header += '    void add_to_buffers_map_origin(VkBuffer pTraceVal, bufferObj pReplayVal) {\n'
         replay_objmapper_header += '        m_buffers[pTraceVal] = pReplayVal;\n'
@@ -686,6 +704,7 @@ class VkTraceFileOutputGenerator(OutputGenerator):
         replay_objmapper_header += '    }\n'
 
         replay_objmapper_header += '    void add_to_buffers_map_premapped(VkBuffer pTraceVal, bufferObj pReplayVal) {\n'
+        replay_objmapper_header += '        std::lock_guard<std::mutex> lock(m_mutex_buffers);\n\n'
         replay_objmapper_header += '        auto it = m_indirect_buffers.find(pTraceVal);\n'
         replay_objmapper_header += '        if (it == m_indirect_buffers.end()) {\n'
         replay_objmapper_header += '            m_actual_buffers.push_back(pReplayVal);\n'
@@ -698,6 +717,7 @@ class VkTraceFileOutputGenerator(OutputGenerator):
         replay_objmapper_header += '    }\n'
 
         replay_objmapper_header += '    void rm_from_buffers_map_premapped(const VkBuffer& key) {\n'
+        replay_objmapper_header += '        std::lock_guard<std::mutex> lock(m_mutex_buffers);\n\n'
         replay_objmapper_header += '        auto it = m_indirect_buffers.find(key);\n'
         replay_objmapper_header += '        if (it != m_indirect_buffers.end()) {\n'
         replay_objmapper_header += '            it->second->replayBuffer = VK_NULL_HANDLE;\n'
@@ -706,6 +726,7 @@ class VkTraceFileOutputGenerator(OutputGenerator):
 
         replay_objmapper_header += '    VkBuffer remap_buffers_premapped(const VkBuffer& value) {\n'
         replay_objmapper_header += '        if (value == 0) { return 0; }\n'
+        replay_objmapper_header += '        std::lock_guard<std::mutex> lock(m_mutex_buffers);\n\n'
         replay_objmapper_header += '        std::unordered_map<VkBuffer, bufferObj*>::const_iterator q = m_indirect_buffers.find(value);\n'
         replay_objmapper_header += '        if (q == m_indirect_buffers.end()) { vktrace_LogError("Failed to remap VkBuffer."); return VK_NULL_HANDLE; }\n'
         replay_objmapper_header += '        if (q->second == 0) return 0;\n'
@@ -713,6 +734,7 @@ class VkTraceFileOutputGenerator(OutputGenerator):
         replay_objmapper_header += '    }\n'
 
         replay_objmapper_header += '    bool buffer_exists_premapped(const VkBuffer &value) {\n'
+        replay_objmapper_header += '        std::lock_guard<std::mutex> lock(m_mutex_buffers);\n\n'
         replay_objmapper_header += '        auto it = m_indirect_buffers.find(value);\n'
         replay_objmapper_header += '        if (it == m_indirect_buffers.end()) {\n'
         replay_objmapper_header += '            return false;\n'
@@ -724,6 +746,7 @@ class VkTraceFileOutputGenerator(OutputGenerator):
         replay_objmapper_header += '    }\n'
 
         replay_objmapper_header += '    const bufferObj &find_buffer_premapped(const VkBuffer &deviceMem) {\n'
+        replay_objmapper_header += '        std::lock_guard<std::mutex> lock(m_mutex_buffers);\n\n'
         replay_objmapper_header += '        auto it = m_indirect_buffers.find(deviceMem);\n'
         replay_objmapper_header += '        if (it == m_indirect_buffers.end()) {\n'
         replay_objmapper_header += '            return dummyBufferObj;\n'
@@ -734,8 +757,7 @@ class VkTraceFileOutputGenerator(OutputGenerator):
         replay_objmapper_header += '    }\n'
 
         replay_objmapper_header += 'public:\n'
-        replay_objmapper_header += '    std::unordered_map<VkBuffer, bufferObj*> m_indirect_buffers;\n'
-        replay_objmapper_header += '    std::unordered_map<VkBuffer, bufferObj>  m_buffers;\n'
+        replay_objmapper_header += '    std::unordered_map<VkBuffer, bufferObj>  m_buffers;\n\n'
         replay_objmapper_header += '    std::unordered_map<VkBuffer, bufferObj*>::iterator find_buffer_iterator(const VkBuffer &deviceMem) {\n'
         replay_objmapper_header += '        auto it = m_indirect_buffers.find(deviceMem);\n'
         replay_objmapper_header += '        if (it == m_indirect_buffers.end()) {\n'
@@ -747,22 +769,33 @@ class VkTraceFileOutputGenerator(OutputGenerator):
         replay_objmapper_header += '        else {\n'
         replay_objmapper_header += '            return it;\n'
         replay_objmapper_header += '        }\n'
-        replay_objmapper_header += '    }\n'
+        replay_objmapper_header += '    }\n\n'
         replay_objmapper_header += '    bool buffer_exists(const VkBuffer &deviceMem) {\n'
         replay_objmapper_header += '        return (this->*buffer_exists_ptr)(deviceMem);\n'
-        replay_objmapper_header += '    }\n'
+        replay_objmapper_header += '    }\n\n'
         replay_objmapper_header += '    void add_to_buffers_map(VkBuffer pTraceVal, bufferObj pReplayVal) {\n'
         replay_objmapper_header += '        (this->*add_to_buffers_map_ptr)(pTraceVal, pReplayVal);\n'
-        replay_objmapper_header += '    }\n'
+        replay_objmapper_header += '    }\n\n'
         replay_objmapper_header += '    void rm_from_buffers_map(const VkBuffer& key) {\n'
         replay_objmapper_header += '        (this->*rm_from_buffers_map_ptr)(key);\n'
-        replay_objmapper_header += '    }\n'
+        replay_objmapper_header += '    }\n\n'
         replay_objmapper_header += '    VkBuffer remap_buffers(const VkBuffer& value) {\n'
         replay_objmapper_header += '        return (this->*remap_buffers_ptr)(value);\n'
-        replay_objmapper_header += '    }\n'
+        replay_objmapper_header += '    }\n\n'
         replay_objmapper_header += '    const bufferObj &find_buffer(const VkBuffer &deviceMem) {\n'
         replay_objmapper_header += '        return (this->*find_buffer_ptr)(deviceMem);\n'
-        replay_objmapper_header += '    }\n'
+        replay_objmapper_header += '    }\n\n'
+        replay_objmapper_header += '    bufferObj *add_null_to_buffers_map(VkBuffer pTraceVal) {\n'
+        replay_objmapper_header += '        std::lock_guard<std::mutex> lock(m_mutex_buffers);\n\n'
+        replay_objmapper_header += '        auto it = m_indirect_buffers.find(pTraceVal);\n'
+        replay_objmapper_header += '        if (it == m_indirect_buffers.end()) {\n'
+        replay_objmapper_header += '            bufferObj dummyBufObj;\n'
+        replay_objmapper_header += '            m_actual_buffers.push_back(dummyBufObj);\n'
+        replay_objmapper_header += '            m_indirect_buffers[pTraceVal] = &(m_actual_buffers.back());\n'
+        replay_objmapper_header += '            it = m_indirect_buffers.find(pTraceVal);\n'
+        replay_objmapper_header += '        }\n'
+        replay_objmapper_header += '        return it->second;\n'
+        replay_objmapper_header += '    }\n\n'
 
         ##########################################################################
 
@@ -774,6 +807,7 @@ class VkTraceFileOutputGenerator(OutputGenerator):
         replay_objmapper_header += '    const devicememoryObj &(vkReplayObjMapper::*find_devicememory_ptr)(const VkDeviceMemory &deviceMem);\n'
         replay_objmapper_header += '    std::list<devicememoryObj> m_actual_devicememorys;\n'
         replay_objmapper_header += '    devicememoryObj dummyDeviceMemoryObj;\n'
+        replay_objmapper_header += '    std::mutex m_mutex_devicememorys;\n\n'
 
         replay_objmapper_header += '    void add_to_devicememorys_map_origin(VkDeviceMemory pTraceVal, devicememoryObj pReplayVal) {\n'
         replay_objmapper_header += '        m_devicememorys[pTraceVal] = pReplayVal;\n'
@@ -805,6 +839,7 @@ class VkTraceFileOutputGenerator(OutputGenerator):
         replay_objmapper_header += '    }\n'
 
         replay_objmapper_header += '    void add_to_devicememorys_map_premapped(VkDeviceMemory pTraceVal, devicememoryObj pReplayVal) {\n'
+        replay_objmapper_header += '        std::lock_guard<std::mutex> lock(m_mutex_devicememorys);\n\n'
         replay_objmapper_header += '        auto it = m_indirect_devicememorys.find(pTraceVal);\n'
         replay_objmapper_header += '        if (it == m_indirect_devicememorys.end()) {\n'
         replay_objmapper_header += '            m_actual_devicememorys.push_back(pReplayVal);\n'
@@ -817,6 +852,7 @@ class VkTraceFileOutputGenerator(OutputGenerator):
         replay_objmapper_header += '    }\n'
 
         replay_objmapper_header += '    void rm_from_devicememorys_map_premapped(const VkDeviceMemory& key) {\n'
+        replay_objmapper_header += '        std::lock_guard<std::mutex> lock(m_mutex_devicememorys);\n\n'
         replay_objmapper_header += '        auto it = m_indirect_devicememorys.find(key);\n'
         replay_objmapper_header += '        if (it != m_indirect_devicememorys.end()) {\n'
         replay_objmapper_header += '            it->second->pGpuMem = NULL;\n'
@@ -826,6 +862,7 @@ class VkTraceFileOutputGenerator(OutputGenerator):
 
         replay_objmapper_header += '    VkDeviceMemory remap_devicememorys_premapped(const VkDeviceMemory& value) {\n'
         replay_objmapper_header += '        if (value == 0) { return 0; }\n'
+        replay_objmapper_header += '        std::lock_guard<std::mutex> lock(m_mutex_devicememorys);\n\n'
         replay_objmapper_header += '        std::unordered_map<VkDeviceMemory, devicememoryObj*>::const_iterator q = m_indirect_devicememorys.find(value);\n'
         replay_objmapper_header += '        if (q == m_indirect_devicememorys.end()) { vktrace_LogError("Failed to remap VkDeviceMemory."); return VK_NULL_HANDLE; }\n'
         replay_objmapper_header += '        if (q->second == 0) return 0;\n'
@@ -833,6 +870,7 @@ class VkTraceFileOutputGenerator(OutputGenerator):
         replay_objmapper_header += '    }\n'
 
         replay_objmapper_header += '    bool devicememory_exists_premapped(const VkDeviceMemory &value) {\n'
+        replay_objmapper_header += '        std::lock_guard<std::mutex> lock(m_mutex_devicememorys);\n\n'
         replay_objmapper_header += '        auto it = m_indirect_devicememorys.find(value);\n'
         replay_objmapper_header += '        if (it == m_indirect_devicememorys.end()) {\n'
         replay_objmapper_header += '            return false;\n'
@@ -844,6 +882,7 @@ class VkTraceFileOutputGenerator(OutputGenerator):
         replay_objmapper_header += '    }\n'
 
         replay_objmapper_header += '    const devicememoryObj &find_devicememory_premapped(const VkDeviceMemory &deviceMem) {\n'
+        replay_objmapper_header += '        std::lock_guard<std::mutex> lock(m_mutex_devicememorys);\n\n'
         replay_objmapper_header += '        auto it = m_indirect_devicememorys.find(deviceMem);\n'
         replay_objmapper_header += '        if (it == m_indirect_devicememorys.end()) {\n'
         replay_objmapper_header += '            return dummyDeviceMemoryObj;\n'
@@ -867,22 +906,38 @@ class VkTraceFileOutputGenerator(OutputGenerator):
         replay_objmapper_header += '        else {\n'
         replay_objmapper_header += '            return it;\n'
         replay_objmapper_header += '        }\n'
-        replay_objmapper_header += '    }\n'
+        replay_objmapper_header += '    }\n\n'
+
         replay_objmapper_header += '    bool devicememory_exists(const VkDeviceMemory &deviceMem) {\n'
         replay_objmapper_header += '        return (this->*devicememory_exists_ptr)(deviceMem);\n'
-        replay_objmapper_header += '    }\n'
+        replay_objmapper_header += '    }\n\n'
+
         replay_objmapper_header += '    void add_to_devicememorys_map(VkDeviceMemory pTraceVal, devicememoryObj pReplayVal) {\n'
         replay_objmapper_header += '        (this->*add_to_devicememorys_map_ptr)(pTraceVal, pReplayVal);\n'
-        replay_objmapper_header += '    }\n'
+        replay_objmapper_header += '    }\n\n'
+
         replay_objmapper_header += '    void rm_from_devicememorys_map(const VkDeviceMemory& key) {\n'
         replay_objmapper_header += '        (this->*rm_from_devicememorys_map_ptr)(key);\n'
-        replay_objmapper_header += '    }\n'
+        replay_objmapper_header += '    }\n\n'
+
         replay_objmapper_header += '    VkDeviceMemory remap_devicememorys(const VkDeviceMemory& value) {\n'
         replay_objmapper_header += '        return (this->*remap_devicememorys_ptr)(value);\n'
-        replay_objmapper_header += '    }\n'
+        replay_objmapper_header += '    }\n\n'
+
         replay_objmapper_header += '    const devicememoryObj &find_devicememory(const VkDeviceMemory &deviceMem) {\n'
         replay_objmapper_header += '        return (this->*find_devicememory_ptr)(deviceMem);\n'
-        replay_objmapper_header += '    }\n'
+        replay_objmapper_header += '    }\n\n'
+
+        replay_objmapper_header += '    devicememoryObj *add_null_to_devicememorys_map(VkDeviceMemory pTraceVal) {\n'
+        replay_objmapper_header += '        std::lock_guard<std::mutex> lock(m_mutex_devicememorys);\n\n'
+        replay_objmapper_header += '        auto it = m_indirect_devicememorys.find(pTraceVal);\n'
+        replay_objmapper_header += '        if (it == m_indirect_devicememorys.end()) {\n'
+        replay_objmapper_header += '            m_actual_devicememorys.push_back(devicememoryObj(NULL, VK_NULL_HANDLE, pTraceVal));\n'
+        replay_objmapper_header += '            m_indirect_devicememorys[pTraceVal] = &(m_actual_devicememorys.back());\n'
+        replay_objmapper_header += '            it = m_indirect_devicememorys.find(pTraceVal);\n'
+        replay_objmapper_header += '        }\n'
+        replay_objmapper_header += '        return it->second;\n'
+        replay_objmapper_header += '    }\n\n'
 
         ##########################################################################
 
@@ -935,6 +990,7 @@ class VkTraceFileOutputGenerator(OutputGenerator):
                                  'CmdBindVertexBuffers',
                                  'CmdPipelineBarrier',
                                  'QueuePresentKHR',
+                                 'AcquireNextImageKHR',
                                  'CmdWaitEvents',
                                  'DestroyBuffer',
                                  'DestroyImage',
@@ -1016,7 +1072,7 @@ class VkTraceFileOutputGenerator(OutputGenerator):
         # Special cases for functions that use do-while loops
         do_while_dict = {'GetFenceStatus': 'replayResult != pPacket->result && pPacket->result == VK_SUCCESS',
                          'GetEventStatus': '(pPacket->result == VK_EVENT_SET || pPacket->result == VK_EVENT_RESET) && replayResult != pPacket->result',
-                         'GetQueryPoolResults': 'pPacket->result == VK_SUCCESS && replayResult != pPacket->result'}
+                         'GetQueryPoolResults': 'pPacket->result == VK_SUCCESS && (pPacket->flags & VK_QUERY_RESULT_WAIT_BIT) && replayResult != pPacket->result'}
 
         replay_gen_source  = '\n'
         replay_gen_source += '#include "vkreplay_vkreplay.h"\n'
@@ -1262,6 +1318,15 @@ class VkTraceFileOutputGenerator(OutputGenerator):
                     replay_gen_source += '            if (g_pReplaySettings->forceSingleWindow && surfRefCount > 1) {\n'
                     replay_gen_source += '                surfRefCount--;\n'
                     replay_gen_source += '                return vktrace_replay::VKTRACE_REPLAY_SUCCESS;\n'
+                    replay_gen_source += '            }\n'
+                elif 'CreateSemaphore' in cmdname:
+                    replay_gen_source += '            // This code is only used to get the frame number of AndroidR UI Trace.\n'
+                    replay_gen_source += '            extern vkReplay* g_pReplayer; \n'
+                    replay_gen_source += '            if (pPacket->pCreateInfo->pNext && g_pReplayer->get_frame_number() == 0) {\n'
+                    replay_gen_source += '                VkExportSemaphoreCreateInfo* pInfo = (VkExportSemaphoreCreateInfo*)pPacket->pCreateInfo->pNext;\n'
+                    replay_gen_source += '                if (pInfo->sType == VK_STRUCTURE_TYPE_EXPORT_SEMAPHORE_CREATE_INFO && pInfo->pNext == nullptr && pInfo->handleTypes == VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_SYNC_FD_BIT) {\n'
+                    replay_gen_source += '                    g_ruiFrames++;\n'
+                    replay_gen_source += '                }\n'
                     replay_gen_source += '            }\n'
                 elif 'CreatePipelineCache' in cmdname:
                     replay_gen_source += '            if (g_pReplaySettings->enablePipelineCache) {\n'
