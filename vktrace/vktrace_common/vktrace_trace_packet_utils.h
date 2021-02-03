@@ -78,6 +78,10 @@ static FILE* vktrace_open_trace_file(vktrace_process_capture_trace_thread_info* 
     return tracefp;
 };
 
+typedef enum packet_tag {
+    PACKET_TAG__INJECTED = 0x1,
+} packet_tag;
+
 //=============================================================================
 // trace packets
 // There is a trace_packet_header before every trace_packet_body.
@@ -120,11 +124,17 @@ void vktrace_finalize_trace_packet(vktrace_trace_packet_header* pHeader);
 // This has no knowledge of the details of the packet other than its size.
 void vktrace_write_trace_packet(const vktrace_trace_packet_header* pHeader, FileLike* pFile);
 
+// Tag the trace packet
+void vktrace_tag_trace_packet(vktrace_trace_packet_header* pHeader, packet_tag tag);
+
 //=============================================================================
 // Methods for Reading and interpretting trace packets
 
 // Reads in the trace packet header, the body of the packet, and additional buffers
 vktrace_trace_packet_header* vktrace_read_trace_packet(FileLike* pFile);
+
+// Get the trace packet tag
+uint32_t vktrace_get_trace_packet_tag(const vktrace_trace_packet_header* pHeader);
 
 // deletes a trace packet and sets pointer to NULL, this function should be used on a packet read from trace file
 void vktrace_delete_trace_packet_no_lock(vktrace_trace_packet_header** ppHeader);

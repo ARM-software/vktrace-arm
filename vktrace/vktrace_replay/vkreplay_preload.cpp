@@ -199,6 +199,7 @@ static uint64_t load_packet(FileLike* file, void* load_addr, uint64_t packet_siz
             break;
         case VKTRACE_TPI_MARKER_TERMINATE_PROCESS:
             break;
+        case VKTRACE_TPI_META_DATA:
         case VKTRACE_TPI_PORTABILITY_TABLE:
             break;
         case VKTRACE_TPI_VK_vkQueuePresentKHR: {
@@ -323,7 +324,7 @@ static void chunk_loading() {
             while (!g_preload_context.exiting_thd
                    && g_preload_context.next_pkt_size_decompressed
                    && !g_preload_context.exceed_preloading_range
-                   && (cur_chunk->current_address + g_preload_context.next_pkt_size) < boundary_addr) {
+                   && (cur_chunk->current_address + g_preload_context.next_pkt_size_decompressed) < boundary_addr) {
                 if (!load_packet(g_preload_context.tracefile, cur_chunk->current_address, g_preload_context.next_pkt_size)) {
                     break;
                 }

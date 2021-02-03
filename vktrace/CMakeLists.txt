@@ -556,6 +556,8 @@ else()
     message(FATAL_ERROR "Unsupported Platform!")
 endif()
 
+add_definitions(-DVK_ENABLE_BETA_EXTENSIONS)
+
 option(BUILD_VKTRACEVIEWER "Build VkTraceViewer" ON)
 
 set(SRC_DIR "${CMAKE_CURRENT_SOURCE_DIR}")

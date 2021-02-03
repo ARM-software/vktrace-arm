@@ -591,13 +591,6 @@ typedef struct VkDebugMarkerObjectTagInfoEXT_padding {
 //    uint32_t padding_0; // Padding
 //} VkConditionalRenderingBeginInfoEXT_padding;
 
-typedef struct VkIndirectCommandsTokenNVX_padding {
-    VkIndirectCommandsTokenTypeNVX    tokenType;
-    uint32_t padding_0; // Padding
-    VkBuffer                          buffer;
-    VkDeviceSize                      offset;
-} VkIndirectCommandsTokenNVX_padding;
-
 //typedef struct VkCmdProcessCommandsInfoNVX_padding {
 //    VkStructureType                      sType;
 //    const void*                          pNext;

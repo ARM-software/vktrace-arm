@@ -406,9 +406,18 @@ class ApiCostGeneratorOptions(GeneratorOptions):
                  alignFuncParam = 0,
                  expandEnumerants = True,
                  ):
-        GeneratorOptions.__init__(self, filename, directory, apiname, profile,
-            versions, emitversions, defaultExtensions,
-            addExtensions, removeExtensions, emitExtensions, sortProcedure)
+        GeneratorOptions.__init__(self,
+                                  filename = filename,
+                                  directory = directory,
+                                  apiname = apiname,
+                                  profile = profile,
+                                  versions = versions,
+                                  emitversions = emitversions,
+                                  defaultExtensions = defaultExtensions,
+                                  addExtensions = addExtensions,
+                                  removeExtensions = removeExtensions,
+                                  emitExtensions = emitExtensions,
+                                  sortProcedure = sortProcedure)
         self.input           = input
         self.prefixText      = prefixText
         self.genFuncPointers = genFuncPointers

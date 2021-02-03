@@ -380,7 +380,6 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkAllocateMemory(VkDevic
     vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pAllocateInfo));
     vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pAllocator));
     vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pMemory));
-    *((VkDeviceMemory*)((PBYTE)pHeader + pHeader->size - (sizeof(VkDeviceMemory)))) = *pMemory;
 
     if (!g_trimEnabled) {
         // trim not enabled, send packet as usual
@@ -973,7 +972,7 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkEnumeratePhysicalDevic
     packet_vkEnumeratePhysicalDeviceGroups* pPacket = NULL;
     result = mid(instance)->instTable.EnumeratePhysicalDeviceGroups(instance, pPhysicalDeviceGroupCount, pPhysicalDeviceGroupProperties);
     if (pPhysicalDeviceGroupProperties) {
-        for (int i = 0; i < *pPhysicalDeviceGroupCount; ++i) {
+        for (uint32_t i = 0; i < *pPhysicalDeviceGroupCount; ++i) {
             pPhysicalDeviceGroupProperties[i].sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_GROUP_PROPERTIES;
         }
     }
@@ -1372,6 +1371,17 @@ static bool send_vk_trace_file_header(VkInstance instance) {
         pGpuinfo[i].gpu_drv_vers = (uint64_t)devProperties.driverVersion;
     }
 
+    pHeader->enabled_tracer_features = 0;
+    if (getForceFifoEnableFlag()) {
+        pHeader->enabled_tracer_features |= TRACER_FEAT_FORCE_FIFO;
+    }
+    if (getPMBSyncGPUDataBackEnableFlag()) {
+        pHeader->enabled_tracer_features |= TRACER_FEAT_PG_SYNC_GPU_DATA_BACK;
+    }
+    if (getDelaySignalFenceFrames() > 0) {
+        pHeader->enabled_tracer_features |= TRACER_FEAT_DELAY_SIGNAL_FENCE;
+    }
+
     vktrace_FileLike_WriteRaw(vktrace_trace_get_trace_file(), &packet_size, sizeof(packet_size));
     vktrace_FileLike_WriteRaw(vktrace_trace_get_trace_file(), pHeader, header_size);
     rval = true;
@@ -1647,33 +1657,6 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkCreateRenderPass(VkDev
     return result;
 }
 
-VkResult pre_vkCreateRenderPass2(const VkRenderPassCreateInfo2* pCreateInfo) {
-    uint32_t attachmentCount = (pCreateInfo != NULL && (pCreateInfo->pAttachments != NULL)) ? pCreateInfo->attachmentCount : 0;
-    uint32_t dependencyCount = (pCreateInfo != NULL && (pCreateInfo->pDependencies != NULL)) ? pCreateInfo->dependencyCount : 0;
-    uint32_t subpassCount = (pCreateInfo != NULL && (pCreateInfo->pSubpasses != NULL)) ? pCreateInfo->subpassCount : 0;
-
-    // check pNext in Attachments, Dependencies and Subpasses
-    for (uint32_t i = 0; i < attachmentCount; i++) {
-        if (pCreateInfo->pAttachments[i].pNext) {
-            vktrace_LogWarning("The pNext of Attachment is not Null for vkCreateRenderPass2().");
-            break;
-        }
-    }
-    for (uint32_t i = 0; i < dependencyCount; i++) {
-        if (pCreateInfo->pDependencies[i].pNext) {
-            vktrace_LogWarning("The pNext of Dependency is not Null for vkCreateRenderPass2().");
-            break;
-        }
-    }
-    for (uint32_t i = 0; i < subpassCount; i++) {
-        if (pCreateInfo->pSubpasses[i].pNext) {
-            vktrace_LogWarning("The pNext of Subpass is not Null for vkCreateRenderPass2().");
-            break;
-        }
-    }
-    return VK_SUCCESS;
-}
-
 VkResult post_vkCreateRenderPass2(
     vktrace_trace_packet_header* pHeader,
     VkDevice device,
@@ -1699,9 +1682,19 @@ VkResult post_vkCreateRenderPass2(
                                        subpassCount * sizeof(VkSubpassDescription2), pCreateInfo->pSubpasses);
     vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pCreateInfo->pCorrelatedViewMasks),
                                        correlatedViewMaskCount * sizeof(uint32_t), pCreateInfo->pCorrelatedViewMasks);
+
+    for (uint32_t i = 0; i < pPacket->pCreateInfo->attachmentCount; i++) {
+        VkAttachmentDescription2* pAttachment = (VkAttachmentDescription2*)&(pPacket->pCreateInfo->pAttachments[i]);
+        if (pAttachment) vktrace_add_pnext_structs_to_trace_packet(pHeader, (void*)pAttachment, &pCreateInfo->pAttachments[i]);
+    }
+    for (uint32_t i = 0; i < pPacket->pCreateInfo->dependencyCount; i++) {
+        VkSubpassDependency2* pDependencies = (VkSubpassDependency2*)&(pPacket->pCreateInfo->pDependencies[i]);
+        if (pDependencies) vktrace_add_pnext_structs_to_trace_packet(pHeader, (void*)pDependencies, &pCreateInfo->pDependencies[i]);
+    }
     for (uint32_t i = 0; i < pPacket->pCreateInfo->subpassCount; i++) {
         VkSubpassDescription2* pSubpass = (VkSubpassDescription2*)&pPacket->pCreateInfo->pSubpasses[i];
         const VkSubpassDescription2* pSp = &pCreateInfo->pSubpasses[i];
+        if (pSubpass) vktrace_add_pnext_structs_to_trace_packet(pHeader, (void*)pSubpass, pSp);
         vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pSubpass->pInputAttachments),
                                            pSubpass->inputAttachmentCount * sizeof(VkAttachmentReference2), pSp->pInputAttachments);
         vktrace_finalize_buffer_address(pHeader, (void**)&(pSubpass->pInputAttachments));
@@ -1726,6 +1719,7 @@ VkResult post_vkCreateRenderPass2(
     vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pCreateInfo->pAttachments));
     vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pCreateInfo->pDependencies));
     vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pCreateInfo->pSubpasses));
+    vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pCreateInfo->pCorrelatedViewMasks));
     vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pCreateInfo));
     vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pAllocator));
     vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pRenderPass));
@@ -1736,25 +1730,7 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkCreateRenderPass2(VkDe
                                                                             const VkRenderPassCreateInfo2* pCreateInfo,
                                                                             const VkAllocationCallbacks* pAllocator,
                                                                             VkRenderPass* pRenderPass) {
-    trim::TraceLock<std::mutex> lock(g_mutex_trace);
-    VkResult result;
-    vktrace_trace_packet_header* pHeader;
-    packet_vkCreateRenderPass2* pPacket = NULL;
-
-    pre_vkCreateRenderPass2(pCreateInfo);
-
-    // begin custom code (get_struct_chain_size)
-    CREATE_TRACE_PACKET(vkCreateRenderPass2,
-                        get_struct_chain_size((void*)pCreateInfo) + sizeof(VkAllocationCallbacks) + sizeof(VkRenderPass));
-    // end custom code
-    result = mdd(device)->devTable.CreateRenderPass2(device, pCreateInfo, pAllocator, pRenderPass);
-    vktrace_set_packet_entrypoint_end_time(pHeader);
-    pPacket = interpret_body_as_vkCreateRenderPass2(pHeader);
-
-    post_vkCreateRenderPass2(pPacket->header, device, pCreateInfo, pAllocator, pRenderPass, result);
-
-    FINISH_TRACE_PACKET();  // No trimming support for renderpass2
-    return result;
+    return __HOOKED_vkCreateRenderPass2KHR(device, pCreateInfo, pAllocator, pRenderPass);
 }
 
 VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkCreateRenderPass2KHR(VkDevice device,
@@ -1765,8 +1741,6 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkCreateRenderPass2KHR(V
     VkResult result;
     vktrace_trace_packet_header* pHeader;
     packet_vkCreateRenderPass2KHR* pPacket = NULL;
-
-    pre_vkCreateRenderPass2(pCreateInfo);
 
     // begin custom code (get_struct_chain_size)
     CREATE_TRACE_PACKET(vkCreateRenderPass2KHR,
@@ -2599,7 +2573,6 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkQueueSubmit(VkQueue qu
         // memory, so we don't need any read pageguard handling.
         resetAllReadFlagAndPageGuard();
     }
-    pageguardExit();
 #endif
     VkResult result;
     vktrace_trace_packet_header* pHeader;
@@ -2634,7 +2607,6 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkQueueSubmit(VkQueue qu
         if (!dstBuffers.empty()) {
             vktrace_LogWarning("Copy image/buffer to dest buffer occurs !");
             result = mdd(queue)->devTable.QueueWaitIdle(queue);
-            pageguardEnter();
             for (auto iterBufferList = dstBuffers.begin();
                     iterBufferList != dstBuffers.end(); ++iterBufferList) {
                 for (auto iterBuffer = (*iterBufferList)->begin();
@@ -2649,7 +2621,6 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkQueueSubmit(VkQueue qu
                     }
                 }
             }
-            pageguardExit();
         }
     }
 #endif
@@ -2773,6 +2744,10 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkQueueSubmit(VkQueue qu
     if ((g_trimEnabled) && (pSubmits != NULL)) {
         vktrace_leave_critical_section(&trim::trimTransitionMapLock);
     }
+
+#if defined(USE_PAGEGUARD_SPEEDUP)
+    pageguardExit();
+#endif
 
     return result;
 }
@@ -3464,13 +3439,76 @@ VKTRACER_EXPORT VKAPI_ATTR void VKAPI_CALL __HOOKED_vkCmdBeginRenderPass(VkComma
     pPacket = interpret_body_as_vkCmdBeginRenderPass(pHeader);
     pPacket->commandBuffer = commandBuffer;
     pPacket->contents = contents;
-    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pRenderPassBegin), sizeof(VkRenderPassBeginInfo),
-                                       pRenderPassBegin);
+    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pRenderPassBegin), sizeof(VkRenderPassBeginInfo), pRenderPassBegin);
     if (pRenderPassBegin) vktrace_add_pnext_structs_to_trace_packet(pHeader, (void*)(pPacket->pRenderPassBegin), pRenderPassBegin);
     vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pRenderPassBegin->pClearValues), clearValueSize,
                                        pRenderPassBegin->pClearValues);
     vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pRenderPassBegin->pClearValues));
     vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pRenderPassBegin));
+    if (!g_trimEnabled) {
+        FINISH_TRACE_PACKET();
+    } else {
+        vktrace_finalize_trace_packet(pHeader);
+
+        trim::add_CommandBuffer_call(commandBuffer, trim::copy_packet(pHeader));
+        trim::ObjectInfo* pCommandBuffer = trim::get_CommandBuffer_objectInfo(commandBuffer);
+        if (pCommandBuffer != nullptr) {
+            pCommandBuffer->ObjectInfo.CommandBuffer.activeRenderPass = pRenderPassBegin->renderPass;
+
+            trim::ObjectInfo* pFramebuffer = trim::get_Framebuffer_objectInfo(pRenderPassBegin->framebuffer);
+            trim::ObjectInfo* pRenderPass = trim::get_RenderPass_objectInfo(pRenderPassBegin->renderPass);
+            if (pRenderPass != nullptr && pFramebuffer != nullptr) {
+                assert(pRenderPass->ObjectInfo.RenderPass.attachmentCount == pFramebuffer->ObjectInfo.Framebuffer.attachmentCount);
+                uint32_t minAttachmentCount = std::min<uint32_t>(pRenderPass->ObjectInfo.RenderPass.attachmentCount,
+                                                                 pFramebuffer->ObjectInfo.Framebuffer.attachmentCount);
+                for (uint32_t i = 0; i < minAttachmentCount; i++) {
+                    trim::ObjectInfo* pImageView =
+                        trim::get_ImageView_objectInfo(pFramebuffer->ObjectInfo.Framebuffer.pAttachments[i]);
+                    if (pImageView != nullptr) {
+                        pRenderPass->ObjectInfo.RenderPass.pAttachments[i].image = pImageView->ObjectInfo.ImageView.image;
+                    } else {
+                        pRenderPass->ObjectInfo.RenderPass.pAttachments[i].image = VK_NULL_HANDLE;
+                    }
+                }
+            }
+        }
+
+        if (g_trimIsInTrim) {
+            trim::mark_Framebuffer_reference(pRenderPassBegin->framebuffer);
+            trim::write_packet(pHeader);
+        } else {
+            vktrace_delete_trace_packet(&pHeader);
+        }
+    }
+}
+
+VKTRACER_EXPORT VKAPI_ATTR void VKAPI_CALL __HOOKED_vkCmdBeginRenderPass2(
+    VkCommandBuffer commandBuffer,
+    const VkRenderPassBeginInfo* pRenderPassBegin,
+    const VkSubpassBeginInfo* pSubpassBeginInfo) {
+    __HOOKED_vkCmdBeginRenderPass2KHR(commandBuffer, pRenderPassBegin, pSubpassBeginInfo);
+}
+
+VKTRACER_EXPORT VKAPI_ATTR void VKAPI_CALL __HOOKED_vkCmdBeginRenderPass2KHR(
+    VkCommandBuffer commandBuffer,
+    const VkRenderPassBeginInfo* pRenderPassBegin,
+    const VkSubpassBeginInfo* pSubpassBeginInfo) {
+    trim::TraceLock<std::mutex> lock(g_mutex_trace);
+    vktrace_trace_packet_header* pHeader;
+    packet_vkCmdBeginRenderPass2KHR* pPacket = NULL;
+    size_t clearValueSize = sizeof(VkClearValue) * pRenderPassBegin->clearValueCount;
+    CREATE_TRACE_PACKET(vkCmdBeginRenderPass2KHR, get_struct_chain_size((void*)pRenderPassBegin) + get_struct_chain_size((void*)pSubpassBeginInfo) + sizeof(VkSubpassBeginInfo) + clearValueSize);
+    mdd(commandBuffer)->devTable.CmdBeginRenderPass2KHR(commandBuffer, pRenderPassBegin, pSubpassBeginInfo);
+    vktrace_set_packet_entrypoint_end_time(pHeader);
+    pPacket = interpret_body_as_vkCmdBeginRenderPass2KHR(pHeader);
+    pPacket->commandBuffer = commandBuffer;
+    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pRenderPassBegin), sizeof(VkRenderPassBeginInfo), pRenderPassBegin);
+    if (pRenderPassBegin) vktrace_add_pnext_structs_to_trace_packet(pHeader, (void*)(pPacket->pRenderPassBegin), pRenderPassBegin);
+    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pRenderPassBegin->pClearValues), clearValueSize, pRenderPassBegin->pClearValues);
+    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pSubpassBeginInfo), sizeof(VkSubpassBeginInfo), pSubpassBeginInfo);
+    vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pRenderPassBegin->pClearValues));
+    vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pRenderPassBegin));
+    vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pSubpassBeginInfo));
     if (!g_trimEnabled) {
         FINISH_TRACE_PACKET();
     } else {
@@ -3839,7 +3877,7 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkBindBufferMemory2(
     vktrace_trace_packet_header* pHeader;
     packet_vkBindBufferMemory2* pPacket = NULL;
     size_t extra_size = 0;
-    for (int i = 0; i < bindInfoCount; ++i) {
+    for (uint32_t i = 0; i < bindInfoCount; ++i) {
         extra_size += get_struct_chain_size((void*)&(pBindInfos[i]));
     }
     CREATE_TRACE_PACKET(vkBindBufferMemory2, extra_size);
@@ -3887,7 +3925,7 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkBindImageMemory2(
     vktrace_trace_packet_header* pHeader;
     packet_vkBindImageMemory2* pPacket = NULL;
     size_t extra_size = 0;
-    for (int i = 0; i < bindInfoCount; ++i) {
+    for (uint32_t i = 0; i < bindInfoCount; ++i) {
         extra_size += get_struct_chain_size((void*)&(pBindInfos[i]));
     }
     CREATE_TRACE_PACKET(vkBindImageMemory2, extra_size);
@@ -4063,16 +4101,12 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkGetPhysicalDeviceSurfa
     result = mid(physicalDevice)
                  ->instTable.GetPhysicalDeviceSurfacePresentModesKHR(physicalDevice, surface, pPresentModeCount, pPresentModes);
     endTime = vktrace_get_time();
-    uint32_t presentModeCount;
-    VkPresentModeKHR presentModes[1];
     if (getForceFifoEnableFlag()) {
-        presentModeCount = 1;
-        presentModes[0] = VK_PRESENT_MODE_FIFO_KHR;
         if (pPresentModeCount != NULL) {
-            pPresentModeCount = &presentModeCount;
+            *pPresentModeCount = 1;
         }
         if (pPresentModes != NULL) {
-            pPresentModes = presentModes;
+            pPresentModes[0] = VK_PRESENT_MODE_FIFO_KHR;
         }
     }
     _dataSize = (pPresentModeCount == NULL || pPresentModes == NULL) ? 0 : (*pPresentModeCount * sizeof(VkPresentModeKHR));
@@ -5457,154 +5491,6 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkWaitForFences(VkDevice
     vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pFences), fenceCount * sizeof(VkFence), pFences);
     pPacket->result = result;
     vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pFences));
-    if (!g_trimEnabled) {
-        FINISH_TRACE_PACKET();
-    } else {
-        vktrace_finalize_trace_packet(pHeader);
-        if (g_trimIsInTrim) {
-            trim::write_packet(pHeader);
-        } else {
-            vktrace_delete_trace_packet(&pHeader);
-        }
-    }
-    return result;
-}
-
-VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkCreateObjectTableNVX(VkDevice device,
-                                                                               const VkObjectTableCreateInfoNVX* pCreateInfo,
-                                                                               const VkAllocationCallbacks* pAllocator,
-                                                                               VkObjectTableNVX* pObjectTable) {
-    trim::TraceLock<std::mutex> lock(g_mutex_trace);
-    VkResult result;
-    vktrace_trace_packet_header* pHeader;
-    packet_vkCreateObjectTableNVX* pPacket = NULL;
-    size_t dataSize = 0;
-
-    // Determine the size of the packet and create it
-    if (pCreateInfo)
-    {
-        dataSize += get_struct_chain_size((void*)pCreateInfo);
-        dataSize += pCreateInfo->objectCount * sizeof(VkObjectEntryTypeNVX);
-        dataSize += pCreateInfo->objectCount * sizeof(uint32_t);
-        dataSize += pCreateInfo->objectCount * sizeof(VkObjectEntryUsageFlagsNVX);
-    }
-    dataSize += pAllocator ? sizeof(VkAllocationCallbacks) : 0;
-    dataSize += pObjectTable ? sizeof(VkObjectTableNVX) : 0;
-    CREATE_TRACE_PACKET(vkCreateObjectTableNVX, dataSize);
-
-    result = mdd(device)->devTable.CreateObjectTableNVX(device, pCreateInfo, pAllocator, pObjectTable);
-
-    vktrace_set_packet_entrypoint_end_time(pHeader);
-    pPacket = interpret_body_as_vkCreateObjectTableNVX(pHeader);
-    pPacket->device = device;
-    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pCreateInfo), sizeof(VkObjectTableCreateInfoNVX), pCreateInfo);
-    if (pCreateInfo) vktrace_add_pnext_structs_to_trace_packet(pHeader, (void*)pPacket->pCreateInfo, pCreateInfo);
-    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pAllocator), sizeof(VkAllocationCallbacks), NULL);
-    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pObjectTable), sizeof(VkObjectTableNVX), pObjectTable);
-    if (pCreateInfo) {
-        vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pCreateInfo->pObjectEntryTypes), pCreateInfo->objectCount * sizeof(VkObjectEntryTypeNVX), pCreateInfo->pObjectEntryTypes);
-        vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pCreateInfo->pObjectEntryCounts), pCreateInfo->objectCount * sizeof(int32_t), pCreateInfo->pObjectEntryCounts);
-        vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pCreateInfo->pObjectEntryUsageFlags), pCreateInfo->objectCount * sizeof(VkObjectEntryUsageFlagsNVX), pCreateInfo->pObjectEntryUsageFlags);
-        vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pCreateInfo->pObjectEntryTypes));
-        vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pCreateInfo->pObjectEntryCounts));
-        vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pCreateInfo->pObjectEntryUsageFlags));
-    }
-    vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pCreateInfo));
-    vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pAllocator));
-    vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pObjectTable));
-    pPacket->result = result;
-    if (!g_trimEnabled) {
-        FINISH_TRACE_PACKET();
-    } else {
-        vktrace_finalize_trace_packet(pHeader);
-        if (g_trimIsInTrim) {
-            trim::write_packet(pHeader);
-        } else {
-            vktrace_delete_trace_packet(&pHeader);
-        }
-    }
-    return result;
-}
-
-VKTRACER_EXPORT VKAPI_ATTR void VKAPI_CALL
-__HOOKED_vkCmdProcessCommandsNVX(VkCommandBuffer commandBuffer, const VkCmdProcessCommandsInfoNVX* pProcessCommandsInfo) {
-    trim::TraceLock<std::mutex> lock(g_mutex_trace);
-    vktrace_trace_packet_header* pHeader;
-    packet_vkCmdProcessCommandsNVX* pPacket;
-    size_t datasize = 0;
-
-    // Determine the size of the packet and create it
-    datasize = sizeof(VkCmdProcessCommandsInfoNVX) + sizeof(VkCommandBuffer);
-    if (pProcessCommandsInfo)
-    {
-        datasize += get_struct_chain_size((void*)pProcessCommandsInfo);
-        datasize += pProcessCommandsInfo->indirectCommandsTokenCount * sizeof(VkIndirectCommandsTokenNVX);
-    }
-    CREATE_TRACE_PACKET(vkCmdProcessCommandsNVX, datasize);
-
-    mdd(commandBuffer)->devTable.CmdProcessCommandsNVX(commandBuffer, pProcessCommandsInfo);
-
-    vktrace_set_packet_entrypoint_end_time(pHeader);
-
-    pPacket = interpret_body_as_vkCmdProcessCommandsNVX(pHeader);
-    pPacket->commandBuffer = commandBuffer;
-    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pProcessCommandsInfo), sizeof(VkCmdProcessCommandsInfoNVX), pProcessCommandsInfo);
-    if (pProcessCommandsInfo) {
-        vktrace_add_pnext_structs_to_trace_packet(pHeader, (void*)pPacket->pProcessCommandsInfo, pProcessCommandsInfo);
-        vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pProcessCommandsInfo->pIndirectCommandsTokens),
-                                           pProcessCommandsInfo->indirectCommandsTokenCount * sizeof(VkIndirectCommandsTokenNVX), pProcessCommandsInfo->pIndirectCommandsTokens);
-        vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pProcessCommandsInfo->pIndirectCommandsTokens));
-    }
-    vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pProcessCommandsInfo));
-    if (!g_trimEnabled) {
-        FINISH_TRACE_PACKET();
-    } else {
-        vktrace_finalize_trace_packet(pHeader);
-        if (g_trimIsInTrim) {
-            trim::write_packet(pHeader);
-        } else {
-            vktrace_delete_trace_packet(&pHeader);
-        }
-    }
-}
-
-VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkCreateIndirectCommandsLayoutNVX(
-    VkDevice device, const VkIndirectCommandsLayoutCreateInfoNVX* pCreateInfo, const VkAllocationCallbacks* pAllocator,
-    VkIndirectCommandsLayoutNVX* pIndirectCommandsLayout) {
-    trim::TraceLock<std::mutex> lock(g_mutex_trace);
-    VkResult result;
-    vktrace_trace_packet_header* pHeader;
-    packet_vkCreateIndirectCommandsLayoutNVX* pPacket = NULL;
-    size_t datasize = 0;
-
-    // Determine the size of the packet and create it
-    datasize = get_struct_chain_size((void*)pCreateInfo) + sizeof(VkAllocationCallbacks) + sizeof(VkIndirectCommandsLayoutNVX);
-    if (pCreateInfo)
-    {
-        datasize += pCreateInfo->tokenCount * sizeof(VkIndirectCommandsLayoutTokenNVX);
-    }
-    CREATE_TRACE_PACKET(vkCreateIndirectCommandsLayoutNVX, datasize);
-
-    result = mdd(device)->devTable.CreateIndirectCommandsLayoutNVX(device, pCreateInfo, pAllocator, pIndirectCommandsLayout);
-    vktrace_set_packet_entrypoint_end_time(pHeader);
-    pPacket = interpret_body_as_vkCreateIndirectCommandsLayoutNVX(pHeader);
-    pPacket->device = device;
-
-    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pCreateInfo), sizeof(VkIndirectCommandsLayoutCreateInfoNVX), pCreateInfo);
-    if (pCreateInfo) vktrace_add_pnext_structs_to_trace_packet(pHeader, (void*)pPacket->pCreateInfo, pCreateInfo);
-    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pAllocator), sizeof(VkAllocationCallbacks), NULL);
-    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pIndirectCommandsLayout), sizeof(VkIndirectCommandsLayoutNVX), pIndirectCommandsLayout);
-    if (pCreateInfo)
-    {
-        vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pCreateInfo->pTokens),
-                                          pCreateInfo->tokenCount  * sizeof(VkIndirectCommandsLayoutTokenNVX),
-                                          pCreateInfo->pTokens);
-        vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pCreateInfo->pTokens));
-    }
-
-    vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pCreateInfo));
-    vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pAllocator));
-    vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pIndirectCommandsLayout));
     if (!g_trimEnabled) {
         FINISH_TRACE_PACKET();
     } else {

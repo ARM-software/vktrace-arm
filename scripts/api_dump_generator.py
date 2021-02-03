@@ -383,6 +383,7 @@ VK_LAYER_EXPORT VKAPI_ATTR {funcReturn} VKAPI_CALL {funcName}({funcTypedParams})
 @foreach function where('{funcName}' == 'vkQueuePresentKHR')
 VK_LAYER_EXPORT VKAPI_ATTR {funcReturn} VKAPI_CALL {funcName}({funcTypedParams})
 {{
+    ApiDumpInstance::current().outputMutex()->lock();
     dump_head_{funcName}(ApiDumpInstance::current(), {funcNamedParams});
 
     {funcReturn} result = device_dispatch_table({funcDispatchParam})->{funcShortName}({funcNamedParams});
@@ -390,6 +391,7 @@ VK_LAYER_EXPORT VKAPI_ATTR {funcReturn} VKAPI_CALL {funcName}({funcTypedParams})
     dump_body_{funcName}(ApiDumpInstance::current(), result, {funcNamedParams});
 
     ApiDumpInstance::current().nextFrame();
+    ApiDumpInstance::current().outputMutex()->unlock();
     return result;
 }}
 @end function
@@ -495,17 +497,27 @@ TEXT_CODEGEN = """
 
 #include "api_dump.h"
 
-@foreach struct where('{sctName}' != 'VkSurfaceFullScreenExclusiveWin32InfoEXT')
+@foreach struct
 std::ostream& dump_text_{sctName}(const {sctName}& object, const ApiDumpSettings& settings, int indents{sctConditionVars});
-@end struct
-@foreach struct where('{sctName}' == 'VkSurfaceFullScreenExclusiveWin32InfoEXT')
-#if defined(VK_USE_PLATFORM_WIN32_KHR)
-std::ostream& dump_text_VkSurfaceFullScreenExclusiveWin32InfoEXT(const VkSurfaceFullScreenExclusiveWin32InfoEXT& object, const ApiDumpSettings& settings, int indents);
-#endif // VK_USE_PLATFORM_WIN32_KHR
 @end struct
 @foreach union
 std::ostream& dump_text_{unName}(const {unName}& object, const ApiDumpSettings& settings, int indents);
 @end union
+
+//============================= typedefs ==============================//
+// Functions for dumping typedef types that the codegen scripting can't handle
+#if defined(VK_ENABLE_BETA_EXTENSIONS)
+std::ostream& dump_text_VkAccelerationStructureTypeKHR(VkAccelerationStructureTypeKHR object, const ApiDumpSettings& settings, int indents);
+std::ostream& dump_text_VkAccelerationStructureTypeNV(VkAccelerationStructureTypeNV object, const ApiDumpSettings& settings, int indents)
+{{
+    return dump_text_VkAccelerationStructureTypeKHR(object, settings, indents);
+}}
+std::ostream& dump_text_VkBuildAccelerationStructureFlagsKHR(VkBuildAccelerationStructureFlagsKHR object, const ApiDumpSettings& settings, int indents);
+inline std::ostream& dump_text_VkBuildAccelerationStructureFlagsNV(VkBuildAccelerationStructureFlagsNV object, const ApiDumpSettings& settings, int indents)
+{{
+    return dump_text_VkBuildAccelerationStructureFlagsKHR(object, settings, indents);
+}}
+#endif // VK_ENABLE_BETA_EXTENSIONS
 
 //======================== pNext Chain Implementation =======================//
 
@@ -548,6 +560,29 @@ inline std::ostream& dump_text_pNext_trampoline(const void* object, const ApiDum
     return settings.stream();
 }}
 
+std::ostream& dump_text_pNext_struct_name(const void* object, const ApiDumpSettings& settings, int indents)
+{{
+    switch((int64_t) (static_cast<const VkBaseInStructure*>(object)->sType)) {{
+    @foreach struct where('{sctName}' not in ['VkPipelineViewportStateCreateInfo', 'VkCommandBufferBeginInfo'])
+        @if({sctStructureTypeIndex} != -1)
+    case {sctStructureTypeIndex}:
+        settings.formatNameType(settings.stream(), indents, "pNext", "const void*");
+        settings.stream() << "{sctName}\\n";
+        break;
+        @end if
+    @end struct
+    case 47: // VK_STRUCTURE_TYPE_LOADER_INSTANCE_CREATE_INFO
+    case 48: // VK_STRUCTURE_TYPE_LOADER_DEVICE_CREATE_INFO
+        settings.formatNameType(settings.stream(), indents, "pNext", "const void*");
+        settings.stream() << "NULL\\n";
+        break;
+    default:
+        settings.formatNameType(settings.stream(), indents, "pNext", "const void*");
+        settings.stream() << "UNKNOWN (" << (int64_t) (static_cast<const VkBaseInStructure*>(object)->sType) << ")\\n";
+    }}
+    return settings.stream();
+}}
+
 //=========================== Type Implementations ==========================//
 
 @foreach type where('{etyName}' != 'void')
@@ -564,11 +599,27 @@ inline std::ostream& dump_text_{etyName}({etyName} object, const ApiDumpSettings
 
 //========================= Basetype Implementations ========================//
 
-@foreach basetype
+@foreach basetype where(not '{baseName}' in ['ANativeWindow', 'AHardwareBuffer', 'CAMetalLayer'])
 inline std::ostream& dump_text_{baseName}({baseName} object, const ApiDumpSettings& settings, int indents)
 {{
     return settings.stream() << object;
 }}
+@end basetype
+@foreach basetype where('{baseName}' in ['ANativeWindow', 'AHardwareBuffer'])
+#if defined(VK_USE_PLATFORM_ANDROID_KHR)
+inline std::ostream& dump_text_{baseName}(const {baseName}* object, const ApiDumpSettings& settings, int indents)
+{{
+    return settings.stream() << object;
+}}
+#endif
+@end basetype
+@foreach basetype where('{baseName}' in ['CAMetalLayer'])
+#if defined(VK_USE_PLATFORM_METAL_EXT)
+inline std::ostream& dump_text_{baseName}({baseName} object, const ApiDumpSettings& settings, int indents)
+{{
+    return settings.stream() << object;
+}}
+#endif
 @end basetype
 
 //======================= System Type Implementations =======================//
@@ -673,7 +724,7 @@ inline std::ostream& dump_text_{pfnName}({pfnName} object, const ApiDumpSettings
 
 //========================== Struct Implementations =========================//
 
-@foreach struct where('{sctName}' not in ['VkSurfaceFullScreenExclusiveWin32InfoEXT', 'VkPhysicalDeviceMemoryProperties','VkPhysicalDeviceGroupProperties'])
+@foreach struct where('{sctName}' not in ['VkPhysicalDeviceMemoryProperties','VkPhysicalDeviceGroupProperties'])
 std::ostream& dump_text_{sctName}(const {sctName}& object, const ApiDumpSettings& settings, int indents{sctConditionVars})
 {{
     if(settings.showAddress())
@@ -688,13 +739,13 @@ std::ostream& dump_text_{sctName}(const {sctName}& object, const ApiDumpSettings
 
     @if({memPtrLevel} == 0)
         @if('{memName}' != 'pNext')
-    dump_text_value<const {memBaseType}>(object.{memName}, settings, "{memType}", "{memName}", indents + 1, dump_text_{memTypeID}{memInheritedConditions});
+    dump_text_value<const {memBaseType}>(object.{memName}, settings, "{memType}", "{memName}", indents + 1, dump_text_{memTypeID}{memInheritedConditions});  // AET
         @end if
         @if('{memName}' == 'pNext')
     if(object.pNext != nullptr){{
-        dump_text_pNext_trampoline(object.{memName}, settings, indents + 1);
+        dump_text_pNext_struct_name(object.{memName}, settings, indents + 1);
     }} else {{
-        dump_text_value<const {memBaseType}>(object.{memName}, settings, "{memType}", "{memName}", indents + 1, dump_text_{memTypeID}{memInheritedConditions});
+        dump_text_value<const {memBaseType}>(object.{memName}, settings, "{memType}", "{memName}", indents + 1, dump_text_{memTypeID}{memInheritedConditions}); // BET
     }}
         @end if
     @end if
@@ -702,10 +753,15 @@ std::ostream& dump_text_{sctName}(const {sctName}& object, const ApiDumpSettings
     dump_text_pointer<const {memBaseType}>(object.{memName}, settings, "{memType}", "{memName}", indents + 1, dump_text_{memTypeID}{memInheritedConditions});
     @end if
     @if({memPtrLevel} == 1 and '{memLength}' != 'None' and not {memLengthIsMember})
-    dump_text_array<const {memBaseType}>(object.{memName}, {memLength}, settings, "{memType}", "{memChildType}", "{memName}", indents + 1, dump_text_{memTypeID}{memInheritedConditions});
+    dump_text_array<const {memBaseType}>(object.{memName}, {memLength}, settings, "{memType}", "{memChildType}", "{memName}", indents + 1, dump_text_{memTypeID}{memInheritedConditions}); // AQA
     @end if
     @if({memPtrLevel} == 1 and '{memLength}' != 'None' and {memLengthIsMember} and '{memName}' != 'pCode')
-    dump_text_array<const {memBaseType}>(object.{memName}, object.{memLength}, settings, "{memType}", "{memChildType}", "{memName}", indents + 1, dump_text_{memTypeID}{memInheritedConditions});
+    @if('{memLength}'[0].isdigit() or '{memLength}'[0].isupper())
+    dump_text_array<const {memBaseType}>(object.{memName}, {memLength}, settings, "{memType}", "{memChildType}", "{memName}", indents + 1, dump_text_{memTypeID}{memInheritedConditions}); // BQA
+    @end if
+    @if(not ('{memLength}'[0].isdigit() or '{memLength}'[0].isupper()))
+    dump_text_array<const {memBaseType}>(object.{memName}, object.{memLength}, settings, "{memType}", "{memChildType}", "{memName}", indents + 1, dump_text_{memTypeID}{memInheritedConditions}); // BQB
+    @end if
     @end if
 
     @if('{sctName}' == 'VkShaderModuleCreateInfo')
@@ -720,6 +776,16 @@ std::ostream& dump_text_{sctName}(const {sctName}& object, const ApiDumpSettings
     @if('{memCondition}' != 'None')
     else
         dump_text_special("UNUSED", settings, "{memType}", "{memName}", indents + 1);
+    @end if
+    @end member
+
+    @foreach member
+    @if({memPtrLevel} == 0)
+        @if('{memName}' == 'pNext')
+    if(object.pNext != nullptr){{
+        dump_text_pNext_trampoline(object.{memName}, settings, indents < 2 ? indents + 1 : indents);
+    }}
+        @end if
     @end if
     @end member
     return settings.stream();
@@ -749,10 +815,10 @@ std::ostream& dump_text_VkPhysicalDeviceMemoryProperties(const VkPhysicalDeviceM
     else
         settings.stream() << "address:\\n";
 
-    dump_text_value<const uint32_t>(object.memoryTypeCount, settings, "uint32_t", "memoryTypeCount", indents + 1, dump_text_uint32_t);
-    dump_text_array<const VkMemoryType>(object.memoryTypes, object.memoryTypeCount, settings, "VkMemoryType[VK_MAX_MEMORY_TYPES]", "VkMemoryType", "memoryTypes", indents + 1, dump_text_VkMemoryType);
-    dump_text_value<const uint32_t>(object.memoryHeapCount, settings, "uint32_t", "memoryHeapCount", indents + 1, dump_text_uint32_t);
-    dump_text_array<const VkMemoryHeap>(object.memoryHeaps, object.memoryHeapCount, settings, "VkMemoryHeap[VK_MAX_MEMORY_HEAPS]", "VkMemoryHeap", "memoryHeaps", indents + 1, dump_text_VkMemoryHeap);
+    dump_text_value<const uint32_t>(object.memoryTypeCount, settings, "uint32_t", "memoryTypeCount", indents + 1, dump_text_uint32_t); // FET
+    dump_text_array<const VkMemoryType>(object.memoryTypes, object.memoryTypeCount, settings, "VkMemoryType[VK_MAX_MEMORY_TYPES]", "VkMemoryType", "memoryTypes", indents + 1, dump_text_VkMemoryType); // DQA
+    dump_text_value<const uint32_t>(object.memoryHeapCount, settings, "uint32_t", "memoryHeapCount", indents + 1, dump_text_uint32_t); // GET
+    dump_text_array<const VkMemoryHeap>(object.memoryHeaps, object.memoryHeapCount, settings, "VkMemoryHeap[VK_MAX_MEMORY_HEAPS]", "VkMemoryHeap", "memoryHeaps", indents + 1, dump_text_VkMemoryHeap); // EQA
     return settings.stream();
 }}
 
@@ -762,11 +828,11 @@ std::ostream& dump_text_VkPhysicalDeviceGroupProperties(const VkPhysicalDeviceGr
         settings.stream() << &object << ":\\n";
     else
         settings.stream() << "address:\\n";
-    dump_text_value<const VkStructureType>(object.sType, settings, "VkStructureType", "sType", indents + 1, dump_text_VkStructureType);
-    dump_text_value<const void*>(object.pNext, settings, "void*", "pNext", indents + 1, dump_text_void);
-    dump_text_value<const uint32_t>(object.physicalDeviceCount, settings, "uint32_t", "physicalDeviceCount", indents + 1, dump_text_uint32_t);
-    dump_text_array<const VkPhysicalDevice>(object.physicalDevices, object.physicalDeviceCount, settings, "VkPhysicalDevice[VK_MAX_DEVICE_GROUP_SIZE]", "VkPhysicalDevice", "physicalDevices", indents + 1, dump_text_VkPhysicalDevice);
-    dump_text_value<const VkBool32>(object.subsetAllocation, settings, "VkBool32", "subsetAllocation", indents + 1, dump_text_VkBool32);
+    dump_text_value<const VkStructureType>(object.sType, settings, "VkStructureType", "sType", indents + 1, dump_text_VkStructureType); // HET
+    dump_text_value<const void*>(object.pNext, settings, "void*", "pNext", indents + 1, dump_text_void); // IET
+    dump_text_value<const uint32_t>(object.physicalDeviceCount, settings, "uint32_t", "physicalDeviceCount", indents + 1, dump_text_uint32_t); // JET
+    dump_text_array<const VkPhysicalDevice>(object.physicalDevices, object.physicalDeviceCount, settings, "VkPhysicalDevice[VK_MAX_DEVICE_GROUP_SIZE]", "VkPhysicalDevice", "physicalDevices", indents + 1, dump_text_VkPhysicalDevice); // FQA
+    dump_text_value<const VkBool32>(object.subsetAllocation, settings, "VkBool32", "subsetAllocation", indents + 1, dump_text_VkBool32); // KET
     return settings.stream();
 }}
 
@@ -782,13 +848,13 @@ std::ostream& dump_text_{unName}(const {unName}& object, const ApiDumpSettings& 
 
     @foreach choice
     @if({chcPtrLevel} == 0)
-    dump_text_value<const {chcBaseType}>(object.{chcName}, settings, "{chcType}", "{chcName}", indents + 1, dump_text_{chcTypeID});
+    dump_text_value<const {chcBaseType}>(object.{chcName}, settings, "{chcType}", "{chcName}", indents + 1, dump_text_{chcTypeID}); // LET
     @end if
     @if({chcPtrLevel} == 1 and '{chcLength}' == 'None')
     dump_text_pointer<const {chcBaseType}>(object.{chcName}, settings, "{chcType}", "{chcName}", indents + 1, dump_text_{chcTypeID});
     @end if
     @if({chcPtrLevel} == 1 and '{chcLength}' != 'None')
-    dump_text_array<const {chcBaseType}>(object.{chcName}, {chcLength}, settings, "{chcType}", "{chcChildType}", "{chcName}", indents + 1, dump_text_{chcTypeID});
+    dump_text_array<const {chcBaseType}>(object.{chcName}, {chcLength}, settings, "{chcType}", "{chcChildType}", "{chcName}", indents + 1, dump_text_{chcTypeID}); // GQA
     @end if
     @end choice
     return settings.stream();
@@ -801,13 +867,16 @@ std::ostream& dump_text_{unName}(const {unName}& object, const ApiDumpSettings& 
 std::ostream& dump_text_head_{funcName}(ApiDumpInstance& dump_inst, {funcTypedParams})
 {{
     const ApiDumpSettings& settings(dump_inst.settings());
-    settings.stream() << "Thread " << dump_inst.threadID() << ", Frame " << dump_inst.frameCount();
-    @if('{funcName}' in ['vkCmdDraw', 'vkCmdDrawIndexed', 'vkCmdDrawIndirect', 'vkCmdDrawIndexedIndirect'])
-    settings.stream() << ", Drawcall " << dump_inst.nextDrawcall();
-    @end if
-    if(settings.showTimestamp()) {{
-        settings.stream() << ", Time " << dump_inst.current_time_since_start().count() << " us:\\n";
-    }} else {{
+    if (settings.showThreadAndFrame()) {{
+        settings.stream() << "Thread " << dump_inst.threadID() << ", Frame " << dump_inst.frameCount();
+    }}
+    if(settings.showTimestamp() && settings.showThreadAndFrame()) {{
+        settings.stream() << ", ";
+    }}
+    if (settings.showTimestamp()) {{
+        settings.stream() << "Time " << dump_inst.current_time_since_start().count() << " us";
+    }}
+    if (settings.showTimestamp() || settings.showThreadAndFrame()) {{
         settings.stream() << ":\\n";
     }}
     settings.stream() << "{funcName}({funcNamedParams}) returns {funcReturn}";
@@ -835,13 +904,13 @@ std::ostream& dump_text_body_{funcName}(ApiDumpInstance& dump_inst, {funcTypedPa
     {{
         @foreach parameter
         @if({prmPtrLevel} == 0)
-        dump_text_value<const {prmBaseType}>({prmName}, settings, "{prmType}", "{prmName}", 1, dump_text_{prmTypeID}{prmInheritedConditions});
+        dump_text_value<const {prmBaseType}>({prmName}, settings, "{prmType}", "{prmName}", 1, dump_text_{prmTypeID}{prmInheritedConditions}); // MET
         @end if
         @if({prmPtrLevel} == 1 and '{prmLength}' == 'None')
         dump_text_pointer<const {prmBaseType}>({prmName}, settings, "{prmType}", "{prmName}", 1, dump_text_{prmTypeID}{prmInheritedConditions});
         @end if
         @if({prmPtrLevel} == 1 and '{prmLength}' != 'None')
-        dump_text_array<const {prmBaseType}>({prmName}, {prmLength}, settings, "{prmType}", "{prmChildType}", "{prmName}", 1, dump_text_{prmTypeID}{prmInheritedConditions});
+        dump_text_array<const {prmBaseType}>({prmName}, {prmLength}, settings, "{prmType}", "{prmChildType}", "{prmName}", 1, dump_text_{prmTypeID}{prmInheritedConditions}); // HQA
         @end if
         @end parameter
     }}
@@ -891,17 +960,28 @@ HTML_CODEGEN = """
 
 #include "api_dump.h"
 
-@foreach struct where('{sctName}' != 'VkSurfaceFullScreenExclusiveWin32InfoEXT')
+@foreach struct
 std::ostream& dump_html_{sctName}(const {sctName}& object, const ApiDumpSettings& settings, int indents{sctConditionVars});
-@end struct
-@foreach struct where('{sctName}' == 'VkSurfaceFullScreenExclusiveWin32InfoEXT')
-#if defined(VK_USE_PLATFORM_WIN32_KHR)
-std::ostream& dump_html_VkSurfaceFullScreenExclusiveWin32InfoEXT(const VkSurfaceFullScreenExclusiveWin32InfoEXT& object, const ApiDumpSettings& settings, int indents);
-#endif // VK_USE_PLATFORM_WIN32_KHR
 @end struct
 @foreach union
 std::ostream& dump_html_{unName}(const {unName}& object, const ApiDumpSettings& settings, int indents);
 @end union
+
+//============================= typedefs ==============================//
+
+// Functions for dumping typedef types that the codegen scripting can't handle
+#if defined(VK_ENABLE_BETA_EXTENSIONS)
+std::ostream& dump_html_VkAccelerationStructureTypeKHR(VkAccelerationStructureTypeKHR object, const ApiDumpSettings& settings, int indents);
+std::ostream& dump_html_VkAccelerationStructureTypeNV(VkAccelerationStructureTypeNV object, const ApiDumpSettings& settings, int indents)
+{{
+    return dump_html_VkAccelerationStructureTypeKHR(object, settings, indents);
+}}
+std::ostream& dump_html_VkBuildAccelerationStructureFlagsKHR(VkBuildAccelerationStructureFlagsKHR object, const ApiDumpSettings& settings, int indents);
+inline std::ostream& dump_html_VkBuildAccelerationStructureFlagsNV(VkBuildAccelerationStructureFlagsNV object, const ApiDumpSettings& settings, int indents)
+{{
+    return dump_html_VkBuildAccelerationStructureFlagsKHR(object, settings, indents);
+}}
+#endif // VK_ENABLE_BETA_EXTENSIONS
 
 //======================== pNext Chain Implementation =======================//
 
@@ -964,11 +1044,27 @@ inline std::ostream& dump_html_{etyName}({etyName} object, const ApiDumpSettings
 
 //========================= Basetype Implementations ========================//
 
-@foreach basetype
+@foreach basetype where(not '{baseName}' in ['ANativeWindow', 'AHardwareBuffer', 'CAMetalLayer'])
 inline std::ostream& dump_html_{baseName}({baseName} object, const ApiDumpSettings& settings, int indents)
 {{
     return settings.stream() << "<div class='val'>" << object << "</div></summary>";
 }}
+@end basetype
+@foreach basetype where('{baseName}' in ['ANativeWindow', 'AHardwareBuffer'])
+#if defined(VK_USE_PLATFORM_ANDROID_KHR)
+inline std::ostream& dump_html_{baseName}(const {baseName}* object, const ApiDumpSettings& settings, int indents)
+{{
+    return settings.stream() << "<div class='val'>" << object << "</div></summary>";
+}}
+#endif
+@end basetype
+@foreach basetype where('{baseName}' in ['CAMetalLayer'])
+#if defined(VK_USE_PLATFORM_METAL_EXT)
+inline std::ostream& dump_html_{baseName}({baseName} object, const ApiDumpSettings& settings, int indents)
+{{
+    return settings.stream() << "<div class='val'>" << object << "</div></summary>";
+}}
+#endif
 @end basetype
 
 //======================= System Type Implementations =======================//
@@ -1076,7 +1172,7 @@ inline std::ostream& dump_html_{pfnName}({pfnName} object, const ApiDumpSettings
 
 //========================== Struct Implementations =========================//
 
-@foreach struct where('{sctName}' not in ['VkSurfaceFullScreenExclusiveWin32InfoEXT', 'VkPhysicalDeviceMemoryProperties' ,'VkPhysicalDeviceGroupProperties'])
+@foreach struct where('{sctName}' not in ['VkPhysicalDeviceMemoryProperties' ,'VkPhysicalDeviceGroupProperties'])
 std::ostream& dump_html_{sctName}(const {sctName}& object, const ApiDumpSettings& settings, int indents{sctConditionVars})
 {{
     settings.stream() << "<div class=\'val\'>";
@@ -1107,16 +1203,21 @@ std::ostream& dump_html_{sctName}(const {sctName}& object, const ApiDumpSettings
     dump_html_pointer<const {memBaseType}>(object.{memName}, settings, "{memType}", "{memName}", indents + 1, dump_html_{memTypeID}{memInheritedConditions});
     @end if
     @if({memPtrLevel} == 1 and '{memLength}' != 'None' and not {memLengthIsMember})
-    dump_html_array<const {memBaseType}>(object.{memName}, {memLength}, settings, "{memType}", "{memChildType}", "{memName}", indents + 1, dump_html_{memTypeID}{memInheritedConditions});
+    dump_html_array<const {memBaseType}>(object.{memName}, {memLength}, settings, "{memType}", "{memChildType}", "{memName}", indents + 1, dump_html_{memTypeID}{memInheritedConditions}); // ZRR
     @end if
     @if({memPtrLevel} == 1 and '{memLength}' != 'None' and {memLengthIsMember} and '{memName}' != 'pCode')
-    dump_html_array<const {memBaseType}>(object.{memName}, object.{memLength}, settings, "{memType}", "{memChildType}", "{memName}", indents + 1, dump_html_{memTypeID}{memInheritedConditions});
+    @if('{memLength}'[0].isdigit() or '{memLength}'[0].isupper())
+    dump_html_array<const {memBaseType}>(object.{memName}, {memLength}, settings, "{memType}", "{memChildType}", "{memName}", indents + 1, dump_html_{memTypeID}{memInheritedConditions}); // ZRS
+    @end if
+    @if(not ('{memLength}'[0].isdigit() or '{memLength}'[0].isupper()))
+    dump_html_array<const {memBaseType}>(object.{memName}, object.{memLength}, settings, "{memType}", "{memChildType}", "{memName}", indents + 1, dump_html_{memTypeID}{memInheritedConditions}); // ZRT
+    @end if
     @end if
 
     @if('{sctName}' == 'VkShaderModuleCreateInfo')
     @if('{memName}' == 'pCode')
     if(settings.showShader())
-        dump_html_array<const {memBaseType}>(object.{memName}, object.{memLength}, settings, "{memType}", "{memChildType}", "{memName}", indents + 1, dump_html_{memTypeID}{memInheritedConditions});
+        dump_html_array<const {memBaseType}>(object.{memName}, object.{memLength}, settings, "{memType}", "{memChildType}", "{memName}", indents + 1, dump_html_{memTypeID}{memInheritedConditions}); // ZRU
     else
         dump_html_special("SHADER DATA", settings, "{memType}", "{memName}", indents + 1);
     @end if
@@ -1156,9 +1257,9 @@ std::ostream& dump_html_VkPhysicalDeviceMemoryProperties(const VkPhysicalDeviceM
         settings.stream() << "address\\n";
     settings.stream() << "</div></summary>";
     dump_html_value<const uint32_t>(object.memoryTypeCount, settings, "uint32_t", "memoryTypeCount", indents + 1, dump_html_uint32_t);
-    dump_html_array<const VkMemoryType>(object.memoryTypes, object.memoryTypeCount, settings, "VkMemoryType[VK_MAX_MEMORY_TYPES]", "VkMemoryType", "memoryTypes", indents + 1, dump_html_VkMemoryType);
+    dump_html_array<const VkMemoryType>(object.memoryTypes, object.memoryTypeCount, settings, "VkMemoryType[VK_MAX_MEMORY_TYPES]", "VkMemoryType", "memoryTypes", indents + 1, dump_html_VkMemoryType); // ZRV
     dump_html_value<const uint32_t>(object.memoryHeapCount, settings, "uint32_t", "memoryHeapCount", indents + 1, dump_html_uint32_t);
-    dump_html_array<const VkMemoryHeap>(object.memoryHeaps, object.memoryHeapCount, settings, "VkMemoryHeap[VK_MAX_MEMORY_HEAPS]", "VkMemoryHeap", "memoryHeaps", indents + 1, dump_html_VkMemoryHeap);
+    dump_html_array<const VkMemoryHeap>(object.memoryHeaps, object.memoryHeapCount, settings, "VkMemoryHeap[VK_MAX_MEMORY_HEAPS]", "VkMemoryHeap", "memoryHeaps", indents + 1, dump_html_VkMemoryHeap); // ZRW
     return settings.stream();
 }}
 
@@ -1173,7 +1274,7 @@ std::ostream& dump_html_VkPhysicalDeviceGroupProperties(const VkPhysicalDeviceGr
     dump_html_value<const VkStructureType>(object.sType, settings, "VkStructureType", "sType", indents + 1, dump_html_VkStructureType);
     dump_html_value<const void*>(object.pNext, settings, "void*", "pNext", indents + 1, dump_html_void);
     dump_html_value<const uint32_t>(object.physicalDeviceCount, settings, "uint32_t", "physicalDeviceCount", indents + 1, dump_html_uint32_t);
-    dump_html_array<const VkPhysicalDevice>(object.physicalDevices, object.physicalDeviceCount, settings, "VkPhysicalDevice[VK_MAX_DEVICE_GROUP_SIZE]", "VkPhysicalDevice", "physicalDevices", indents + 1, dump_html_VkPhysicalDevice);
+    dump_html_array<const VkPhysicalDevice>(object.physicalDevices, object.physicalDeviceCount, settings, "VkPhysicalDevice[VK_MAX_DEVICE_GROUP_SIZE]", "VkPhysicalDevice", "physicalDevices", indents + 1, dump_html_VkPhysicalDevice); // ZRX
     dump_html_value<const VkBool32>(object.subsetAllocation, settings, "VkBool32", "subsetAllocation", indents + 1, dump_html_VkBool32);
     return settings.stream();
 }}
@@ -1198,7 +1299,7 @@ std::ostream& dump_html_{unName}(const {unName}& object, const ApiDumpSettings& 
     dump_html_pointer<const {chcBaseType}>(object.{chcName}, settings, "{chcType}", "{chcName}", indents + 1, dump_html_{chcTypeID});
     @end if
     @if({chcPtrLevel} == 1 and '{chcLength}' != 'None')
-    dump_html_array<const {chcBaseType}>(object.{chcName}, {chcLength}, settings, "{chcType}", "{chcChildType}", "{chcName}", indents + 1, dump_html_{chcTypeID});
+    dump_html_array<const {chcBaseType}>(object.{chcName}, {chcLength}, settings, "{chcType}", "{chcChildType}", "{chcName}", indents + 1, dump_html_{chcTypeID}); // ZRY
     @end if
     @end choice
     return settings.stream();
@@ -1211,8 +1312,9 @@ std::ostream& dump_html_{unName}(const {unName}& object, const ApiDumpSettings& 
 std::ostream& dump_html_head_{funcName}(ApiDumpInstance& dump_inst, {funcTypedParams})
 {{
     const ApiDumpSettings& settings(dump_inst.settings());
-
-    settings.stream() << "<div class='thd'>Thread " << dump_inst.threadID() << ":</div>";
+    if (settings.showThreadAndFrame()){{
+        settings.stream() << "<div class='thd'>Thread: " << dump_inst.threadID() << "</div>";
+    }}
     if(settings.showTimestamp())
         settings.stream() << "<div class='time'>Time: " << dump_inst.current_time_since_start().count() << " us</div>";
     settings.stream() << "<details class='fn'><summary>";
@@ -1251,7 +1353,7 @@ std::ostream& dump_html_body_{funcName}(ApiDumpInstance& dump_inst, {funcTypedPa
         dump_html_pointer<const {prmBaseType}>({prmName}, settings, "{prmType}", "{prmName}", 1, dump_html_{prmTypeID}{prmInheritedConditions});
         @end if
         @if({prmPtrLevel} == 1 and '{prmLength}' != 'None')
-        dump_html_array<const {prmBaseType}>({prmName}, {prmLength}, settings, "{prmType}", "{prmChildType}", "{prmName}", 1, dump_html_{prmTypeID}{prmInheritedConditions});
+        dump_html_array<const {prmBaseType}>({prmName}, {prmLength}, settings, "{prmType}", "{prmChildType}", "{prmName}", 1, dump_html_{prmTypeID}{prmInheritedConditions}); // ZRZ
         @end if
         @end parameter
     }}
@@ -1308,6 +1410,23 @@ std::ostream& dump_json_{sctName}(const {sctName}& object, const ApiDumpSettings
 @foreach union
 std::ostream& dump_json_{unName}(const {unName}& object, const ApiDumpSettings& settings, int indents);
 @end union
+
+//============================= typedefs ==============================//
+
+// Functions for dumping typedef types that the codegen scripting can't handle
+#if defined(VK_ENABLE_BETA_EXTENSIONS)
+std::ostream& dump_json_VkAccelerationStructureTypeKHR(VkAccelerationStructureTypeKHR object, const ApiDumpSettings& settings, int indents);
+std::ostream& dump_json_VkAccelerationStructureTypeNV(VkAccelerationStructureTypeNV object, const ApiDumpSettings& settings, int indents)
+{{
+    return dump_json_VkAccelerationStructureTypeKHR(object, settings, indents);
+}}
+std::ostream& dump_json_VkBuildAccelerationStructureFlagsKHR(VkBuildAccelerationStructureFlagsKHR object, const ApiDumpSettings& settings, int indents);
+inline std::ostream& dump_json_VkBuildAccelerationStructureFlagsNV(VkBuildAccelerationStructureFlagsNV object, const ApiDumpSettings& settings, int indents)
+{{
+    return dump_json_VkBuildAccelerationStructureFlagsKHR(object, settings, indents);
+}}
+#endif // VK_ENABLE_BETA_EXTENSIONS
+
 
 //======================== pNext Chain Implementation =======================//
 
@@ -1374,11 +1493,27 @@ inline std::ostream& dump_json_{etyName}({etyName} object, const ApiDumpSettings
 
 //========================= Basetype Implementations ========================//
 
-@foreach basetype
+@foreach basetype where(not '{baseName}' in ['ANativeWindow', 'AHardwareBuffer', 'CAMetalLayer'])
 inline std::ostream& dump_json_{baseName}({baseName} object, const ApiDumpSettings& settings, int indents)
 {{
     return settings.stream() << "\\"" << object << "\\"";
 }}
+@end basetype
+@foreach basetype where('{baseName}' in ['ANativeWindow', 'AHardwareBuffer'])
+#if defined(VK_USE_PLATFORM_ANDROID_KHR)
+inline std::ostream& dump_json_{baseName}(const {baseName}* object, const ApiDumpSettings& settings, int indents)
+{{
+    return settings.stream() << "\\"" << object << "\\"";
+}}
+#endif
+@end basetype
+@foreach basetype where('{baseName}' in ['CAMetalLayer'])
+#if defined(VK_USE_PLATFORM_METAL_EXT)
+inline std::ostream& dump_json_{baseName}({baseName} object, const ApiDumpSettings& settings, int indents)
+{{
+    return settings.stream() << "\\"" << object << "\\"";
+}}
+#endif
 @end basetype
 
 //======================= System Type Implementations =======================//
@@ -1429,7 +1564,9 @@ std::ostream& dump_json_{enumName}({enumName} object, const ApiDumpSettings& set
 std::ostream& dump_json_{bitName}({bitName} object, const ApiDumpSettings& settings, int indents)
 {{
     bool is_first = true;
-    settings.stream() << '"' << object << ' ';
+    settings.stream() << '"' << object;
+    if (object)
+        settings.stream() << ' ';
     @foreach option
         @if('{optMultiValue}' != 'None')
             if(object == {optValue})
@@ -1493,13 +1630,13 @@ std::ostream& dump_json_{sctName}(const {sctName}& object, const ApiDumpSettings
 
     @if({memPtrLevel} == 0)
         @if('{memName}' != 'pNext')
-    dump_json_value<const {memBaseType}>(object.{memName}, settings, "{memType}", "{memName}", indents + 1, dump_json_{memTypeID}{memInheritedConditions});
+    dump_json_value<const {memBaseType}>(object.{memName}, NULL, settings, "{memType}", "{memName}", indents + 1, dump_json_{memTypeID}{memInheritedConditions});
         @end if
         @if('{memName}' == 'pNext')
     if(object.pNext != nullptr){{
         dump_json_pNext_trampoline(object.{memName}, settings, indents + 1);
     }} else {{
-        dump_json_value<const {memBaseType}>(object.{memName}, settings, "{memType}", "{memName}", indents + 1, dump_json_{memTypeID}{memInheritedConditions});
+        dump_json_value<const {memBaseType}>(object.{memName}, NULL, settings, "{memType}", "{memName}", indents + 1, dump_json_{memTypeID}{memInheritedConditions});
     }}
         @end if
     @end if
@@ -1507,16 +1644,21 @@ std::ostream& dump_json_{sctName}(const {sctName}& object, const ApiDumpSettings
     dump_json_pointer<const {memBaseType}>(object.{memName}, settings, "{memType}", "{memName}", indents + 1, dump_json_{memTypeID}{memInheritedConditions});
     @end if
     @if({memPtrLevel} == 1 and '{memLength}' != 'None' and not {memLengthIsMember})
-    dump_json_array<const {memBaseType}>(object.{memName}, {memLength}, settings, "{memType}", "{memChildType}", "{memName}", indents + 1, dump_json_{memTypeID}{memInheritedConditions});
+    dump_json_array<const {memBaseType}>(object.{memName}, {memLength}, settings, "{memType}", "{memChildType}", "{memName}", indents + 1, dump_json_{memTypeID}{memInheritedConditions}); // IQA
     @end if
     @if({memPtrLevel} == 1 and '{memLength}' != 'None' and {memLengthIsMember} and '{memName}' != 'pCode')
-    dump_json_array<const {memBaseType}>(object.{memName}, object.{memLength}, settings, "{memType}", "{memChildType}", "{memName}", indents + 1, dump_json_{memTypeID}{memInheritedConditions});
+    @if('{memLength}'[0].isdigit() or '{memLength}'[0].isupper())
+    dump_json_array<const {memBaseType}>(object.{memName}, {memLength}, settings, "{memType}", "{memChildType}", "{memName}", indents + 1, dump_json_{memTypeID}{memInheritedConditions}); // JQA
+    @end if
+    @if(not ('{memLength}'[0].isdigit() or '{memLength}'[0].isupper()))
+    dump_json_array<const {memBaseType}>(object.{memName}, object.{memLength}, settings, "{memType}", "{memChildType}", "{memName}", indents + 1, dump_json_{memTypeID}{memInheritedConditions}); // JQA
+    @end if
     @end if
 
     @if('{sctName}' == 'VkShaderModuleCreateInfo')
     @if('{memName}' == 'pCode')
     if(settings.showShader())
-        dump_json_array<const {memBaseType}>(object.{memName}, object.{memLength}, settings, "{memType}", "{memChildType}", "{memName}", indents + 1, dump_json_{memTypeID}{memInheritedConditions});
+        dump_json_array<const {memBaseType}>(object.{memName}, object.{memLength}, settings, "{memType}", "{memChildType}", "{memName}", indents + 1, dump_json_{memTypeID}{memInheritedConditions}); // KQA
     else
         dump_json_special("SHADER DATA", settings, "{memType}", "{memName}", indents + 1);
     @end if
@@ -1559,13 +1701,13 @@ std::ostream& dump_json_VkPhysicalDeviceMemoryProperties(const VkPhysicalDeviceM
 {{
     settings.stream() << settings.indentation(indents) << "[\\n";
 
-    dump_json_value<const uint32_t>(object.memoryTypeCount, settings, "uint32_t", "memoryTypeCount", indents + 1, dump_json_uint32_t);
+    dump_json_value<const uint32_t>(object.memoryTypeCount, NULL, settings, "uint32_t", "memoryTypeCount", indents + 1, dump_json_uint32_t);
     settings.stream() << ",\\n";
-    dump_json_array<const VkMemoryType>(object.memoryTypes, object.memoryTypeCount, settings, "VkMemoryType[VK_MAX_MEMORY_TYPES]", "VkMemoryType", "memoryTypes", indents + 1, dump_json_VkMemoryType);
+    dump_json_array<const VkMemoryType>(object.memoryTypes, object.memoryTypeCount, settings, "VkMemoryType[VK_MAX_MEMORY_TYPES]", "VkMemoryType", "memoryTypes", indents + 1, dump_json_VkMemoryType); // LQA
     settings.stream() << ",\\n";
-    dump_json_value<const uint32_t>(object.memoryHeapCount, settings, "uint32_t", "memoryHeapCount", indents + 1, dump_json_uint32_t);
+    dump_json_value<const uint32_t>(object.memoryHeapCount, NULL, settings, "uint32_t", "memoryHeapCount", indents + 1, dump_json_uint32_t);
     settings.stream() << ",\\n";
-    dump_json_array<const VkMemoryHeap>(object.memoryHeaps, object.memoryHeapCount, settings, "VkMemoryHeap[VK_MAX_MEMORY_HEAPS]", "VkMemoryHeap", "memoryHeaps", indents + 1, dump_json_VkMemoryHeap);
+    dump_json_array<const VkMemoryHeap>(object.memoryHeaps, object.memoryHeapCount, settings, "VkMemoryHeap[VK_MAX_MEMORY_HEAPS]", "VkMemoryHeap", "memoryHeaps", indents + 1, dump_json_VkMemoryHeap); // MQA
     settings.stream() << "\\n" << settings.indentation(indents) << "]";
     return settings.stream();
 }}
@@ -1574,15 +1716,15 @@ std::ostream& dump_json_VkPhysicalDeviceGroupProperties(const VkPhysicalDeviceGr
 {{
     settings.stream() << settings.indentation(indents) << "[\\n";
 
-    dump_json_value<const VkStructureType>(object.sType, settings, "VkStructureType", "sType", indents + 1, dump_json_VkStructureType);
+    dump_json_value<const VkStructureType>(object.sType, NULL, settings, "VkStructureType", "sType", indents + 1, dump_json_VkStructureType);
     settings.stream() << ",\\n";
-    dump_json_value<const void*>(object.pNext, settings, "void*", "pNext", indents + 1, dump_json_void);
+    dump_json_value<const void*>(object.pNext, object.pNext, settings, "void*", "pNext", indents + 1, dump_json_void);
     settings.stream() << ",\\n";
-    dump_json_value<const uint32_t>(object.physicalDeviceCount, settings, "uint32_t", "physicalDeviceCount", indents + 1, dump_json_uint32_t);
+    dump_json_value<const uint32_t>(object.physicalDeviceCount, NULL, settings, "uint32_t", "physicalDeviceCount", indents + 1, dump_json_uint32_t);
     settings.stream() << ",\\n";
-    dump_json_array<const VkPhysicalDevice>(object.physicalDevices, object.physicalDeviceCount, settings, "VkPhysicalDevice[VK_MAX_DEVICE_GROUP_SIZE]", "VkPhysicalDevice", "physicalDevices", indents + 1, dump_json_VkPhysicalDevice);
+    dump_json_array<const VkPhysicalDevice>(object.physicalDevices, object.physicalDeviceCount, settings, "VkPhysicalDevice[VK_MAX_DEVICE_GROUP_SIZE]", "VkPhysicalDevice", "physicalDevices", indents + 1, dump_json_VkPhysicalDevice); // NQA
     settings.stream() << ",\\n";
-    dump_json_value<const VkBool32>(object.subsetAllocation, settings, "VkBool32", "subsetAllocation", indents + 1, dump_json_VkBool32);
+    dump_json_value<const VkBool32>(object.subsetAllocation, NULL, settings, "VkBool32", "subsetAllocation", indents + 1, dump_json_VkBool32);
     settings.stream() << "\\n" << settings.indentation(indents) << "]";
     return settings.stream();
 }}
@@ -1598,13 +1740,13 @@ std::ostream& dump_json_{unName}(const {unName}& object, const ApiDumpSettings& 
     if (needChoiceComma) settings.stream() << ",\\n";
 
     @if({chcPtrLevel} == 0)
-    dump_json_value<const {chcBaseType}>(object.{chcName}, settings, "{chcType}", "{chcName}", indents + 2, dump_json_{chcTypeID});
+    dump_json_value<const {chcBaseType}>(object.{chcName}, NULL, settings, "{chcType}", "{chcName}", indents + 2, dump_json_{chcTypeID});
     @end if
     @if({chcPtrLevel} == 1 and '{chcLength}' == 'None')
     dump_json_pointer<const {chcBaseType}>(object.{chcName}, settings, "{chcType}", "{chcName}", indents + 2, dump_json_{chcTypeID});
     @end if
     @if({chcPtrLevel} == 1 and '{chcLength}' != 'None')
-    dump_json_array<const {chcBaseType}>(object.{chcName}, {chcLength}, settings, "{chcType}", "{chcChildType}", "{chcName}", indents + 2, dump_json_{chcTypeID});
+    dump_json_array<const {chcBaseType}>(object.{chcName}, {chcLength}, settings, "{chcType}", "{chcChildType}", "{chcName}", indents + 2, dump_json_{chcTypeID}); // OQA
     @end if
     needChoiceComma = true;
     @end choice
@@ -1645,7 +1787,9 @@ std::ostream& dump_json_head_{funcName}(ApiDumpInstance& dump_inst, {funcTypedPa
     settings.stream() << settings.indentation(3) << "\\\"name\\\" : \\\"{funcName}\\\",\\n";
 
     // Display thread info
-    settings.stream() << settings.indentation(3) << "\\\"thread\\\" : \\\"Thread " << dump_inst.threadID() << "\\\",\\n";
+    if (settings.showThreadAndFrame()){{
+        settings.stream() << settings.indentation(3) << "\\\"thread\\\" : \\\"Thread " << dump_inst.threadID() << "\\\",\\n";
+    }}
 
     // Display elapsed time
     if(settings.showTimestamp()) {{
@@ -1688,13 +1832,13 @@ std::ostream& dump_json_body_{funcName}(ApiDumpInstance& dump_inst, {funcTypedPa
         @foreach parameter
         if (needParameterComma) settings.stream() << ",\\n";
         @if({prmPtrLevel} == 0)
-        dump_json_value<const {prmBaseType}>({prmName}, settings, "{prmType}", "{prmName}", 4, dump_json_{prmTypeID}{prmInheritedConditions});
+        dump_json_value<const {prmBaseType}>({prmName}, NULL, settings, "{prmType}", "{prmName}", 4, dump_json_{prmTypeID}{prmInheritedConditions});
         @end if
         @if({prmPtrLevel} == 1 and '{prmLength}' == 'None')
         dump_json_pointer<const {prmBaseType}>({prmName}, settings, "{prmType}", "{prmName}", 4, dump_json_{prmTypeID}{prmInheritedConditions});
         @end if
         @if({prmPtrLevel} == 1 and '{prmLength}' != 'None')
-        dump_json_array<const {prmBaseType}>({prmName}, {prmLength}, settings, "{prmType}", "{prmChildType}", "{prmName}", 4, dump_json_{prmTypeID}{prmInheritedConditions});
+        dump_json_array<const {prmBaseType}>({prmName}, {prmLength}, settings, "{prmType}", "{prmChildType}", "{prmName}", 4, dump_json_{prmTypeID}{prmInheritedConditions}); // PQA
         @end if
         needParameterComma = true;
         @end parameter
@@ -1838,9 +1982,19 @@ class ApiDumpGeneratorOptions(GeneratorOptions):
                  alignFuncParam = 0,
                  expandEnumerants = True,
                  ):
-        GeneratorOptions.__init__(self, conventions, filename, directory, apiname, profile,
-            versions, emitversions, defaultExtensions,
-            addExtensions, removeExtensions, emitExtensions, sortProcedure)
+        GeneratorOptions.__init__(self,
+                                  conventions = conventions,
+                                  filename = filename,
+                                  directory = directory,
+                                  apiname = apiname,
+                                  profile = profile,
+                                  versions = versions,
+                                  emitversions = emitversions,
+                                  defaultExtensions = defaultExtensions,
+                                  addExtensions = addExtensions,
+                                  removeExtensions = removeExtensions,
+                                  emitExtensions = emitExtensions,
+                                  sortProcedure = sortProcedure)
         self.input           = input
         self.prefixText      = prefixText
         self.genFuncPointers = genFuncPointers
@@ -1920,8 +2074,7 @@ class ApiDumpOutputGenerator(OutputGenerator):
         # Find all of the extensions that use the system types
         self.sysTypes = set()
         for node in self.registry.reg.find('types').findall('type'):
-            if node.get('category') is None and node.get('requires') in self.includes and node.get('requires') != 'vk_platform' or \
-                (node.find('name') is not None and node.find('name').text in DEFINE_TYPES): #Handle system types that are '#define'd in spec
+            if node.get('category') is None and node.get('requires') in self.includes and node.get('requires') != 'vk_platform':
                 for extension in self.extTypes:
                     for structName in self.extTypes[extension].vktypes:
                         for struct in self.structs:
@@ -2221,11 +2374,13 @@ class VulkanVariable:
 
         self.lengthMember = False
         lengthString = rootNode.get('len')
+        if lengthString is not None:
+            if "ename:" in lengthString:
+                lengthString = rootNode.get('altlen')
         lengths = []
         if lengthString is not None:
             lengths = re.split(',', lengthString)
             lengths = list(filter(('null-terminated').__ne__, lengths))
-        assert(len(lengths) <= 1)
         if self.arrayLength is None and len(lengths) > 0:
             self.childType = '*'.join(self.type.split('*')[0:-1])
             self.arrayLength = lengths[0]
@@ -2369,11 +2524,12 @@ class VulkanEnum:
                 if ('dir' in child.keys()):
                     childValue = -childValue
 
-            # Check for duplicates, TODO: Maybe solve up a level
+            # Check for duplicates
             duplicate = False
             for o in self.options:
                 if o.values()['optName'] == childName:
                     duplicate = True
+                    break
             if duplicate:
                 continue
 
@@ -2382,6 +2538,14 @@ class VulkanEnum:
         for ext in extensions:
             if self.name in ext.enumValues:
                 childName, childValue = ext.enumValues[self.name]
+                duplicate = False
+                # Check for duplicates
+                for o in self.options:
+                    if o.values()['optName'] == childName:
+                        duplicate = True
+                        break
+                if duplicate:
+                    continue
                 self.options.append(VulkanEnum.Option(childName, childValue, None, None))
 
     def values(self):

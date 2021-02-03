@@ -23,15 +23,16 @@
 
 #include "vktrace_common.h"
 
-#define VKTRACE_TRACE_FILE_VERSION_2 0x0002
-#define VKTRACE_TRACE_FILE_VERSION_3 0x0003
-#define VKTRACE_TRACE_FILE_VERSION_4 0x0004
-#define VKTRACE_TRACE_FILE_VERSION_5 0x0005
-#define VKTRACE_TRACE_FILE_VERSION_6 0x0006
-#define VKTRACE_TRACE_FILE_VERSION_7 0x0007  // Vulkan 1.1
-#define VKTRACE_TRACE_FILE_VERSION_8 0x0008  // Compression format
-#define VKTRACE_TRACE_FILE_VERSION_9 0x0009  // Add tracer version in the file header
-#define VKTRACE_TRACE_FILE_VERSION VKTRACE_TRACE_FILE_VERSION_9
+#define VKTRACE_TRACE_FILE_VERSION_2  0x0002
+#define VKTRACE_TRACE_FILE_VERSION_3  0x0003
+#define VKTRACE_TRACE_FILE_VERSION_4  0x0004
+#define VKTRACE_TRACE_FILE_VERSION_5  0x0005
+#define VKTRACE_TRACE_FILE_VERSION_6  0x0006
+#define VKTRACE_TRACE_FILE_VERSION_7  0x0007  // Vulkan 1.1
+#define VKTRACE_TRACE_FILE_VERSION_8  0x0008  // Compression format
+#define VKTRACE_TRACE_FILE_VERSION_9  0x0009  // Add tracer version in the file header
+#define VKTRACE_TRACE_FILE_VERSION_10 0x000A  // Add tracer enabled features and meta data for injected calls in the file header
+#define VKTRACE_TRACE_FILE_VERSION VKTRACE_TRACE_FILE_VERSION_10
 
 // vkreplay can replay version 6 (the last Vulkan 1.0 format)
 #define VKTRACE_TRACE_FILE_VERSION_MINIMUM_COMPATIBLE VKTRACE_TRACE_FILE_VERSION_6
@@ -391,6 +392,12 @@ typedef enum _VKTRACE_TRACE_PACKET_ID_VK {
     VKTRACE_TPI_VK_vkCmdBeginRenderPass2KHR = 310,
     VKTRACE_TPI_VK_vkCmdNextSubpass2KHR = 311,
     VKTRACE_TPI_VK_vkCmdEndRenderPass2KHR = 312,
+    VKTRACE_TPI_META_DATA = 0xFFF1,
+    VKTRACE_TPI_RESERVED_ID_1 = 0xFFF2,
+    VKTRACE_TPI_RESERVED_ID_2 = 0xFFF3,
+    VKTRACE_TPI_RESERVED_ID_3 = 0xFFF4,
+    // Reserved ID for the special packets
+    VKTRACE_TPI_RESERVED_ID_13 = 0xFFFE,
 } VKTRACE_TRACE_PACKET_ID_VK;
 
 #define VKTRACE_BIG_ENDIAN 1
@@ -422,6 +429,12 @@ typedef enum VKTRACE_COMPRESS_TYPE {
     VKTRACE_COMPRESS_TYPE_SNAPPY = 2,
 } VKTRACE_COMPRESS_TYPE;
 
+typedef enum VKTRACE_TRACER_FEATURE {
+    TRACER_FEAT_FORCE_FIFO              = 0x1,
+    TRACER_FEAT_PG_SYNC_GPU_DATA_BACK   = 0x2,
+    TRACER_FEAT_DELAY_SIGNAL_FENCE      = 0x4
+} VKTRACE_TRACER_FEATURE;
+
 typedef struct {
     uint16_t trace_file_version;
     uint16_t tracer_version;
@@ -443,7 +456,9 @@ typedef struct {
     ALIGN8 uint64_t os;
 
     // Reserve some spaece in case more fields need to be added in the future
-    ALIGN8 uint64_t reserved2[7];
+    ALIGN8 uint64_t reserved2[5];
+    ALIGN8 uint64_t meta_data_offset;
+    ALIGN8 uint64_t enabled_tracer_features;
     ALIGN8 uint64_t decompress_file_size;
     // The header ends with number of gpus and a gpu_id/drv_vers pair for each gpu
     ALIGN8 uint64_t n_gpuinfo;

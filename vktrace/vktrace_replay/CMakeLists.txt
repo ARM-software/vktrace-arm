@@ -94,6 +94,7 @@ include_directories(
     ${VKTRACE_VULKAN_INCLUDE_DIR}
     ${CMAKE_BINARY_DIR}
     ${Vulkan-ValidationLayers_INCLUDE_DIR}
+    ${JSONCPP_INCLUDE_DIR}
 )
 
 add_executable(${PROJECT_NAME} ${SRC_LIST} ${HDR_LIST})

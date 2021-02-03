@@ -81,6 +81,11 @@ echo Generating VT systrace header/source files
 echo ********
 py -3 %VT_SCRIPTS%\vt_genvk.py -registry %REGISTRY% -scripts %REGISTRY_PATH% vktrace_systrace.cpp
 
+REM emptydriver
+echo Generating VT systrace header/source files
+echo ********
+py -3 %VT_SCRIPTS%\vt_genvk.py -registry %REGISTRY% -scripts %REGISTRY_PATH% vktrace_emptydriver.cpp
+
 REM vktrace
 echo Generating VT vktrace header/source files
 echo ********

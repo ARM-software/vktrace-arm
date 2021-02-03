@@ -54,9 +54,19 @@ class ToolHelperFileOutputGeneratorOptions(GeneratorOptions):
                  alignFuncParam = 0,
                  library_name = '',
                  helper_file_type = ''):
-        GeneratorOptions.__init__(self, conventions, filename, directory, apiname, profile,
-                                  versions, emitversions, defaultExtensions,
-                                  addExtensions, removeExtensions, emitExtensions, sortProcedure)
+        GeneratorOptions.__init__(self,
+                                  conventions = conventions,
+                                  filename = filename,
+                                  directory = directory,
+                                  apiname = apiname,
+                                  profile = profile,
+                                  versions = versions,
+                                  emitversions = emitversions,
+                                  defaultExtensions = defaultExtensions,
+                                  addExtensions = addExtensions,
+                                  removeExtensions = removeExtensions,
+                                  emitExtensions = emitExtensions,
+                                  sortProcedure = sortProcedure)
         self.prefixText       = prefixText
         self.genFuncPointers  = genFuncPointers
         self.protectFile      = protectFile
@@ -219,7 +229,7 @@ class ToolHelperFileOutputGenerator(OutputGenerator):
     def paramIsPointer(self, param):
         ispointer = False
         for elem in param:
-            if ((elem.tag is not 'type') and (elem.tail is not None)) and '*' in elem.tail:
+            if elem.tag == 'type' and elem.tail is not None and '*' in elem.tail:
                 ispointer = True
         return ispointer
     #
@@ -272,17 +282,20 @@ class ToolHelperFileOutputGenerator(OutputGenerator):
     def getLen(self, param):
         result = None
         len = param.attrib.get('len')
+        altlen = param.attrib.get('altlen')
         if len and len != 'null-terminated':
             # For string arrays, 'len' can look like 'count,null-terminated', indicating that we
             # have a null terminated array of strings.  We strip the null-terminated from the
             # 'len' field and only return the parameter specifying the string count
-            if 'null-terminated' in len:
+            if ',' in len:
                 result = len.split(',')[0]
             else:
                 result = len
             if 'latexmath' in len:
                 param_type, param_name = self.getTypeNameTuple(param)
                 len_name, result = self.parseLateXMath(len)
+            if "ename:" in len:
+                result = altlen
             # Spec has now notation for len attributes, using :: instead of platform specific pointer symbol
             result = str(result).replace('::', '->')
         return result
@@ -437,10 +450,29 @@ class ToolHelperFileOutputGenerator(OutputGenerator):
                         if member.len is not None:
                             struct_size_funcs, counter_declared = self.DeclareCounter(struct_size_funcs, counter_declared)
                             struct_size_funcs += '        for (i = 0; i < struct_ptr->%s; i++) {\n' % member.len
-                            struct_size_funcs += '            struct_size += vk_size_%s(&struct_ptr->%s[i]);\n' % (member.type.lower(), member.name)
+                            if 'ppGeometries' == member.name:
+                                struct_size_funcs += '            struct_size += vk_size_%s(struct_ptr->%s[i]);\n' % (member.type.lower(), member.name)
+                            else:
+                                struct_size_funcs += '            struct_size += vk_size_%s(&struct_ptr->%s[i]);\n' % (member.type.lower(), member.name)
+                            if 'vkrenderpasscreateinfo2' == item.name.lower():
+                                struct_size_funcs += '            if (struct_ptr->%s[i].pNext) {\n' % member.name
+                                struct_size_funcs += '                struct_size += get_struct_chain_size(struct_ptr->%s[i].pNext);\n' % member.name
+                                struct_size_funcs += '            }\n'
+                            if 'vksubpassdescription2' == item.name.lower():
+                                struct_size_funcs += '            if (struct_ptr->%s && struct_ptr->%s[i].pNext) {\n' % (member.name, member.name)
+                                struct_size_funcs += '                struct_size += get_struct_chain_size(struct_ptr->%s[i].pNext);\n' % member.name
+                                struct_size_funcs += '            }\n'
                             struct_size_funcs += '        }\n'
                         else:
-                            struct_size_funcs += '        struct_size += vk_size_%s(struct_ptr->%s);\n' % (member.type.lower(), member.name)
+                            star = '';
+                            if member.name == 'ppGeometries':
+                                # Kludge for ppGeometries member, it needs to be dereferenced
+                                star = '*'
+                            if 'vksubpassdescription2' == item.name.lower():
+                                struct_size_funcs += '        if (struct_ptr->%s != NULL && struct_ptr->%s->pNext) {\n' % (member.name, member.name)
+                                struct_size_funcs += '            struct_size += get_struct_chain_size(&struct_ptr->%s->pNext);\n' % member.name
+                                struct_size_funcs += '        }\n'
+                            struct_size_funcs += '        struct_size += vk_size_%s(%sstruct_ptr->%s);\n' % (member.type.lower(), star, member.name)
                     else:
                         if member.type == 'char':
                             # Deal with sizes of character strings
@@ -457,7 +489,11 @@ class ToolHelperFileOutputGenerator(OutputGenerator):
                                 checked_type = member.type
                                 if checked_type == 'void':
                                     checked_type = 'void*'
-                                struct_size_funcs += '        struct_size += (struct_ptr->%s ) * sizeof(%s);\n' % (member.len, checked_type)
+                                if member.len[0].isdigit() or member.len[0].isupper():
+                                    # Kludge for length that is a number or a constant
+                                    struct_size_funcs += '        struct_size += ( %s ) * sizeof(%s);\n' % (member.len, checked_type)
+                                else:
+                                    struct_size_funcs += '        struct_size += (struct_ptr->%s ) * sizeof(%s);\n' % (member.len, checked_type)
             struct_size_funcs += '    }\n'
             struct_size_funcs += '    return struct_size;\n'
             struct_size_funcs += '}\n'

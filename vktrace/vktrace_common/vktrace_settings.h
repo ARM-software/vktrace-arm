@@ -115,10 +115,11 @@ void vktrace_SettingGroup_Apply_Overrides(vktrace_SettingGroup* pSettingGroup, v
                                           unsigned int numOverrideGroups);
 
 int vktrace_SettingGroup_init_from_cmdline(vktrace_SettingGroup* pSettingGroup, int argc, char* argv[],
-                                           char** ppOut_remaining_args);
+                                           char** ppOut_remaining_args, bool *pOptionsOverridedByCmd);
 
 void vktrace_SettingGroup_print(const vktrace_SettingGroup* pSettingGroup);
 void vktrace_SettingInfo_print(const vktrace_SettingInfo* pSetting);
+void vktrace_Setting_to_str(const vktrace_SettingInfo* pSetting, char *name, char *value);
 
 char* vktrace_SettingInfo_stringify_value(vktrace_SettingInfo* pSetting);
 BOOL vktrace_SettingInfo_parse_value(vktrace_SettingInfo* pSetting, const char* arg);

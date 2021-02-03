@@ -58,4 +58,5 @@ extern uint64_t lastPacketIndex;
 extern uint64_t lastPacketEndTime;
 
 void vktrace_appendPortabilityPacket(FILE* pTraceFile, std::vector<uint64_t>& portabilityTable);
+uint32_t vktrace_appendMetaData(FILE* pTraceFile, const std::vector<uint64_t>& injectedData);
 void vktrace_resetFilesize(FILE* pTraceFile, uint64_t decompressFilesize);

@@ -129,7 +129,6 @@ approved_ext = [
                 'VK_NV_viewport_array2',
                 'VK_NV_viewport_swizzle',
                 'VK_NV_win32_keyed_mutex',
-                'VK_NVX_device_generated_commands',
                 'VK_NVX_multiview_per_view_attributes',
                 'VK_EXT_sample_locations',
                 'VK_KHR_sampler_ycbcr_conversion',
@@ -188,9 +187,19 @@ class VkTraceFileOutputGeneratorOptions(GeneratorOptions):
                  expandEnumerants = True,
                  library_name = '',
                  vktrace_file_type = ''):
-        GeneratorOptions.__init__(self, conventions, filename, directory, apiname, profile,
-                                  versions, emitversions, defaultExtensions,
-                                  addExtensions, removeExtensions, emitExtensions, sortProcedure)
+        GeneratorOptions.__init__(self,
+                                  conventions = conventions,
+                                  filename = filename,
+                                  directory = directory,
+                                  apiname = apiname,
+                                  profile = profile,
+                                  versions = versions,
+                                  emitversions = emitversions,
+                                  defaultExtensions = defaultExtensions,
+                                  addExtensions = addExtensions,
+                                  removeExtensions = removeExtensions,
+                                  emitExtensions=emitExtensions,
+                                  sortProcedure = sortProcedure)
         self.prefixText       = prefixText
         self.genFuncPointers  = genFuncPointers
         self.protectFile      = protectFile
@@ -1051,17 +1060,15 @@ class VkTraceFileOutputGenerator(OutputGenerator):
                                  # VK_EXT_display_control
                                  'RegisterDeviceEventEXT',
                                  'RegisterDisplayEventEXT',
-                                 # VK_NVX_device_generated_commands
-                                 'CreateObjectTableNVX',
-                                 'CmdProcessCommandsNVX',
-                                 'CreateIndirectCommandsLayoutNVX',
                                  'BindBufferMemory2KHR',
                                  'BindImageMemory2KHR',
                                  'BindBufferMemory2',
                                  'BindImageMemory2',
                                  'GetDisplayPlaneSupportedDisplaysKHR',
                                  'EnumerateDeviceExtensionProperties',
-                                 'CreateSampler'
+                                 'CreateSampler',
+                                 'CmdBeginRenderPass2',
+                                 'CmdBeginRenderPass2KHR'
                                  ]
         # Map APIs to functions if body is fully custom
         custom_body_dict = {'CreateInstance': self.GenReplayCreateInstance,
@@ -1072,7 +1079,7 @@ class VkTraceFileOutputGenerator(OutputGenerator):
         # Special cases for functions that use do-while loops
         do_while_dict = {'GetFenceStatus': 'replayResult != pPacket->result && pPacket->result == VK_SUCCESS',
                          'GetEventStatus': '(pPacket->result == VK_EVENT_SET || pPacket->result == VK_EVENT_RESET) && replayResult != pPacket->result',
-                         'GetQueryPoolResults': 'pPacket->result == VK_SUCCESS && (pPacket->flags & VK_QUERY_RESULT_WAIT_BIT) && replayResult != pPacket->result'}
+                         'GetQueryPoolResults': 'pPacket->result == VK_SUCCESS && (pPacket->flags & VK_QUERY_RESULT_WAIT_BIT || queryType == VK_QUERY_TYPE_OCCLUSION) && replayResult != pPacket->result'}
 
         replay_gen_source  = '\n'
         replay_gen_source += '#include "vkreplay_vkreplay.h"\n'
@@ -1182,9 +1189,10 @@ class VkTraceFileOutputGenerator(OutputGenerator):
                         replay_gen_source += '            }\n'
                     else:
                         replay_gen_source += '            VkImage pktImg = pPacket->pCreateInfo->image;\n'
-                        replay_gen_source += '            if (curSwapchainImgState.traceImageToImageIndex.find(pktImg) != curSwapchainImgState.traceImageToImageIndex.end()) {\n'
-                        replay_gen_source += '                if (curSwapchainImgState.traceImageToImageIndex[pktImg] == m_pktImgIndex) {\n'
-                        replay_gen_source += '                    pktImg = curSwapchainImgState.traceImageIndexToImage[m_imageIndex];\n'
+                        replay_gen_source += '            SwapchainImageState& curSwapchainImgStat = swapchainImageStates[curSwapchainHandle];\n'
+                        replay_gen_source += '            if (curSwapchainImgStat.traceImageToImageIndex.find(pktImg) != curSwapchainImgStat.traceImageToImageIndex.end()) {\n'
+                        replay_gen_source += '                if (curSwapchainImgStat.traceImageToImageIndex[pktImg] == m_pktImgIndex) {\n'
+                        replay_gen_source += '                    pktImg = curSwapchainImgStat.traceImageIndexToImage[m_imageIndex];\n'
                         replay_gen_source += '                }\n'
                         replay_gen_source += '            }\n'
                         replay_gen_source += '            createInfo.image = m_objMapper.remap_images(pktImg);\n'
@@ -1238,6 +1246,13 @@ class VkTraceFileOutputGenerator(OutputGenerator):
                         last_name = p.name
 
                 if cmdname in do_while_dict:
+                    if cmdname == 'GetFenceStatus':
+                        replay_gen_source += '            uint32_t call_id = m_inFrameRange ? VKTRACE_TPI_VK_vkGetFenceStatus : 0;\n'
+                    elif cmdname == 'GetEventStatus':
+                        replay_gen_source += '            uint32_t call_id = m_inFrameRange ? VKTRACE_TPI_VK_vkGetEventStatus : 0;\n'
+                    elif cmdname == 'GetQueryPoolResults':
+                        replay_gen_source += '            uint32_t call_id = m_inFrameRange ? VKTRACE_TPI_VK_vkGetQueryPoolResults : 0;\n'
+                        replay_gen_source += '            VkQueryType queryType = m_querypool_type[pPacket->queryPool];\n'
                     replay_gen_source += '            do {\n'
 
                 if cmdname == 'DestroyInstance':
@@ -1367,6 +1382,28 @@ class VkTraceFileOutputGenerator(OutputGenerator):
                     replay_gen_source += '                }\n'
                     replay_gen_source += '                m_pipelinecache_accessor->RemoveCollectedPacketInfo(pPacket->device, pPacket->pipelineCache);\n'
                     replay_gen_source += '            }\n'
+                elif 'GetPhysicalDeviceImageFormatProperties2' in cmdname:
+                    replay_gen_source += '            #if !defined(ANDROID)\n'
+                    replay_gen_source += '            if (pPacket->pImageFormatInfo != nullptr) {\n'
+                    replay_gen_source += '                VkPhysicalDeviceExternalImageFormatInfo* pPhysicalDeviceExternalImageFormatInfo = (VkPhysicalDeviceExternalImageFormatInfo*)find_ext_struct(\n'
+                    replay_gen_source += '                    (const vulkan_struct_header*)pPacket->pImageFormatInfo, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_IMAGE_FORMAT_INFO);\n'
+                    replay_gen_source += '                if (pPhysicalDeviceExternalImageFormatInfo != nullptr && (pPhysicalDeviceExternalImageFormatInfo->handleType & VK_EXTERNAL_MEMORY_HANDLE_TYPE_ANDROID_HARDWARE_BUFFER_BIT_ANDROID)) {\n'
+                    replay_gen_source += '                    uint32_t handleType = pPhysicalDeviceExternalImageFormatInfo->handleType & (~VK_EXTERNAL_MEMORY_HANDLE_TYPE_ANDROID_HARDWARE_BUFFER_BIT_ANDROID);\n'
+                    replay_gen_source += '                    if (handleType == 0) {\n'
+                    replay_gen_source += '                        vulkan_struct_header** ppNext = (vulkan_struct_header**)&(pPacket->pImageFormatInfo->pNext);\n'
+                    replay_gen_source += '                        while (*ppNext != nullptr) {\n'
+                    replay_gen_source += '                            if ((void*)*ppNext == (void*)pPhysicalDeviceExternalImageFormatInfo) {\n'
+                    replay_gen_source += '                                *ppNext = (vulkan_struct_header*)pPhysicalDeviceExternalImageFormatInfo->pNext;\n'
+                    replay_gen_source += '                                break;\n'
+                    replay_gen_source += '                            }\n'
+                    replay_gen_source += '                            ppNext = (vulkan_struct_header**)&(*ppNext)->pNext;\n'
+                    replay_gen_source += '                        }\n'
+                    replay_gen_source += '                    } else {\n'
+                    replay_gen_source += '                        pPhysicalDeviceExternalImageFormatInfo->handleType = (VkExternalMemoryHandleTypeFlagBits)handleType;\n'
+                    replay_gen_source += '                    }\n'
+                    replay_gen_source += '                }\n'
+                    replay_gen_source += '            }\n'
+                    replay_gen_source += '            #endif\n'
                 elif cmdname == 'GetSemaphoreFdKHR':
                     replay_gen_source += '            VkSemaphore semaphore = m_objMapper.remap_semaphores(pPacket->pGetFdInfo->semaphore);\n'
                     replay_gen_source += '            if (pPacket->pGetFdInfo->semaphore != VK_NULL_HANDLE && semaphore == VK_NULL_HANDLE) {\n'
@@ -1430,14 +1467,16 @@ class VkTraceFileOutputGenerator(OutputGenerator):
                 if cmdname == 'GetRefreshCycleDurationGOOGLE' or cmdname == 'GetPastPresentationTimingGOOGLE':
                     replay_gen_source += '            }\n'
                 if cmdname == 'DestroyFramebuffer':
-                    replay_gen_source += '            if (curSwapchainImgState.traceFramebufferToImageIndex.find(pPacket->framebuffer) != curSwapchainImgState.traceFramebufferToImageIndex.end()) {\n'
-                    replay_gen_source += '                curSwapchainImgState.traceImageIndexToFramebuffer.erase(curSwapchainImgState.traceFramebufferToImageIndex[pPacket->framebuffer]);\n'
-                    replay_gen_source += '                curSwapchainImgState.traceFramebufferToImageIndex.erase(pPacket->framebuffer);\n'
+                    replay_gen_source += '            SwapchainImageState& curSwapchainImgStat = swapchainImageStates[curSwapchainHandle];\n'
+                    replay_gen_source += '            if (curSwapchainImgStat.traceFramebufferToImageIndex.find(pPacket->framebuffer) != curSwapchainImgStat.traceFramebufferToImageIndex.end()) {\n'
+                    replay_gen_source += '                curSwapchainImgStat.traceImageIndexToFramebuffer.erase(curSwapchainImgStat.traceFramebufferToImageIndex[pPacket->framebuffer]);\n'
+                    replay_gen_source += '                curSwapchainImgStat.traceFramebufferToImageIndex.erase(pPacket->framebuffer);\n'
                     replay_gen_source += '            }\n'
                 elif cmdname == 'DestroyImageView':
-                    replay_gen_source += '            if (curSwapchainImgState.traceImageViewToImageIndex.find(pPacket->imageView) != curSwapchainImgState.traceImageViewToImageIndex.end()) {\n'
-                    replay_gen_source += '                curSwapchainImgState.traceImageIndexToImageView.erase(curSwapchainImgState.traceImageViewToImageIndex[pPacket->imageView]);\n'
-                    replay_gen_source += '                curSwapchainImgState.traceImageViewToImageIndex.erase(pPacket->imageView);\n'
+                    replay_gen_source += '            SwapchainImageState& curSwapchainImgStat = swapchainImageStates[curSwapchainHandle];\n'
+                    replay_gen_source += '            if (curSwapchainImgStat.traceImageViewToImageIndex.find(pPacket->imageView) != curSwapchainImgStat.traceImageViewToImageIndex.end()) {\n'
+                    replay_gen_source += '                curSwapchainImgStat.traceImageIndexToImageViews[curSwapchainImgStat.traceImageViewToImageIndex[pPacket->imageView]].erase(pPacket->imageView);\n'
+                    replay_gen_source += '                curSwapchainImgStat.traceImageViewToImageIndex.erase(pPacket->imageView);\n'
                     replay_gen_source += '            }\n'
                 # Print the enumerated instance extensions and layers
                 if cmdname == 'EnumerateInstanceExtensionProperties':
@@ -1453,7 +1492,8 @@ class VkTraceFileOutputGenerator(OutputGenerator):
                 # Handle return values or anything that needs to happen after the real_*(..) call
                 if 'Destroy' in cmdname:
                     clean_type = params[-2].type.strip('*').replace('const ', '')
-                    replay_gen_source += '            m_objMapper.rm_from_%ss_map(pPacket->%s);\n' % (clean_type.lower()[2:], params[-2].name)
+                    if 'allocationcallbacks' not in clean_type.lower():
+                        replay_gen_source += '            m_objMapper.rm_from_%ss_map(pPacket->%s);\n' % (clean_type.lower()[2:], params[-2].name)
                 if 'DestroyDevice' in cmdname:
                     replay_gen_source += '            m_pCBDump = NULL;\n'
                     replay_gen_source += '            m_pDSDump = NULL;\n'
@@ -1500,6 +1540,8 @@ class VkTraceFileOutputGenerator(OutputGenerator):
                     replay_gen_source += '            if (memcmp(&memProperties, pPacket->pMemoryProperties, sizeof(VkPhysicalDeviceMemoryProperties)) != 0) {\n'
                     replay_gen_source += '                vktrace_LogError("Physical Device Memory properties differ. Memory heaps may not match as expected.");\n'
                     replay_gen_source += '            }\n'
+                elif 'DestroyQueryPool' in cmdname:
+                    replay_gen_source += '            m_querypool_type.erase(pPacket->queryPool);\n'
                 elif create_func: # Save handle mapping if create successful
                     if ret_value:
                         replay_gen_source += '            if (replayResult == VK_SUCCESS) {\n'
@@ -1516,14 +1558,20 @@ class VkTraceFileOutputGenerator(OutputGenerator):
                     if 'AllocateMemory' == cmdname:
                         replay_gen_source += '                m_objMapper.add_entry_to_mapData(local_%s, pPacket->pAllocateInfo->allocationSize);\n' % (params[-1].name)
                     elif 'CreateImageView' == cmdname:
-                        replay_gen_source += '                if (curSwapchainImgState.traceImageToImageIndex.find(pktImg) != curSwapchainImgState.traceImageToImageIndex.end()) {\n'
-                        replay_gen_source += '                    curSwapchainImgState.traceImageIndexToImageView[curSwapchainImgState.traceImageToImageIndex[pktImg]] = *(pPacket->pView);\n'
-                        replay_gen_source += '                    curSwapchainImgState.traceImageViewToImageIndex[*(pPacket->pView)] = curSwapchainImgState.traceImageToImageIndex[pktImg];\n'
+                        replay_gen_source += '                SwapchainImageState& curSwapchainImgStat = swapchainImageStates[curSwapchainHandle];\n'
+                        replay_gen_source += '                if (curSwapchainImgStat.traceImageToImageIndex.find(pktImg) != curSwapchainImgStat.traceImageToImageIndex.end()) {\n'
+                        replay_gen_source += '                    curSwapchainImgStat.traceImageIndexToImageViews[curSwapchainImgStat.traceImageToImageIndex[pktImg]].insert(*(pPacket->pView));\n'
+                        replay_gen_source += '                    curSwapchainImgStat.traceImageViewToImageIndex[*(pPacket->pView)] = curSwapchainImgStat.traceImageToImageIndex[pktImg];\n'
                         replay_gen_source += '                }\n'
+                    elif 'CreateQueryPool' in cmdname:
+                        replay_gen_source += '                m_querypool_type[*(pPacket->pQueryPool)] = pPacket->pCreateInfo->queryType;\n'
                     if ret_value:
                         replay_gen_source += '            }\n'
                 elif cmdname in do_while_dict:
+                    replay_gen_source += '                m_CallStats[call_id].total++;\n'
+                    replay_gen_source += '                m_CallStats[call_id].injectedCallCount++;\n'
                     replay_gen_source += '            } while (%s);\n' % do_while_dict[cmdname]
+                    replay_gen_source += '            m_CallStats[call_id].injectedCallCount--;\n'
                     replay_gen_source += '            if (pPacket->result != VK_NOT_READY || replayResult != VK_SUCCESS)\n'
             if ret_value:
                 replay_gen_source += '            CHECK_RETURN_VALUE(vk%s);\n' % cmdname
@@ -3334,10 +3382,9 @@ class VkTraceFileOutputGenerator(OutputGenerator):
                                          'vkCmdPushDescriptorSetWithTemplateKHR',
                                          'vkAcquireXlibDisplayEXT',
                                          'vkGetRandROutputDisplayEXT',
-                                         'vkCreateObjectTableNVX',
-                                         'vkCmdProcessCommandsNVX',
-                                         'vkCreateIndirectCommandsLayoutNVX',
                                          'vkGetFenceStatus',
+                                         'vkCmdBeginRenderPass2',
+                                         'vkCmdBeginRenderPass2KHR',
                                          # TODO: VK_EXT_display_control
                                          ]
 
@@ -3425,6 +3472,9 @@ class VkTraceFileOutputGenerator(OutputGenerator):
                     trace_vk_src += '    pageguardExit();\n'
                     trace_vk_src += '#endif\n'
                 if proto.name == 'vkGetPhysicalDeviceSurfaceFormats2KHR':
+                    trace_vk_src += '    if (pSurfaceFormats == nullptr && pSurfaceFormatCount != nullptr) {\n'
+                    trace_vk_src += '       *pSurfaceFormatCount = 0;\n'
+                    trace_vk_src += '    }\n'
                     trace_vk_src += '    size_t byteCount=0;\n'
                     trace_vk_src += '    uint32_t surfaceFormatCount = *pSurfaceFormatCount;\n'
                     trace_vk_src += '    for (uint32_t i=0; i<surfaceFormatCount; i++) {\n'
@@ -3694,11 +3744,17 @@ class VkTraceFileOutputGenerator(OutputGenerator):
                             ]
         create_rp2_interp = ['VkRenderPassCreateInfo2* pInfo = (VkRenderPassCreateInfo2*)pPacket->pCreateInfo;\n',
                             'uint32_t i = 0;\n',
-                            'VkAttachmentDescription2 **ppAD = (VkAttachmentDescription2 **)&(pInfo->pAttachments);\n',
-                            '*ppAD = (VkAttachmentDescription2*) vktrace_trace_packet_interpret_buffer_pointer(pHeader, (intptr_t)pInfo->pAttachments);\n',
-                            'VkSubpassDescription2** ppSP = (VkSubpassDescription2**)&(pInfo->pSubpasses);\n',
-                            '*ppSP = (VkSubpassDescription2*) vktrace_trace_packet_interpret_buffer_pointer(pHeader, (intptr_t)pInfo->pSubpasses);\n',
+                            'pInfo->pAttachments = (VkAttachmentDescription2*) vktrace_trace_packet_interpret_buffer_pointer(pHeader, (intptr_t)pInfo->pAttachments);\n',
+                            'for (i=0; i<pInfo->attachmentCount; i++) {\n',
+                            '    vkreplay_process_pnext_structs(pHeader, (void *)&pInfo->pAttachments[i]);\n',
+                            '}\n',
+                            'pInfo->pDependencies = (VkSubpassDependency2*) vktrace_trace_packet_interpret_buffer_pointer(pHeader, (intptr_t)pInfo->pDependencies);\n',
+                            'for (i=0; i<pInfo->dependencyCount; i++) {\n',
+                            '    vkreplay_process_pnext_structs(pHeader, (void *)&pInfo->pDependencies[i]);\n',
+                            '}\n',
+                            'pInfo->pSubpasses = (VkSubpassDescription2*) vktrace_trace_packet_interpret_buffer_pointer(pHeader, (intptr_t)pInfo->pSubpasses);\n',
                             'for (i=0; i<pInfo->subpassCount; i++) {\n',
+                            '    vkreplay_process_pnext_structs(pHeader, (void *)&pInfo->pSubpasses[i]);\n',
                             '    VkAttachmentReference2** pAR = (VkAttachmentReference2**)&(pInfo->pSubpasses[i].pInputAttachments);\n',
                             '    *pAR = (VkAttachmentReference2*)vktrace_trace_packet_interpret_buffer_pointer(pHeader, (intptr_t)pInfo->pSubpasses[i].pInputAttachments);\n',
                             '    pAR = (VkAttachmentReference2**)&(pInfo->pSubpasses[i].pColorAttachments);\n',
@@ -3710,8 +3766,7 @@ class VkTraceFileOutputGenerator(OutputGenerator):
                             '    pAR = (VkAttachmentReference2**)&(pInfo->pSubpasses[i].pPreserveAttachments);\n',
                             '    *pAR = (VkAttachmentReference2*)vktrace_trace_packet_interpret_buffer_pointer(pHeader, (intptr_t)pInfo->pSubpasses[i].pPreserveAttachments);\n',
                             '}\n',
-                            'VkSubpassDependency2** ppSD2 = (VkSubpassDependency2**)&(pInfo->pDependencies);\n',
-                            '*ppSD2 = (VkSubpassDependency2*) vktrace_trace_packet_interpret_buffer_pointer(pHeader, (intptr_t)pInfo->pDependencies);\n',
+                            'vktrace_trace_packet_interpret_buffer_pointer(pHeader, (intptr_t)pInfo->pCorrelatedViewMasks);\n'
                             ]
         create_gfx_pipe = ['uint32_t i;\n',
                            'uint32_t j;\n',
@@ -3871,6 +3926,10 @@ class VkTraceFileOutputGenerator(OutputGenerator):
                              'CreateFramebuffer' : {'param': 'pCreateInfo', 'txt': ['VkImageView** ppAV = (VkImageView**)&(pPacket->pCreateInfo->pAttachments);\n',
                                                                                     '*ppAV = (VkImageView*)vktrace_trace_packet_interpret_buffer_pointer(pHeader, (intptr_t)(pPacket->pCreateInfo->pAttachments));']},
                              'CmdBeginRenderPass' : {'param': 'pRenderPassBegin', 'txt': ['VkClearValue** ppCV = (VkClearValue**)&(pPacket->pRenderPassBegin->pClearValues);\n',
+                                                                                          '*ppCV = (VkClearValue*)vktrace_trace_packet_interpret_buffer_pointer(pHeader, (intptr_t)(pPacket->pRenderPassBegin->pClearValues));']},
+                             'CmdBeginRenderPass2' : {'param': 'pRenderPassBegin', 'txt': ['VkClearValue** ppCV = (VkClearValue**)&(pPacket->pRenderPassBegin->pClearValues);\n',
+                                                                                          '*ppCV = (VkClearValue*)vktrace_trace_packet_interpret_buffer_pointer(pHeader, (intptr_t)(pPacket->pRenderPassBegin->pClearValues));']},
+                             'CmdBeginRenderPass2KHR' : {'param': 'pRenderPassBegin', 'txt': ['VkClearValue** ppCV = (VkClearValue**)&(pPacket->pRenderPassBegin->pClearValues);\n',
                                                                                           '*ppCV = (VkClearValue*)vktrace_trace_packet_interpret_buffer_pointer(pHeader, (intptr_t)(pPacket->pRenderPassBegin->pClearValues));']},
                              'CreateShaderModule' : {'param': 'pCreateInfo', 'txt': ['void** ppCode = (void**)&(pPacket->pCreateInfo->pCode);\n',
                                                                                      '*ppCode = (void*)vktrace_trace_packet_interpret_buffer_pointer(pHeader, (intptr_t)pPacket->pCreateInfo->pCode);']},
@@ -4420,6 +4479,10 @@ class VkTraceFileOutputGenerator(OutputGenerator):
                     trace_pkt_hdr += '        for (i = 0; i < pPacket->memoryRangeCount; i++) {\n'
                     trace_pkt_hdr += '            pPacket->ppData[i] = (void*)vktrace_trace_packet_interpret_buffer_pointer(pHeader, (intptr_t)pPacket->ppData[i]);\n'
                     trace_pkt_hdr += '        }\n'
+                    trace_pkt_hdr += '    }\n'
+                if "vkCreateDevice" == proto.name:
+                    trace_pkt_hdr += '    for (uint32_t i = 0; pPacket->pCreateInfo != nullptr && i < pPacket->pCreateInfo->queueCreateInfoCount; i++) {\n'
+                    trace_pkt_hdr += '        vkreplay_process_pnext_structs(pPacket->header, (void *)&pPacket->pCreateInfo->pQueueCreateInfos[i]);\n'
                     trace_pkt_hdr += '    }\n'
                 trace_pkt_hdr += '    return pPacket;\n'
                 trace_pkt_hdr += '}\n'

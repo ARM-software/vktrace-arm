@@ -46,6 +46,7 @@ set(SRC_LIST
 
 set (CXX_SRC_LIST
      vktrace_pageguard_memorycopy.cpp
+     ${JSONCPP_SOURCE_DIR}/jsoncpp.cpp
      compression/compressor.cpp
      compression/decompressor.cpp
      compression/lz4compressor.cpp

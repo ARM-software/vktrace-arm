@@ -24,6 +24,25 @@
 #include "vktrace_settings.h"
 
 // ------------------------------------------------------------------------------------------------
+void vktrace_Setting_to_str(const vktrace_SettingInfo* pSetting, char *name, char *value) {
+    if (!name || !value) {
+        vktrace_LogError("setting to string error! name and value must not be null");
+        return;
+    }
+    sprintf(name, "%s", pSetting->pShortName);
+    if (pSetting->type == VKTRACE_SETTING_STRING) {
+        sprintf(value, "%s", *pSetting->Data.ppChar);
+    } else if (pSetting->type == VKTRACE_SETTING_BOOL) {
+        sprintf(value, "%s", *pSetting->Data.pBool? "true": "false");
+    } else if (pSetting->type == VKTRACE_SETTING_UINT) {
+        sprintf(value, "%u", *pSetting->Data.pUint);
+    } else if (pSetting->type == VKTRACE_SETTING_INT) {
+        sprintf(value, "%d", *pSetting->Data.pInt);
+    } else {
+        vktrace_LogAlways("Invalid setting type: %d", pSetting->type);
+    }
+}
+
 void vktrace_SettingInfo_print(const vktrace_SettingInfo* pSetting) {
     if (pSetting->bPrintInHelp) {
         char* pStrParams;
@@ -558,7 +577,7 @@ BOOL vktrace_SettingGroup_save(vktrace_SettingGroup* pSettingGroup, unsigned int
 
 //-----------------------------------------------------------------------------
 int vktrace_SettingGroup_init_from_cmdline(vktrace_SettingGroup* pSettingGroup, int argc, char* argv[],
-                                           char** ppOut_remaining_args) {
+                                           char** ppOut_remaining_args, bool *pOptionsOverridedByCmd) {
     int i = 0;
 
     if (pSettingGroup != NULL) {
@@ -605,6 +624,9 @@ int vktrace_SettingGroup_init_from_cmdline(vktrace_SettingGroup* pSettingGroup, 
                     if (pSettingName != NULL && strcmp(curArg, pSettingName) == 0) {
                         if (i + 1 < argc && vktrace_SettingInfo_parse_value(&pSettings[settingIndex], argv[i + 1])) {
                             consumed += 2;
+                            if (pOptionsOverridedByCmd != NULL) {
+                                pOptionsOverridedByCmd[settingIndex] = true;
+                            }
                         }
                         break;
                     }
@@ -655,7 +677,7 @@ int vktrace_SettingGroup_init(vktrace_SettingGroup* pSettingGroup, FILE* pSettin
     }
 
     // Thirdly set options based on cmd line args
-    if (vktrace_SettingGroup_init_from_cmdline(pSettingGroup, argc, argv, (char**)ppOut_remaining_args) == -1) {
+    if (vktrace_SettingGroup_init_from_cmdline(pSettingGroup, argc, argv, (char**)ppOut_remaining_args, NULL) == -1) {
         return -1;
     }
 

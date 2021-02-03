@@ -333,6 +333,7 @@ VKTRACE_THREAD_ROUTINE_RETURN_TYPE Process_RunRecordTraceThread(LPVOID _threadIn
 #endif
 
     std::vector<uint64_t> portabilityTable;
+    std::vector<uint64_t> injectedCalls;
     uint64_t decompress_file_size = fileOffset;
     while (!terminationSignalArrived && pInfo->serverRequestsTermination == FALSE) {
         // get a packet
@@ -371,6 +372,12 @@ VKTRACE_THREAD_ROUTINE_RETURN_TYPE Process_RunRecordTraceThread(LPVOID _threadIn
                 vktrace_LogVerbose("Thread_CaptureTrace is exiting.");
                 break;
             }
+
+            if ((file_header.trace_file_version > VKTRACE_TRACE_FILE_VERSION_9)
+                && (vktrace_get_trace_packet_tag(pHeader) & PACKET_TAG__INJECTED)) {
+                    injectedCalls.push_back(pHeader->global_packet_index);
+            }
+
             if (pInfo->pTraceFile != NULL) {
                 decompress_file_size += pHeader->size;
                 vktrace_enter_critical_section(&pInfo->pProcessInfo->traceFileCriticalSection);
@@ -404,6 +411,12 @@ VKTRACE_THREAD_ROUTINE_RETURN_TYPE Process_RunRecordTraceThread(LPVOID _threadIn
         vktrace_delete_trace_packet_no_lock(&pHeader);
     }
     decompress_file_size += (sizeof(vktrace_trace_packet_header) + (portabilityTable.size() + 1)* sizeof(uint64_t));
+
+    if (file_header.trace_file_version > VKTRACE_TRACE_FILE_VERSION_9) {
+        uint32_t meta_data_str_size = vktrace_appendMetaData(pInfo->pTraceFile, injectedCalls);
+        decompress_file_size += sizeof(vktrace_trace_packet_header) + meta_data_str_size;
+    }
+
     vktrace_appendPortabilityPacket(pInfo->pTraceFile, portabilityTable);
     vktrace_resetFilesize(pInfo->pTraceFile, decompress_file_size);
 

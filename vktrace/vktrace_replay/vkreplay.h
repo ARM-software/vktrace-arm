@@ -38,5 +38,6 @@ extern int VKTRACER_CDECL VkReplayDump();
 extern int VKTRACER_CDECL VkReplayGetFrameNumber();
 extern void VKTRACER_CDECL VkReplayResetFrameNumber(int frameNumber);
 extern void VKTRACER_CDECL VkReplayOnTerminate();
+extern void VKTRACER_CDECL VkReplaySetInFrameRange(bool inrange);
 
 extern PFN_vkDebugReportCallbackEXT g_fpDbgMsgCallback;

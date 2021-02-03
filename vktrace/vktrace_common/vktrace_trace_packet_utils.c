@@ -88,7 +88,7 @@ void vktrace_gen_uuid(uint32_t* pUuid) {
 #if defined(PLATFORM_LINUX)
 uint64_t vktrace_get_time() {
     struct timespec time;
-    clock_gettime(CLOCK_MONOTONIC, &time);
+    clock_gettime(CLOCK_MONOTONIC_RAW, &time);
     return ((uint64_t)time.tv_sec * NANOSEC_IN_ONE_SEC) + time.tv_nsec;
 }
 #elif defined(PLATFORM_OSX)
@@ -240,10 +240,12 @@ char* find_available_filename(const char* originalFilename, BOOL bForceOverwrite
 
 vktrace_trace_packet_header* vktrace_create_trace_packet(uint8_t tracer_id, uint16_t packet_id, uint64_t packet_size,
                                                          uint64_t additional_buffers_size) {
+    // Attached a tag on the end of the packet
+    const uint32_t tag_word_size = sizeof(uint32_t);
     vktrace_enter_critical_section(&s_trace_lock);
     // Always allocate at least enough space for the packet header
     uint64_t total_packet_size =
-        ROUNDUP_TO_8(sizeof(vktrace_trace_packet_header) + ROUNDUP_TO_8(packet_size) + additional_buffers_size);
+        ROUNDUP_TO_8(sizeof(vktrace_trace_packet_header) + ROUNDUP_TO_8(packet_size) + additional_buffers_size + tag_word_size);
     void* pMemory = vktrace_malloc((size_t)total_packet_size);
     memset(pMemory, 0, (size_t)total_packet_size);
 
@@ -335,6 +337,14 @@ void vktrace_finalize_buffer_address(vktrace_trace_packet_header* pHeader, void*
         vktrace_finalize_buffer_address(pHeader, pDst);                                  \
     } while (0)
 
+#define AddPointerToTracebuffer(_sName, _sType, _sPtr)                                   \
+    do {                                                                                 \
+        void* pSrc = (void*)(((_sName*)pInNext)->_sPtr);                                 \
+        void** pDst = (void**)&(((_sName*)*ppOutNext)->_sPtr);                           \
+        vktrace_add_buffer_to_trace_packet(pHeader, pDst, sizeof(_sType), pSrc);         \
+        vktrace_finalize_buffer_address(pHeader, pDst);                                  \
+    } while (0)
+
 void vktrace_add_pnext_structs_to_trace_packet(vktrace_trace_packet_header* pHeader, void* pOut, const void* pIn) {
     void** ppOutNext;
     const void* pInNext;
@@ -376,14 +386,6 @@ void vktrace_add_pnext_structs_to_trace_packet(vktrace_trace_packet_header* pHea
                     AddPointerWithCountToTracebuffer(VkValidationFlagsEXT, VkValidationCheckEXT, pDisabledValidationChecks,
                                                      disabledValidationCheckCount);
                     break;
-                case VK_STRUCTURE_TYPE_INDIRECT_COMMANDS_LAYOUT_CREATE_INFO_NVX:
-                    AddPointerWithCountToTracebuffer(VkIndirectCommandsLayoutCreateInfoNVX, VkIndirectCommandsLayoutTokenNVX,
-                                                     pTokens, tokenCount);
-                    break;
-                case VK_STRUCTURE_TYPE_CMD_PROCESS_COMMANDS_INFO_NVX:
-                    AddPointerWithCountToTracebuffer(VkCmdProcessCommandsInfoNVX, VkIndirectCommandsTokenNVX,
-                                                     pIndirectCommandsTokens, indirectCommandsTokenCount);
-                    break;
                 case VK_STRUCTURE_TYPE_DESCRIPTOR_SET_VARIABLE_DESCRIPTOR_COUNT_ALLOCATE_INFO_EXT:
                     AddPointerWithCountToTracebuffer(VkDescriptorSetVariableDescriptorCountAllocateInfoEXT, uint32_t,
                                                      pDescriptorCounts, descriptorSetCount);
@@ -422,6 +424,9 @@ void vktrace_add_pnext_structs_to_trace_packet(vktrace_trace_packet_header* pHea
                     AddPointerWithCountToTracebuffer(VkRenderPassMultiviewCreateInfo, int32_t, pViewOffsets, dependencyCount);
                     AddPointerWithCountToTracebuffer(VkRenderPassMultiviewCreateInfo, uint32_t, pCorrelationMasks,
                                                      correlationMaskCount);
+                    break;
+                case VK_STRUCTURE_TYPE_SUBPASS_DESCRIPTION_DEPTH_STENCIL_RESOLVE:
+                    AddPointerToTracebuffer(VkSubpassDescriptionDepthStencilResolve, VkAttachmentReference2, pDepthStencilResolveAttachment);
                     break;
 #if defined(WIN32)
                 case VK_STRUCTURE_TYPE_WIN32_KEYED_MUTEX_ACQUIRE_RELEASE_INFO_KHR:
@@ -489,6 +494,13 @@ void vktrace_write_trace_packet(const vktrace_trace_packet_header* pHeader, File
     }
 }
 
+void vktrace_tag_trace_packet(vktrace_trace_packet_header* pHeader, packet_tag tag) {
+    const uint32_t tag_word_size = sizeof(uint32_t);
+    uint64_t offset_to_tag_word = pHeader->size - tag_word_size;
+    uint32_t* tag_word = (uint32_t*)(((unsigned char*)pHeader) + offset_to_tag_word);
+    *tag_word |= tag;
+}
+
 //=============================================================================
 // Methods for Reading and interpretting trace packets
 
@@ -521,6 +533,13 @@ vktrace_trace_packet_header* vktrace_read_trace_packet(FileLike* pFile) {
     }
 
     return pHeader;
+}
+
+uint32_t vktrace_get_trace_packet_tag(const vktrace_trace_packet_header* pHeader) {
+    const uint32_t tag_word_size = sizeof(uint32_t);
+    uint64_t offset_to_tag_word = pHeader->size - tag_word_size;
+    const uint32_t* tag_word = (const uint32_t*)(((const unsigned char*)pHeader) + offset_to_tag_word);
+    return *tag_word;
 }
 
 // Delete packet after vktrace_read_trace_packet being called.
@@ -798,12 +817,6 @@ void vkreplay_interpret_pnext_pointers(vktrace_trace_packet_header* pHeader, voi
             case VK_STRUCTURE_TYPE_VALIDATION_FLAGS_EXT:
                 InterpretPointerInPNext(VkValidationFlagsEXT, VkValidationCheckEXT, pDisabledValidationChecks);
                 break;
-            case VK_STRUCTURE_TYPE_INDIRECT_COMMANDS_LAYOUT_CREATE_INFO_NVX:
-                InterpretPointerInPNext(VkIndirectCommandsLayoutCreateInfoNVX, VkIndirectCommandsLayoutTokenNVX, pTokens);
-                break;
-            case VK_STRUCTURE_TYPE_CMD_PROCESS_COMMANDS_INFO_NVX:
-                InterpretPointerInPNext(VkCmdProcessCommandsInfoNVX, VkIndirectCommandsTokenNVX, pIndirectCommandsTokens);
-                break;
             case VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_W_SCALING_STATE_CREATE_INFO_NV:
                 InterpretPointerInPNext(VkPipelineViewportWScalingStateCreateInfoNV, VkViewportWScalingNV, pViewportWScalings);
                 break;
@@ -832,6 +845,9 @@ void vkreplay_interpret_pnext_pointers(vktrace_trace_packet_header* pHeader, voi
                 InterpretPointerInPNext(VkRenderPassMultiviewCreateInfo, uint32_t, pViewMasks);
                 InterpretPointerInPNext(VkRenderPassMultiviewCreateInfo, int32_t, pViewOffsets);
                 InterpretPointerInPNext(VkRenderPassMultiviewCreateInfo, uint32_t, pCorrelationMasks);
+                break;
+            case VK_STRUCTURE_TYPE_SUBPASS_DESCRIPTION_DEPTH_STENCIL_RESOLVE:
+                InterpretPointerInPNext(VkSubpassDescriptionDepthStencilResolve, VkAttachmentReference2, pDepthStencilResolveAttachment);
                 break;
 #if defined(WIN32)
             case VK_STRUCTURE_TYPE_WIN32_KEYED_MUTEX_ACQUIRE_RELEASE_INFO_KHR:

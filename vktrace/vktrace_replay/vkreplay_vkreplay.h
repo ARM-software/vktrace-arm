@@ -44,6 +44,7 @@
 #include "vkreplay_factory.h"
 #include "vktrace_trace_packet_identifiers.h"
 #include <unordered_map>
+#include <unordered_set>
 
 extern "C" {
 #include "vktrace_vk_vk_packets.h"
@@ -138,6 +139,7 @@ class vkReplay {
     void interpret_pnext_handles(void* struct_ptr);
     void deviceWaitIdle();
     void on_terminate();
+    void set_in_frame_range(bool inrange) { m_inFrameRange = inrange; }
     vktrace_replay::PipelineCacheAccessor::Ptr get_pipelinecache_accessor() const;
 
     bool premap_FlushMappedMemoryRanges(vktrace_trace_packet_header* pHeader);
@@ -219,6 +221,13 @@ class vkReplay {
         void* pUserData;
     };
 
+    struct ApiCallStat {
+        uint32_t injectedCallCount = 0;
+        uint32_t total = 0;
+    };
+    std::unordered_map<uint32_t, vkReplay::ApiCallStat> m_CallStats;
+    bool m_inFrameRange = false;
+
     VkDebugReportCallbackEXT m_dbgMsgCallbackObj;
 
     std::vector<struct ValidationMsg> m_validationMsgs;
@@ -260,6 +269,8 @@ class vkReplay {
     VkResult manually_replay_vkCreateRenderPass2(packet_vkCreateRenderPass2* pPacket);
     VkResult manually_replay_vkCreateRenderPass2KHR(packet_vkCreateRenderPass2KHR* pPacket);
     void manually_replay_vkCmdBeginRenderPass(packet_vkCmdBeginRenderPass* pPacket);
+    void manually_replay_vkCmdBeginRenderPass2KHR(packet_vkCmdBeginRenderPass2KHR *pPacket);
+    void manually_replay_vkCmdBeginRenderPass2(packet_vkCmdBeginRenderPass2 *pPacket);
     VkResult manually_replay_vkBeginCommandBuffer(packet_vkBeginCommandBuffer* pPacket);
     VkResult manually_replay_vkAllocateCommandBuffers(packet_vkAllocateCommandBuffers* pPacket);
     VkResult manually_replay_vkWaitForFences(packet_vkWaitForFences* pPacket);
@@ -317,9 +328,6 @@ class vkReplay {
     void manually_replay_vkUpdateDescriptorSetWithTemplateKHR(packet_vkUpdateDescriptorSetWithTemplateKHR* pPacket);
     void manually_replay_vkCmdPushDescriptorSetKHR(packet_vkCmdPushDescriptorSetKHR* pPacket);
     void manually_replay_vkCmdPushDescriptorSetWithTemplateKHR(packet_vkCmdPushDescriptorSetWithTemplateKHR* pPacket);
-    VkResult manually_replay_vkCreateObjectTableNVX(packet_vkCreateObjectTableNVX *pPacket);
-    void manually_replay_vkCmdProcessCommandsNVX(packet_vkCmdProcessCommandsNVX *pPacket);
-    VkResult manually_replay_vkCreateIndirectCommandsLayoutNVX(packet_vkCreateIndirectCommandsLayoutNVX *pPacket);
     VkResult manually_replay_vkBindBufferMemory2KHR(packet_vkBindBufferMemory2KHR* pPacket);
     VkResult manually_replay_vkBindImageMemory2KHR(packet_vkBindImageMemory2KHR* pPacket);
     VkResult manually_replay_vkBindBufferMemory2(packet_vkBindBufferMemory2* pPacket);
@@ -409,7 +417,7 @@ class vkReplay {
     struct SwapchainImageState {
         std::unordered_map<uint32_t, VkImage> traceImageIndexToImage;
         std::unordered_map<VkImage, uint32_t> traceImageToImageIndex;
-        std::unordered_map<uint32_t, VkImageView> traceImageIndexToImageView;
+        std::unordered_map<uint32_t, std::unordered_set<VkImageView> > traceImageIndexToImageViews;
         std::unordered_map<VkImageView, uint32_t> traceImageViewToImageIndex;
         std::unordered_map<uint32_t, VkFramebuffer> traceImageIndexToFramebuffer;
         std::unordered_map<VkFramebuffer, uint32_t> traceFramebufferToImageIndex;
@@ -417,12 +425,15 @@ class vkReplay {
         void reset() {
             traceImageIndexToImage.clear();
             traceImageToImageIndex.clear();
-            traceImageIndexToImageView.clear();
+            traceImageIndexToImageViews.clear();
             traceImageViewToImageIndex.clear();
             traceImageIndexToFramebuffer.clear();
             traceFramebufferToImageIndex.clear();
         }
-    } curSwapchainImgState;
+    };
+    std::unordered_map<VkSwapchainKHR, SwapchainImageState> swapchainImageStates;
+    VkSwapchainKHR curSwapchainHandle;
+
     std::stack<SwapchainImageState> savedSwapchainImgStates;
     std::unordered_map< VkSwapchainKHR, std::vector<bool> > swapchainImageAcquireStatus;
 
@@ -464,4 +475,6 @@ class vkReplay {
     bool findImageFromOtherSwapchain(VkSwapchainKHR swapchain);
 
     vktrace_replay::PipelineCacheAccessor::Ptr    m_pipelinecache_accessor;
+
+    std::unordered_map<VkQueryPool, VkQueryType>  m_querypool_type;
 };

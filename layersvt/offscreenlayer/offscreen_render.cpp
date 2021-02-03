@@ -30,6 +30,8 @@ const char *imagecount_var = "debug.offscreen.imagecount";
 
 using namespace std;
 
+VkPhysicalDeviceProperties gPhyDevProp;
+
 static PFN_vkVoidFunction intercept_core_instance_command(const char *name);
 static PFN_vkVoidFunction intercept_core_device_command(const char *name);
 static PFN_vkVoidFunction intercept_khr_swapchain_command(const char *name, VkDevice dev);
@@ -167,6 +169,7 @@ VK_LAYER_EXPORT VKAPI_ATTR void VKAPI_CALL vkGetPhysicalDeviceProperties(
     VkPhysicalDeviceProperties                  *pProperties)
 {
     instance_dispatch_table(physicalDevice)->GetPhysicalDeviceProperties(physicalDevice, pProperties);
+    gPhyDevProp = *pProperties;
 }
 
 VK_LAYER_EXPORT VKAPI_ATTR void VKAPI_CALL vkDestroyFence(

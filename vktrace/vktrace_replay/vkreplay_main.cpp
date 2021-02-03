@@ -47,8 +47,9 @@
 #include "vktrace_vk_packet_id.h"
 #include "vkreplay_vkreplay.h"
 #include "decompressor.h"
+#include <json/json.h>
 
-vkreplayer_settings replaySettings = {NULL, 1, UINT_MAX, UINT_MAX, true, false, NULL, NULL, NULL, NULL, NULL, TRUE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, 50, FALSE, FALSE, NULL, FALSE};
+vkreplayer_settings replaySettings = {NULL, 1, 0, UINT_MAX, true, false, NULL, NULL, NULL, NULL, NULL, TRUE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, 50, FALSE, FALSE, NULL, FALSE};
 extern vkReplay* g_replay;
 static decompressor* g_decompressor = nullptr;
 
@@ -254,6 +255,7 @@ vktrace_SettingInfo g_settings_info[] = {
 };
 
 vktrace_SettingGroup g_replaySettingGroup = {"vkreplay", sizeof(g_settings_info) / sizeof(g_settings_info[0]), &g_settings_info[0]};
+bool g_pOptionsOverridedByCmd[sizeof(g_settings_info) / sizeof(g_settings_info[0])];
 
 
 static vktrace_replay::vktrace_trace_packet_replay_library* g_replayer_interface = NULL;
@@ -302,13 +304,6 @@ int main_loop(vktrace_replay::ReplayDisplay display, Sequencer& seq, vktrace_tra
     struct seqBookmark startingPacket;
 
     bool trace_running = true;
-
-    if (replaySettings.loopEndFrame != UINT_MAX) {
-        // Increase by 1 because it is comparing with the frame number which is increased right after vkQueuePresentKHR being
-        // called.
-        // e.g. when frame number is 3, maybe frame 2 is just finished replaying and frame 3 is not started yet.
-        replaySettings.loopEndFrame += 1;
-    }
 
     // record the location of looping start packet
     seq.record_bookmark();
@@ -364,6 +359,7 @@ int main_loop(vktrace_replay::ReplayDisplay display, Sequencer& seq, vktrace_tra
                 case VKTRACE_TPI_MARKER_TERMINATE_PROCESS:
                     break;
                 case VKTRACE_TPI_PORTABILITY_TABLE:
+                case VKTRACE_TPI_META_DATA:
                     break;
                 case VKTRACE_TPI_VK_vkQueuePresentKHR: {
                     if (replay(g_replayer_interface, packet) != VKTRACE_REPLAY_SUCCESS) {
@@ -388,6 +384,7 @@ int main_loop(vktrace_replay::ReplayDisplay display, Sequencer& seq, vktrace_tra
                         timer_started = true;
                         start_time = vktrace_get_time();
                         vktrace_LogAlways("================== Start timer (Frame: %llu) ==================", start_frame);
+                        g_replayer_interface->SetInFrameRange(true);
                     }
 
                     if (frameNumber == replaySettings.loopEndFrame) {
@@ -415,8 +412,10 @@ int main_loop(vktrace_replay::ReplayDisplay display, Sequencer& seq, vktrace_tra
                     if (g_replayer_interface == NULL) {
                         vktrace_LogWarning("Tracer_id %d has no valid replayer.", packet->tracer_id);
                         continue;
+                    } else if (timer_started) {
+                        g_replayer_interface->SetInFrameRange(true);
                     }
-                    if (packet->packet_id >= VKTRACE_TPI_VK_vkApiVersion) {
+                    if (packet->packet_id >= VKTRACE_TPI_VK_vkApiVersion && packet->packet_id < VKTRACE_TPI_META_DATA) {
                         // replay the API packet
                         if (replay(g_replayer_interface, packet) != VKTRACE_REPLAY_SUCCESS) {
                             vktrace_LogError("Failed to replay packet_id %d, with global_packet_index %d.", packet->packet_id,
@@ -456,6 +455,7 @@ int main_loop(vktrace_replay::ReplayDisplay display, Sequencer& seq, vktrace_tra
     }
     end_time = vktrace_get_time();
     timer_started = false;
+    g_replayer_interface->SetInFrameRange(false);
     g_replayer_interface->OnTerminate();
     vktrace_LogAlways("================== End timer (Frame: %llu) ==================", (end_frame - 1));
     if (end_time > start_time) {
@@ -567,6 +567,13 @@ static bool preloadPortabilityTablePackets() {
             return false;
         }
         vktrace_trace_packet_header* pPacket = vktrace_read_trace_packet(traceFile);
+        if (pPacket->tracer_id == VKTRACE_TID_VULKAN_COMPRESSED) {
+            int ret = decompress_packet(g_decompressor, pPacket);
+            if (ret != 0) {
+                vktrace_LogError("Decompress packet error.");
+                break;
+            }
+        }
         if (!pPacket) {
             return false;
         }
@@ -604,6 +611,69 @@ static bool readPortabilityTable() {
     return true;
 }
 
+static int vktrace_SettingGroup_init_from_metadata(const Json::Value &replay_options) {
+    vktrace_SettingInfo* pSettings = g_replaySettingGroup.pSettings;
+    unsigned int num_settings = g_replaySettingGroup.numSettings;
+
+    // update settings based on command line options
+    for (Json::Value::const_iterator it = replay_options.begin(); it != replay_options.end(); ++it) {
+        unsigned int settingIndex;
+        std::string curArg = it.key().asString();
+        std::string curValue = (*it).asString();
+
+        for (settingIndex = 0; settingIndex < num_settings; settingIndex++) {
+            const char* pSettingName = pSettings[settingIndex].pShortName;
+
+            if (pSettingName != NULL && g_pOptionsOverridedByCmd[settingIndex] == false && curArg == pSettingName) {
+                if (vktrace_SettingInfo_parse_value(&pSettings[settingIndex], curValue.c_str())) {
+                    const int MAX_NAME_LENGTH = 100;
+                    const int MAX_VALUE_LENGTH = 100;
+                    char name[MAX_NAME_LENGTH];
+                    char value[MAX_VALUE_LENGTH];
+                    vktrace_Setting_to_str(&pSettings[settingIndex], name, value);
+                    vktrace_LogAlways("Option \"%s\" overridden to \"%s\" by meta data", name, value);
+                }
+                break;
+            }
+        }
+    }
+    return 0;
+}
+
+static void readMetaData(vktrace_trace_file_header* pFileHeader) {
+    uint64_t originalFilePos;
+
+    originalFilePos = vktrace_FileLike_GetCurrentPosition(traceFile);
+    if (!vktrace_FileLike_SetCurrentPosition(traceFile, pFileHeader->meta_data_offset)) {
+        vktrace_LogError("readMetaData(): Failed to set file position at %llu", pFileHeader->meta_data_offset);
+    } else {
+        vktrace_trace_packet_header hdr;
+        if (!vktrace_FileLike_ReadRaw(traceFile, &hdr, sizeof(hdr)) || hdr.packet_id != VKTRACE_TPI_META_DATA) {
+            vktrace_LogError("readMetaData(): Failed to read the meta data packet header");
+        } else {
+            uint64_t meta_data_json_str_size = hdr.size - sizeof(hdr);
+            char* meta_data_json_str = new char[meta_data_json_str_size];
+            if (!vktrace_FileLike_ReadRaw(traceFile, meta_data_json_str, meta_data_json_str_size)) {
+                vktrace_LogError("readMetaData(): Failed to read the meta data json string");
+            } else {
+                vktrace_LogDebug("Meta data: %s", meta_data_json_str);
+
+                Json::Reader reader;
+                Json::Value meda_data_json;
+                bool parsingSuccessful = reader.parse(meta_data_json_str, meda_data_json);
+                if (!parsingSuccessful) {
+                    vktrace_LogError("readMetaData(): Failed to parse the meta data json string");
+                }
+                Json::Value replay_options = meda_data_json["ReplayOptions"];
+
+                vktrace_SettingGroup_init_from_metadata(replay_options);
+            }
+            delete[] meta_data_json_str;
+        }
+    }
+    vktrace_FileLike_SetCurrentPosition(traceFile, originalFilePos);
+}
+
 int vkreplay_main(int argc, char** argv, vktrace_replay::ReplayDisplayImp* pDisp = nullptr) {
     int err = 0;
     vktrace_SettingGroup* pAllSettings = NULL;
@@ -614,7 +684,9 @@ int vkreplay_main(int argc, char** argv, vktrace_replay::ReplayDisplayImp* pDisp
     vktrace_LogSetLevel(VKTRACE_LOG_ERROR);
 
     // apply settings from cmd-line args
-    if (vktrace_SettingGroup_init_from_cmdline(&g_replaySettingGroup, argc, argv, &replaySettings.pTraceFilePath) != 0) {
+    int setting_size = sizeof(g_settings_info) / sizeof(g_settings_info[0]);
+    std::fill(g_pOptionsOverridedByCmd, g_pOptionsOverridedByCmd + setting_size, false);
+    if (vktrace_SettingGroup_init_from_cmdline(&g_replaySettingGroup, argc, argv, &replaySettings.pTraceFilePath, g_pOptionsOverridedByCmd) != 0) {
         // invalid options specified
         if (pAllSettings != NULL) {
             vktrace_SettingGroup_Delete_Loaded(&pAllSettings, &numAllSettings);
@@ -622,8 +694,8 @@ int vkreplay_main(int argc, char** argv, vktrace_replay::ReplayDisplayImp* pDisp
         return -1;
     }
 
-    if (replaySettings.loopStartFrame > replaySettings.loopEndFrame) {
-        vktrace_LogError("Bad loop frame range");
+    if (replaySettings.loopStartFrame >= replaySettings.loopEndFrame) {
+        vktrace_LogError("Bad loop frame range, the end frame number must be greater than start frame number");
         return -1;
     }
     if (replaySettings.memoryPercentage >= 90 || replaySettings.memoryPercentage == 0) {
@@ -856,6 +928,11 @@ int vkreplay_main(int argc, char** argv, vktrace_replay::ReplayDisplayImp* pDisp
             vktrace_LogError("Create decompressor failed.");
             return -1;
         }
+    }
+
+    // read the meta data json string
+    if (pFileHeader->trace_file_version > VKTRACE_TRACE_FILE_VERSION_9 && pFileHeader->meta_data_offset > 0) {
+        readMetaData(pFileHeader);
     }
 
     // read portability table if it exists

@@ -556,10 +556,12 @@ VkResult vkFlushMappedMemoryRangesWithoutAPICall(VkDevice device, uint32_t memor
             if (dataSize > 0) {
                 LPPageGuardMappedMemory pOPTMemoryTemp = getPageGuardControlInstance().findMappedMemoryObject(device, pRange);
                 VkDeviceSize OPTPackageSizeTemp = 0;
+                packet_tag tag = PACKET_TAG__INJECTED;
                 if (pOPTMemoryTemp && !pOPTMemoryTemp->noGuard()) {
                     PBYTE pOPTDataTemp = pOPTMemoryTemp->getChangedDataPackage(&OPTPackageSizeTemp);
                     if (!apiFlush) {
                         setFlagTovkFlushMappedMemoryRangesSpecial(pOPTDataTemp);
+                        tag = (packet_tag)0;
                     }
                     vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->ppData[iter]), OPTPackageSizeTemp, pOPTDataTemp);
                     pOPTMemoryTemp->clearChangedDataPackage();
@@ -569,8 +571,10 @@ VkResult vkFlushMappedMemoryRangesWithoutAPICall(VkDevice device, uint32_t memor
                         getPageGuardControlInstance().getChangedDataPackageOutOfMap(ppPackageData, iter, &OPTPackageSizeTemp);
                     if (!apiFlush) {
                         setFlagTovkFlushMappedMemoryRangesSpecial(pOPTDataTemp);
+                        tag = (packet_tag)0;
                     }
                     vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->ppData[iter]), OPTPackageSizeTemp, pOPTDataTemp);
+                    vktrace_tag_trace_packet(pHeader, tag);
                     getPageGuardControlInstance().clearChangedDataPackageOutOfMap(ppPackageData, iter);
                 }
             }

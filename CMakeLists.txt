@@ -95,7 +95,7 @@ endif()
 message(STATUS "Using Vulkan-ValidationLayers install located at ${VULKAN_VALIDATIONLAYERS_INSTALL_DIR}")
 
 file(TO_CMAKE_PATH "${VULKAN_VALIDATIONLAYERS_INSTALL_DIR}" VULKAN_VALIDATIONLAYERS_INSTALL_DIR)
-set(Vulkan-ValidationLayers_INCLUDE_DIR "${VULKAN_VALIDATIONLAYERS_INSTALL_DIR}/include")
+set(Vulkan-ValidationLayers_INCLUDE_DIR "${VULKAN_VALIDATIONLAYERS_INSTALL_DIR}/include/vulkan")
 set(Vulkan-ValidationLayers_LIBRARY_DIR "${VULKAN_VALIDATIONLAYERS_INSTALL_DIR}/lib")
 find_library(VkLayer_utils_LIBRARY VkLayer_utils HINTS ${Vulkan-ValidationLayers_LIBRARY_DIR})
 
@@ -201,7 +201,7 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Windows" OR
     endif()
 
 elseif (CMAKE_SYSTEM_NAME STREQUAL "Darwin")
-    
+
     option(BUILD_VKTRACE ON)
     option(BUILD_LOADER OFF)
     option(BUILD_TESTS OFF)

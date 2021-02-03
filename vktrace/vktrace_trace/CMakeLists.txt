@@ -21,6 +21,7 @@ include_directories(
     ${CMAKE_BINARY_DIR}
     ${Vulkan-ValidationLayers_INCLUDE_DIR}
     ${GENERATED_FILES_DIR}
+    ${JSONCPP_INCLUDE_DIR}
 )
 
 if (NOT WIN32)

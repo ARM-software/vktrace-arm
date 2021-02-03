@@ -231,12 +231,15 @@ class ApiDumpSettings {
         // If the layer settings file has a flag indicating to output to a file,
         // do so, to the appropriate filename.
         const char *file_option = getLayerOption("lunarg_api_dump.file");
-        if (file_option != NULL && strcmp(file_option, "TRUE") == 0) {
-            const char *filename_option = getLayerOption("lunarg_api_dump.log_filename");
-            if (filename_option != NULL && strcmp(filename_option, "") != 0) {
-                filename_string = filename_option;
-            } else {
-                filename_string = "vk_apidump.txt";
+        if (file_option != NULL) {
+            std::string lowered_option = ToLowerString(std::string(file_option));
+            if (lowered_option == "true") {
+                const char *filename_option = getLayerOption("lunarg_api_dump.log_filename");
+                if (filename_option != NULL && strcmp(filename_option, "") != 0) {
+                    filename_string = filename_option;
+                } else {
+                    filename_string = "vk_apidump.txt";
+                }
             }
         }
         // If an environment variable is set, always output to that filename instead,
@@ -304,6 +307,7 @@ class ApiDumpSettings {
         type_size = std::max(readIntOption("lunarg_api_dump.type_size", 0), 0);
         use_spaces = readBoolOption("lunarg_api_dump.use_spaces", true);
         show_shader = readBoolOption("lunarg_api_dump.show_shader", false);
+        show_thread_and_frame = readBoolOption("lunarg_api_dump.show_thread_and_frame", true);
 
         std::string cond_range_string;
         env_value = GetPlatformEnvVar(API_DUMP_ENV_VAR_OUTPUT_RANGE);
@@ -453,8 +457,13 @@ class ApiDumpSettings {
                 if (frame_count > 0) {
                     if (condFrameOutput.isFrameInRange(frame_count - 1)) stream() << "</details>";
                 }
-                if (condFrameOutput.isFrameInRange(frame_count))
-                    stream() << "<details class='frm'><summary>Frame " << frame_count << "</summary>";
+                if (condFrameOutput.isFrameInRange(frame_count)) {
+                    stream() << "<details class='frm'><summary>Frame ";
+                    if (show_thread_and_frame) {
+                        stream() << frame_count;
+                    }
+                    stream() << "</summary>";
+                }
                 break;
 
             case (ApiDumpFormat::Json):
@@ -468,7 +477,10 @@ class ApiDumpSettings {
                     } else {
                         stream() << ",\n";
                     }
-                    stream() << "{\n" << indentation(1) << "\"frameNumber\" : \"" << frame_count << "\",\n";
+                    stream() << "{\n";
+                    if (show_thread_and_frame) {
+                        stream() << indentation(1) << "\"frameNumber\" : \"" << frame_count << "\",\n";
+                    }
                     stream() << indentation(1) << "\"apiCalls\" :\n";
                     stream() << indentation(1) << "[\n";
                 }
@@ -532,6 +544,8 @@ class ApiDumpSettings {
 
     inline bool showTimestamp() const { return show_timestamp; }
 
+    inline bool showThreadAndFrame() const { return show_thread_and_frame; }
+
     inline std::ostream &stream() const { return use_cout ? std::cout : *(std::ofstream *)&output_stream; }
 
     inline std::string directory() const { return output_dir; }
@@ -540,7 +554,7 @@ class ApiDumpSettings {
 
    private:
     // Utility member to enable easier comparison by forcing a string to all lower-case
-    inline std::string ToLowerString(const std::string &value) {
+    inline static std::string ToLowerString(const std::string &value) {
         std::string lower_value = value;
         std::transform(lower_value.begin(), lower_value.end(), lower_value.begin(), ::tolower);
         return lower_value;
@@ -595,9 +609,11 @@ class ApiDumpSettings {
 
     inline static bool readBoolOption(const char *option, bool default_value) {
         const char *string_option = getLayerOption(option);
-        if (string_option != NULL && strcmp(string_option, "TRUE") == 0)
+        if (string_option == NULL) return default_value;
+        std::string lowered_option = ToLowerString(std::string(string_option));
+        if (lowered_option == "true")
             return true;
-        else if (string_option != NULL && strcmp(string_option, "FALSE") == 0)
+        else if (lowered_option == "false")
             return false;
         else
             return default_value;
@@ -615,11 +631,12 @@ class ApiDumpSettings {
 
     inline static ApiDumpFormat readFormatOption(const char *option, ApiDumpFormat default_value) {
         const char *string_option = getLayerOption(option);
-        if (strcmp(string_option, "Text") == 0)
+        std::string lowered_option = ToLowerString(std::string(string_option));
+        if (lowered_option == "text")
             return ApiDumpFormat::Text;
-        else if (strcmp(string_option, "Html") == 0)
+        else if (lowered_option == "html")
             return ApiDumpFormat::Html;
-        else if (strcmp(string_option, "Json") == 0)
+        else if (lowered_option == "json")
             return ApiDumpFormat::Json;
         else
             return default_value;
@@ -644,6 +661,7 @@ class ApiDumpSettings {
     int type_size;
     bool use_spaces;
     bool show_shader;
+    bool show_thread_and_frame;
 
     bool use_conditional_output = false;
     ConditionalFrameOutput condFrameOutput;
@@ -833,6 +851,21 @@ class ApiDumpInstance {
     std::chrono::system_clock::time_point program_start;
 };
 
+// Utility to output an address.
+// If the quotes arg is true, the address is encloded in quotes.
+// Used for text, html, and json output.
+void OutputAddress(const ApiDumpSettings &settings, const void *addr, bool quotes) {
+    if (quotes) settings.stream() << "\"";
+    if (settings.showAddress())
+        if (addr == NULL)
+            settings.stream() << "NULL";
+        else
+            settings.stream() << addr;
+    else
+        settings.stream() << "address";
+    if (quotes) settings.stream() << "\"";
+}
+
 ApiDumpInstance ApiDumpInstance::current_instance;
 
 //==================================== Text Backend Helpers ======================================//
@@ -846,11 +879,8 @@ inline void dump_text_array(const T *array, size_t len, const ApiDumpSettings &s
         settings.stream() << "NULL\n";
         return;
     }
-    if (settings.showAddress())
-        settings.stream() << (void *)array << "\n";
-    else
-        settings.stream() << "address\n";
-
+    OutputAddress(settings, array, false);
+    settings.stream() << "\n";
     for (size_t i = 0; i < len && array != NULL; ++i) {
         std::stringstream stream;
         stream << name << '[' << i << ']';
@@ -868,11 +898,8 @@ inline void dump_text_array(const T *array, size_t len, const ApiDumpSettings &s
         settings.stream() << "NULL\n";
         return;
     }
-    if (settings.showAddress())
-        settings.stream() << (void *)array << "\n";
-    else
-        settings.stream() << "address\n";
-
+    OutputAddress(settings, array, false);
+    settings.stream() << "\n";
     for (size_t i = 0; i < len && array != NULL; ++i) {
         std::stringstream stream;
         stream << name << '[' << i << ']';
@@ -890,11 +917,15 @@ inline void dump_text_array_hex(const T *array, size_t len, const ApiDumpSetting
         settings.stream() << "NULL\n";
         return;
     }
-    if (settings.showAddress())
-        settings.stream() << (void *)array;
-    else
-        settings.stream() << "address";
-
+    OutputAddress(settings, array, false);
+    std::stringstream stream;
+    const uint8_t *arraybyte = reinterpret_cast<const uint8_t *>(array);
+    for (size_t i = 0; i < (len * 4) && array != NULL; ++i) {
+        stream << std::hex << std::setw(2) << std::setfill('0') << (int)arraybyte[i] << " ";
+        if (i % 32 == 31) {
+            stream << "\n";
+        }
+    }
 
     if (settings.stream().rdbuf() == std::cout.rdbuf()) {
         settings.stream() << "\n";
@@ -928,11 +959,7 @@ inline void dump_text_array_hex(const T *array, size_t len, const ApiDumpSetting
         settings.stream() << "NULL\n";
         return;
     }
-    if (settings.showAddress())
-        settings.stream() << (void *)array;
-    else
-        settings.stream() << "address";
-
+    OutputAddress(settings, array, false);
     std::stringstream stream;
     const uint8_t *arraybyte = reinterpret_cast<const uint8_t *>(array);
     for (size_t i = 0; i < (len * 4) && array != NULL; ++i) {
@@ -1019,12 +1046,9 @@ inline std::ostream &dump_text_cstring(const char *object, const ApiDumpSettings
 }
 
 inline std::ostream &dump_text_void(const void *object, const ApiDumpSettings &settings, int indents) {
-    if (object == NULL)
-        return settings.stream() << "NULL";
-    else if (settings.showAddress())
-        return settings.stream() << object;
-    else
-        return settings.stream() << "address";
+    if (object == NULL) return settings.stream() << "NULL";
+    OutputAddress(settings, object, false);
+    return settings.stream();
 }
 
 inline std::ostream &dump_text_int(int object, const ApiDumpSettings &settings, int indents) { return settings.stream() << object; }
@@ -1065,10 +1089,8 @@ inline void dump_html_array(const T *array, size_t len, const ApiDumpSettings &s
     settings.stream() << "<details class='data'><summary>";
     dump_html_nametype(settings.stream(), settings.showType(), name, type_string);
     settings.stream() << "<div class='val'>";
-    if (settings.showAddress())
-        settings.stream() << (void *)array << "\n";
-    else
-        settings.stream() << "address\n";
+    OutputAddress(settings, array, false);
+    settings.stream() << "\n";
     settings.stream() << "</div></summary>";
     for (size_t i = 0; i < len && array != NULL; ++i) {
         std::stringstream stream;
@@ -1093,10 +1115,8 @@ inline void dump_html_array(const T *array, size_t len, const ApiDumpSettings &s
     settings.stream() << "<details class='data'><summary>";
     dump_html_nametype(settings.stream(), settings.showType(), name, type_string);
     settings.stream() << "<div class='val'>";
-    if (settings.showAddress())
-        settings.stream() << (void *)array << "\n";
-    else
-        settings.stream() << "address\n";
+    OutputAddress(settings, array, false);
+    settings.stream() << "\n";
     settings.stream() << "</div></summary>";
     for (size_t i = 0; i < len && array != NULL; ++i) {
         std::stringstream stream;
@@ -1179,12 +1199,7 @@ inline std::ostream &dump_html_cstring(const char *object, const ApiDumpSettings
 
 inline std::ostream &dump_html_void(const void *object, const ApiDumpSettings &settings, int indents) {
     settings.stream() << "<div class='val'>";
-    if (object == NULL)
-        settings.stream() << "NULL";
-    else if (settings.showAddress())
-        settings.stream() << object;
-    else
-        settings.stream() << "address";
+    OutputAddress(settings, object, false);
     return settings.stream() << "</div>";
 }
 
@@ -1220,8 +1235,9 @@ inline void dump_json_array(const T *array, size_t len, const ApiDumpSettings &s
         settings.stream() << settings.indentation(indents) << "{\n";
         settings.stream() << settings.indentation(indents + 1) << "\"type\" : \"" << type_string << "\",\n";
         settings.stream() << settings.indentation(indents + 1) << "\"name\" : \"" << name << "\",\n";
-        settings.stream() << settings.indentation(indents + 1) << "\"address\" : \"0x0\",\n";
-        settings.stream() << settings.indentation(indents + 1) << "\"elements\" : [ ]\n";
+        settings.stream() << settings.indentation(indents + 1) << "\"address\" : ";
+        OutputAddress(settings, array, true);
+        settings.stream() << "\n";
         settings.stream() << settings.indentation(indents) << "}";
         return;
     }
@@ -1230,17 +1246,16 @@ inline void dump_json_array(const T *array, size_t len, const ApiDumpSettings &s
     if (len > 0 && array != NULL) {
         settings.stream() << settings.indentation(indents + 1) << "\"type\" : \"" << type_string << "\",\n";
         settings.stream() << settings.indentation(indents + 1) << "\"name\" : \"" << name << "\",\n";
-        if (settings.showAddress())
-            settings.stream() << settings.indentation(indents + 1) << "\"address\" : \"" << (void *)array << "\",\n";
-        else
-            settings.stream() << settings.indentation(indents + 1) << "\"address\" : \"address\",\n";
+        settings.stream() << settings.indentation(indents + 1) << "\"address\" : ";
+        OutputAddress(settings, array, true);
+        settings.stream() << ",\n";
         settings.stream() << settings.indentation(indents + 1) << "\"elements\" :\n";
         settings.stream() << settings.indentation(indents + 1) << "[\n";
         for (size_t i = 0; i < len && array != NULL; ++i) {
             std::stringstream stream;
             stream << "[" << i << "]";
             std::string indexName = stream.str();
-            dump_json_value(array[i], settings, child_type, indexName.c_str(), indents + 2, dump, args...);
+            dump_json_value(array[i], &array[i], settings, child_type, indexName.c_str(), indents + 2, dump, args...);
             if (i < len - 1) settings.stream() << ',';
             settings.stream() << "\n";
         }
@@ -1257,8 +1272,9 @@ inline void dump_json_array(const T *array, size_t len, const ApiDumpSettings &s
         settings.stream() << settings.indentation(indents) << "{\n";
         settings.stream() << settings.indentation(indents + 1) << "\"type\" : \"" << type_string << "\",\n";
         settings.stream() << settings.indentation(indents + 1) << "\"name\" : \"" << name << "\",\n";
-        settings.stream() << settings.indentation(indents + 1) << "\"address\" : \"0x0\",\n";
-        settings.stream() << settings.indentation(indents + 1) << "\"elements\" : [ ]\n";
+        settings.stream() << settings.indentation(indents + 1) << "\"address\" : ";
+        OutputAddress(settings, array, true);
+        settings.stream() << "\n";
         settings.stream() << settings.indentation(indents) << "}";
         return;
     }
@@ -1266,17 +1282,16 @@ inline void dump_json_array(const T *array, size_t len, const ApiDumpSettings &s
     if (len > 0 && array != NULL) {
         settings.stream() << settings.indentation(indents + 1) << "\"type\" : \"" << type_string << "\",\n";
         settings.stream() << settings.indentation(indents + 1) << "\"name\" : \"" << name << "\",\n";
-        if (settings.showAddress())
-            settings.stream() << settings.indentation(indents + 1) << "\"address\" : \"" << (void *)array << "\",\n";
-        else
-            settings.stream() << settings.indentation(indents + 1) << "\"address\" : \"address\",\n";
+        settings.stream() << settings.indentation(indents + 1) << "\"address\" : ";
+        OutputAddress(settings, array, true);
+        settings.stream() << ",\n";
         settings.stream() << settings.indentation(indents + 1) << "\"elements\" :\n";
         settings.stream() << settings.indentation(indents + 1) << "[\n";
         for (size_t i = 0; i < len && array != NULL; ++i) {
             std::stringstream stream;
             stream << "[" << i << "]";
             std::string indexName = stream.str();
-            dump_json_value(array[i], settings, child_type, indexName.c_str(), indents + 2, dump, args...);
+            dump_json_value(array[i], &array[i], settings, child_type, indexName.c_str(), indents + 2, dump, args...);
             if (i < len - 1) settings.stream() << ',';
             settings.stream() << "\n";
         }
@@ -1293,11 +1308,12 @@ inline void dump_json_pointer(const T *pointer, const ApiDumpSettings &settings,
         settings.stream() << settings.indentation(indents) << "{\n";
         settings.stream() << settings.indentation(indents + 1) << "\"type\" : \"" << type_string << "\",\n";
         settings.stream() << settings.indentation(indents + 1) << "\"name\" : \"" << name << "\",\n";
-        settings.stream() << settings.indentation(indents + 1) << "\"address\" : \"0x0\",\n";
-        settings.stream() << settings.indentation(indents + 1) << "\"value\" : \"NULL\"\n";
+        settings.stream() << settings.indentation(indents + 1) << "\"address\" : ";
+        OutputAddress(settings, NULL, true);
+        settings.stream() << "\n";
         settings.stream() << settings.indentation(indents) << "}";
     } else {
-        dump_json_value(*pointer, settings, type_string, name, indents, dump, args...);
+        dump_json_value(*pointer, pointer, settings, type_string, name, indents, dump, args...);
     }
 }
 
@@ -1309,11 +1325,12 @@ inline void dump_json_pointer(const T *pointer, const ApiDumpSettings &settings,
         settings.stream() << settings.indentation(indents) << "{\n";
         settings.stream() << settings.indentation(indents + 1) << "\"type\" : \"" << type_string << "\",\n";
         settings.stream() << settings.indentation(indents + 1) << "\"name\" : \"" << name << "\",\n";
-        settings.stream() << settings.indentation(indents + 1) << "\"address\" : \"0x0\",\n";
-        settings.stream() << settings.indentation(indents + 1) << "\"value\" : \"NULL\"\n";
+        settings.stream() << settings.indentation(indents + 1) << "\"address\" : ";
+        OutputAddress(settings, NULL, true);
+        settings.stream() << "\n";
         settings.stream() << settings.indentation(indents) << "}";
     } else {
-        dump_json_value(*pointer, settings, type_string, name, indents, dump, args...);
+        dump_json_value(*pointer, pointer, settings, type_string, name, indents, dump, args...);
     }
 }
 
@@ -1321,50 +1338,62 @@ extern bool is_union(const char *t);
 extern bool is_struct(const char *t);
 
 template <typename T, typename... Args>
-inline void dump_json_value(const T object, const ApiDumpSettings &settings, const char *type_string, const char *name, int indents,
+inline void dump_json_value(const T object, const void *pObject, const ApiDumpSettings &settings, const char *type_string,
+                            const char *name, int indents,
                             std::ostream &(*dump)(const T, const ApiDumpSettings &, int, Args... args), Args... args) {
+    bool isPnext = !strcmp(name, "pNext") | !strcmp(name, "pUserData");
+    const char *star = (isPnext && !strstr(type_string, "void")) ? "*" : "";
     settings.stream() << settings.indentation(indents) << "{\n";
     if (is_union(type_string))
-        settings.stream() << settings.indentation(indents + 1) << "\"type\" : \"" << type_string << " (Union)\",\n";
+        settings.stream() << settings.indentation(indents + 1) << "\"type\" : \"" << type_string << star << " (Union)\",\n";
     else
-        settings.stream() << settings.indentation(indents + 1) << "\"type\" : \"" << type_string << "\",\n";
-    settings.stream() << settings.indentation(indents + 1) << "\"name\" : \"" << name << "\",\n";
-    if (strchr(type_string, '*')) {
-        if (settings.showAddress())
-            settings.stream() << settings.indentation(indents + 1) << "\"address\" : \"" << &object << "\",\n";
-        else
-            settings.stream() << settings.indentation(indents + 1) << "\"address\" : \"address\",\n";
+        settings.stream() << settings.indentation(indents + 1) << "\"type\" : \"" << type_string << star << "\",\n";
+    settings.stream() << settings.indentation(indents + 1) << "\"name\" : \"" << name << "\"";
+    if (isPnext || (strchr(type_string, '*') && strcmp(type_string, "const char*") && strcmp(type_string, "const char* const"))) {
+        // Print pointers, except for char string pointers
+        settings.stream() << ",\n" << settings.indentation(indents + 1) << "\"address\" : ";
+        OutputAddress(settings, pObject, true);
     }
-    if (is_union(type_string) || is_struct(type_string))
-        settings.stream() << settings.indentation(indents + 1) << "\"members\" :\n";
-    else
-        settings.stream() << settings.indentation(indents + 1) << "\"value\" : ";
-    dump(object, settings, indents + 1, args...);
-    settings.stream() << "\n" << settings.indentation(indents) << "}";
+    if (!isPnext || (isPnext && pObject != nullptr)) {
+        settings.stream() << ",\n";
+        if (is_union(type_string) || is_struct(type_string))
+            settings.stream() << settings.indentation(indents + 1) << "\"members\" :\n";
+        else
+            settings.stream() << settings.indentation(indents + 1) << "\"value\" : ";
+        dump(object, settings, indents + 1, args...);
+    }
+
+    settings.stream() << "\n";
+    settings.stream() << settings.indentation(indents) << "}";
 }
 
 template <typename T, typename... Args>
-inline void dump_json_value(const T &object, const ApiDumpSettings &settings, const char *type_string, const char *name,
-                            int indents, std::ostream &(*dump)(const T &, const ApiDumpSettings &, int, Args... args),
-                            Args... args) {
+inline void dump_json_value(const T &object, const void *pObject, const ApiDumpSettings &settings, const char *type_string,
+                            const char *name, int indents,
+                            std::ostream &(*dump)(const T &, const ApiDumpSettings &, int, Args... args), Args... args) {
+    bool isPnext = !strcmp(name, "pNext") | !strcmp(name, "pUserData");
+    const char *star = (isPnext && !strstr(type_string, "void")) ? "*" : "";
     settings.stream() << settings.indentation(indents) << "{\n";
     if (is_union(type_string))
-        settings.stream() << settings.indentation(indents + 1) << "\"type\" : \"" << type_string << " (Union)\",\n";
+        settings.stream() << settings.indentation(indents + 1) << "\"type\" : \"" << type_string << star << " (Union)\",\n";
     else
-        settings.stream() << settings.indentation(indents + 1) << "\"type\" : \"" << type_string << "\",\n";
-    settings.stream() << settings.indentation(indents + 1) << "\"name\" : \"" << name << "\",\n";
-    if (strchr(type_string, '*')) {
-        if (settings.showAddress())
-            settings.stream() << settings.indentation(indents + 1) << "\"address\" : \"" << &object << "\",\n";
-        else
-            settings.stream() << settings.indentation(indents + 1) << "\"address\" : \"address\",\n";
+        settings.stream() << settings.indentation(indents + 1) << "\"type\" : \"" << type_string << star << "\",\n";
+    settings.stream() << settings.indentation(indents + 1) << "\"name\" : \"" << name << "\"";
+    if (isPnext || (strchr(type_string, '*') && strcmp(type_string, "const char*") && strcmp(type_string, "const char* const"))) {
+        // Print pointers, except for char string pointers
+        settings.stream() << ",\n" << settings.indentation(indents + 1) << "\"address\" : ";
+        OutputAddress(settings, pObject, true);
     }
-    if (is_union(type_string) || is_struct(type_string))
-        settings.stream() << settings.indentation(indents + 1) << "\"members\" :\n";
-    else
-        settings.stream() << settings.indentation(indents + 1) << "\"value\" : ";
-    dump(object, settings, indents + 1, args...);
-    settings.stream() << "\n" << settings.indentation(indents) << "}";
+    if (!isPnext || (isPnext && pObject != nullptr)) {
+        settings.stream() << ",\n";
+        if (is_union(type_string) || is_struct(type_string))
+            settings.stream() << settings.indentation(indents + 1) << "\"members\" :\n";
+        else
+            settings.stream() << settings.indentation(indents + 1) << "\"value\" : ";
+        dump(object, settings, indents + 1, args...);
+    }
+    settings.stream() << "\n";
+    settings.stream() << settings.indentation(indents) << "}";
 }
 
 inline void dump_json_special(const char *text, const ApiDumpSettings &settings, const char *type_string, const char *name,
@@ -1372,7 +1401,9 @@ inline void dump_json_special(const char *text, const ApiDumpSettings &settings,
     settings.stream() << settings.indentation(indents) << "{\n";
     settings.stream() << settings.indentation(indents + 1) << "\"type\" : \"" << type_string << "\",\n";
     settings.stream() << settings.indentation(indents + 1) << "\"name\" : \"" << name << "\",\n";
-    settings.stream() << settings.indentation(indents + 1) << "\"address\" : \"" << (void *)text << "\",\n";
+    settings.stream() << settings.indentation(indents + 1) << "\"address\" : ";
+    OutputAddress(settings, text, true);
+    settings.stream() << ",\n";
     settings.stream() << settings.indentation(indents + 1) << "\"value\" : ";
     settings.stream() << "\"" << text << "\"\n";
     settings.stream() << settings.indentation(indents) << "}";
@@ -1380,7 +1411,7 @@ inline void dump_json_special(const char *text, const ApiDumpSettings &settings,
 
 inline bool dump_json_bitmaskOption(const std::string &option, std::ostream &stream, bool isFirst) {
     if (isFirst)
-        stream << " (";
+        stream << "(";
     else
         stream << " | ";
     stream << option;
@@ -1396,12 +1427,8 @@ inline std::ostream &dump_json_cstring(const char *object, const ApiDumpSettings
 }
 
 inline std::ostream &dump_json_void(const void *object, const ApiDumpSettings &settings, int indents) {
-    if (object == NULL)
-        settings.stream() << "\"NULL\"";
-    else if (settings.showAddress())
-        settings.stream() << '"' << object << "\"";
-    else
-        settings.stream() << "\"address\"";
+    OutputAddress(settings, object, true);
+    settings.stream() << "\n";
     return settings.stream();
 }
 
@@ -1413,17 +1440,36 @@ inline std::ostream &dump_json_int(int object, const ApiDumpSettings &settings, 
 
 template <typename T, typename... Args>
 inline void dump_json_pNext(const T *object, const ApiDumpSettings &settings, const char *type_string, int indents,
-                            std::ostream &(*dump)(const T &, const ApiDumpSettings &, int, Args... args), Args... args) {
+                            std::ostream &(*dump)(const T, const ApiDumpSettings &, int, Args... args), Args... args) {
     if (object == NULL) {
         settings.stream() << settings.indentation(indents) << "{\n";
-        settings.stream() << settings.indentation(indents + 1) << "\"type\" : \"" << type_string << "\",\n";
+        settings.stream() << settings.indentation(indents + 1) << "\"type\" : \"" << type_string << "*\",\n";
         settings.stream() << settings.indentation(indents + 1) << "\"name\" : \""
                           << "pNext"
                           << "\",\n";
-        settings.stream() << settings.indentation(indents + 1) << "\"address\" : \"0x0\",\n";
-        settings.stream() << settings.indentation(indents + 1) << "\"value\" : \"NULL\"\n";
+        settings.stream() << settings.indentation(indents + 1) << "\"address\" : ";
+        OutputAddress(settings, NULL, true);
+        settings.stream() << ",\n";
         settings.stream() << settings.indentation(indents) << "}";
     } else {
-        dump_json_value(*object, settings, type_string, "pNext", indents, dump, args...);
+        dump_json_value(*object, object, settings, type_string, "pNext", indents, dump, args...);
+    }
+}
+
+template <typename T, typename... Args>
+inline void dump_json_pNext(const T *object, const ApiDumpSettings &settings, const char *type_string, int indents,
+                            std::ostream &(*dump)(const T &, const ApiDumpSettings &, int, Args... args), Args... args) {
+    if (object == NULL) {
+        settings.stream() << settings.indentation(indents) << "{\n";
+        settings.stream() << settings.indentation(indents + 1) << "\"type\" : \"" << type_string << "*\",\n";
+        settings.stream() << settings.indentation(indents + 1) << "\"name\" : \""
+                          << "pNext"
+                          << "\",\n";
+        settings.stream() << settings.indentation(indents + 1) << "\"address\" : ";
+        OutputAddress(settings, NULL, true);
+        settings.stream() << ",\n";
+        settings.stream() << settings.indentation(indents) << "}";
+    } else {
+        dump_json_value(*object, object, settings, type_string, "pNext", indents, dump, args...);
     }
 }

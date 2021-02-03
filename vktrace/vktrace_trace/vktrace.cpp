@@ -35,6 +35,8 @@ extern "C" {
 #include <inttypes.h>
 #include <sys/types.h>
 #include <sys/stat.h>
+#include <json/json.h>
+
 #include "screenshot_parsing.h"
 
 vktrace_settings g_settings;
@@ -293,6 +295,44 @@ void vktrace_resetFilesize(FILE* pTraceFile, uint64_t decompressFilesize) {
     if (0 == Fseek(pTraceFile, offsetof(vktrace_trace_file_header, decompress_file_size), SEEK_SET)) {
         fwrite(&decompressFilesize, sizeof(uint64_t), 1, pTraceFile);
     }
+}
+
+uint32_t vktrace_appendMetaData(FILE* pTraceFile, const std::vector<uint64_t>& injectedData) {
+    Json::Value root;
+    Json::Value injectedCallList;
+    for (uint32_t i = 0; i < injectedData.size(); i++) {
+        injectedCallList.append(injectedData[i]);
+    }
+    root["injectedCalls"] = injectedCallList;
+    auto str = root.toStyledString();
+    vktrace_LogVerbose("Meta data string: %s", str.c_str());
+
+    vktrace_trace_packet_header hdr;
+    uint64_t meta_data_file_offset = 0;
+    uint32_t meta_data_size = str.size() + 1;
+
+    hdr.size = sizeof(hdr) + meta_data_size;
+    hdr.global_packet_index = lastPacketIndex++;
+    hdr.tracer_id = VKTRACE_TID_VULKAN;
+    hdr.packet_id = VKTRACE_TPI_META_DATA;
+    hdr.thread_id = lastPacketThreadId;
+    hdr.vktrace_begin_time = hdr.entrypoint_begin_time = hdr.entrypoint_end_time = hdr.vktrace_end_time = lastPacketEndTime;
+    hdr.next_buffers_offset = 0;
+    hdr.pBody = (uintptr_t)NULL;
+
+    if (0 == Fseek(pTraceFile, 0, SEEK_END)) {
+        meta_data_file_offset = Ftell(pTraceFile);
+        if (1 == fwrite(&hdr, sizeof(hdr), 1, pTraceFile) &&
+            meta_data_size == fwrite(str.c_str(), sizeof(char), meta_data_size, pTraceFile)) {
+            if (0 == Fseek(pTraceFile, offsetof(vktrace_trace_file_header, meta_data_offset), SEEK_SET)) {
+                fwrite(&meta_data_file_offset, sizeof(uint64_t), 1, pTraceFile);
+                vktrace_LogVerbose("Meta data at the file offset %llu", meta_data_file_offset);
+            }
+        }
+    } else {
+        vktrace_LogError("File operation failed during append the meta data");
+    }
+    return meta_data_size;
 }
 
 // ------------------------------------------------------------------------------------------------
