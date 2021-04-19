@@ -58,7 +58,138 @@
 #include "vk_layer_config.h"
 #include "vk_layer_table.h"
 
+#include "dev_sim_ext_features.h"
 #include "dev_sim_compatmode.h"
+
+// Various small utility functions ///////////////////////////////////////////////////////////////////////////////////////////////
+struct IntSetting {
+    int num;
+    bool fromEnvVar;
+};
+
+struct StringSetting {
+    std::string str;
+    bool fromEnvVar;
+};
+
+struct StringSetting inputFilename;
+
+#if defined(__ANDROID__)
+#include <android/log.h>
+const uint32_t MAX_BUFFER_SIZE = 255;
+typedef enum { VK_LOG_NONE = 0, VK_LOG_ERROR, VK_LOG_WARNING, VK_LOG_VERBOSE, VK_LOG_DEBUG } VkLogLevel;
+
+void AndroidGetEnv(const char *key, std::string& value) {
+    std::string command("getprop ");
+    command += key;
+
+    std::string android_env;
+    FILE *pipe = popen(command.c_str(), "r");
+    if (pipe != nullptr) {
+        char buffer[MAX_BUFFER_SIZE] = {};
+        while (fgets(buffer, MAX_BUFFER_SIZE, pipe) != NULL) {
+            android_env.append(buffer);
+        }
+        pclose(pipe);
+    }
+
+    // Only if the value is set will we get a string back
+    if (android_env.length() > 0) {
+        __android_log_print(ANDROID_LOG_INFO, "devsim", "Vulkan device simulation layer %s: %s", command.c_str(),
+                            android_env.c_str());
+        android_env.erase(android_env.find_last_not_of(" \n\r\t") + 1);
+        value = android_env;
+    } else {
+        value = "";
+    }
+}
+#endif
+
+// Retrieve the value of an environment variable.
+std::string GetEnvarValue(const char *name) {
+    std::string value = "";
+#if defined(_WIN32)
+    DWORD size = GetEnvironmentVariable(name, nullptr, 0);
+    if (size > 0) {
+        std::vector<char> buffer(size);
+        GetEnvironmentVariable(name, buffer.data(), size);
+        value = buffer.data();
+    }
+#elif defined(__ANDROID__)
+    AndroidGetEnv(name, value);
+#else
+    const char *v = getenv(name);
+    if (v) value = v;
+#endif
+    // printf("envar %s = \"%s\"\n", name, value.c_str());
+    return value;
+}
+
+#if defined(__ANDROID__)
+void AndroidPrintf(VkLogLevel level, const char *fmt, va_list args) {
+    int requiredLength;
+    va_list argcopy;
+    va_copy(argcopy, args);
+    requiredLength = vsnprintf(NULL, 0, fmt, argcopy) + 1;
+    va_end(argcopy);
+
+    char *message = (char *)malloc(requiredLength);
+    vsnprintf(message, requiredLength, fmt, args);
+    switch (level) {
+        case VK_LOG_DEBUG:
+            __android_log_print(ANDROID_LOG_DEBUG, "devsim", "%s", message);
+            break;
+        case VK_LOG_ERROR:
+            __android_log_print(ANDROID_LOG_ERROR, "devsim", "%s", message);
+            break;
+        default:
+            __android_log_print(ANDROID_LOG_INFO, "devsim", "%s", message);
+            break;
+    }
+    free(message);
+}
+#endif
+
+struct IntSetting debugLevel;
+struct IntSetting errorLevel;
+
+void DebugPrintf(const char *fmt, ...) {
+    if (debugLevel.num > 0) {
+#if !defined(__ANDROID__)
+        printf("\tDEBUG devsim ");
+#endif
+        va_list args;
+        va_start(args, fmt);
+#if defined(__ANDROID__)
+        AndroidPrintf(VK_LOG_DEBUG, fmt, args);
+#else
+        vprintf(fmt, args);
+#endif
+        va_end(args);
+    }
+}
+
+void ErrorPrintf(const char *fmt, ...) {
+#if !defined(__ANDROID__)
+    fprintf(stderr, "\tERROR devsim ");
+#endif
+    va_list args;
+    va_start(args, fmt);
+#if defined(__ANDROID__)
+    AndroidPrintf(VK_LOG_ERROR, fmt, args);
+#else
+    vfprintf(stderr, fmt, args);
+#endif
+    va_end(args);
+    if (errorLevel.num > 0) {
+#if defined(__ANDROID__)
+        __android_log_print(ANDROID_LOG_ERROR, "devsim", "devsim exiting on error as requested");
+#else
+        fprintf(stderr, "\ndevsim exiting on error as requested\n\n");
+#endif
+        exit(1);
+    }
+}
 
 namespace {
 
@@ -303,136 +434,6 @@ const char *const kLayerSettingsDevsimDebugEnable =
 const char *const kLayerSettingsDevsimExitOnError =
     "lunarg_device_simulation.exit_on_error";  // vk_layer_settings.txt equivalent for kEnvarDevsimExitOnError
 
-struct IntSetting {
-    int num;
-    bool fromEnvVar;
-};
-
-struct StringSetting {
-    std::string str;
-    bool fromEnvVar;
-};
-
-struct StringSetting inputFilename;
-struct IntSetting debugLevel;
-struct IntSetting errorLevel;
-
-// Various small utility functions ///////////////////////////////////////////////////////////////////////////////////////////////
-
-#if defined(__ANDROID__)
-#include <android/log.h>
-const uint32_t MAX_BUFFER_SIZE = 255;
-typedef enum { VK_LOG_NONE = 0, VK_LOG_ERROR, VK_LOG_WARNING, VK_LOG_VERBOSE, VK_LOG_DEBUG } VkLogLevel;
-
-void AndroidGetEnv(const char *key, std::string& value) {
-    std::string command("getprop ");
-    command += key;
-
-    std::string android_env;
-    FILE *pipe = popen(command.c_str(), "r");
-    if (pipe != nullptr) {
-        char buffer[MAX_BUFFER_SIZE] = {};
-        while (fgets(buffer, MAX_BUFFER_SIZE, pipe) != NULL) {
-            android_env.append(buffer);
-        }
-        pclose(pipe);
-    }
-
-    // Only if the value is set will we get a string back
-    if (android_env.length() > 0) {
-        __android_log_print(ANDROID_LOG_INFO, "devsim", "Vulkan device simulation layer %s: %s", command.c_str(),
-                            android_env.c_str());
-        android_env.erase(android_env.find_last_not_of(" \n\r\t") + 1);
-        value = android_env;
-    } else {
-        value = "";
-    }
-}
-#endif
-
-// Retrieve the value of an environment variable.
-std::string GetEnvarValue(const char *name) {
-    std::string value = "";
-#if defined(_WIN32)
-    DWORD size = GetEnvironmentVariable(name, nullptr, 0);
-    if (size > 0) {
-        std::vector<char> buffer(size);
-        GetEnvironmentVariable(name, buffer.data(), size);
-        value = buffer.data();
-    }
-#elif defined(__ANDROID__)
-    AndroidGetEnv(name, value);
-#else
-    const char *v = getenv(name);
-    if (v) value = v;
-#endif
-    // printf("envar %s = \"%s\"\n", name, value.c_str());
-    return value;
-}
-
-#if defined(__ANDROID__)
-void AndroidPrintf(VkLogLevel level, const char *fmt, va_list args) {
-    int requiredLength;
-    va_list argcopy;
-    va_copy(argcopy, args);
-    requiredLength = vsnprintf(NULL, 0, fmt, argcopy) + 1;
-    va_end(argcopy);
-
-    char *message = (char *)malloc(requiredLength);
-    vsnprintf(message, requiredLength, fmt, args);
-    switch (level) {
-        case VK_LOG_DEBUG:
-            __android_log_print(ANDROID_LOG_DEBUG, "devsim", "%s", message);
-            break;
-        case VK_LOG_ERROR:
-            __android_log_print(ANDROID_LOG_ERROR, "devsim", "%s", message);
-            break;
-        default:
-            __android_log_print(ANDROID_LOG_INFO, "devsim", "%s", message);
-            break;
-    }
-    free(message);
-}
-#endif
-
-void DebugPrintf(const char *fmt, ...) {
-    if (debugLevel.num > 0) {
-#if !defined(__ANDROID__)
-        printf("\tDEBUG devsim ");
-#endif
-        va_list args;
-        va_start(args, fmt);
-#if defined(__ANDROID__)
-        AndroidPrintf(VK_LOG_DEBUG, fmt, args);
-#else
-        vprintf(fmt, args);
-#endif
-        va_end(args);
-    }
-}
-
-void ErrorPrintf(const char *fmt, ...) {
-#if !defined(__ANDROID__)
-    fprintf(stderr, "\tERROR devsim ");
-#endif
-    va_list args;
-    va_start(args, fmt);
-#if defined(__ANDROID__)
-    AndroidPrintf(VK_LOG_ERROR, fmt, args);
-#else
-    vfprintf(stderr, fmt, args);
-#endif
-    va_end(args);
-    if (errorLevel.num > 0) {
-#if defined(__ANDROID__)
-        __android_log_print(ANDROID_LOG_ERROR, "devsim", "devsim exiting on error as requested");
-#else
-        fprintf(stderr, "\ndevsim exiting on error as requested\n\n");
-#endif
-        exit(1);
-    }
-}
-
 // Get all elements from a vkEnumerate*() lambda into a std::vector.
 template <typename T>
 VkResult EnumerateAll(std::vector<T> *vect, std::function<VkResult(uint32_t *, T *)> func) {
@@ -457,6 +458,8 @@ int g_run_on_compat_mode = 0;
 typedef std::vector<VkQueueFamilyProperties> ArrayOfVkQueueFamilyProperties;
 typedef std::unordered_map<uint32_t /*VkFormat*/, VkFormatProperties> ArrayOfVkFormatProperties;
 typedef std::vector<VkLayerProperties> ArrayOfVkLayerProperties;
+typedef std::vector<VkExtensionProperties> ArrayOfVkExtensionProperties;
+typedef std::unordered_map<uint32_t, ExtendedFeature> MapOfExtendedFeatures;
 
 // FormatProperties utilities ////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -507,6 +510,8 @@ class PhysicalDeviceData {
     ArrayOfVkQueueFamilyProperties arrayof_queue_family_properties_;
     ArrayOfVkFormatProperties arrayof_format_properties_;
     ArrayOfVkLayerProperties arrayof_layer_properties_;
+    ArrayOfVkExtensionProperties arrayof_ext_properties_;
+    MapOfExtendedFeatures mapof_extended_features_;
 
    private:
     PhysicalDeviceData() = delete;
@@ -556,6 +561,7 @@ class JsonLoader {
     void GetValue(const Json::Value &parent, int index, VkQueueFamilyProperties *dest);
     void GetValue(const Json::Value &parent, int index, DevsimFormatProperties *dest);
     void GetValue(const Json::Value &parent, int index, VkLayerProperties *dest);
+    void GetValue(const Json::Value &parent, int index, VkExtensionProperties *dest);
 
     // For use as warn_func in GET_VALUE_WARN().  Return true if warning occurred.
     static bool WarnIfGreater(const char *name, const uint64_t new_value, const uint64_t old_value) {
@@ -732,6 +738,7 @@ class JsonLoader {
         DebugPrintf("\t\tJsonLoader::GetArray(ArrayOfVkFormatProperties)\n");
         dest->clear();
         const int count = static_cast<int>(value.size());
+        DebugPrintf("\t\tSize of ArrayOfVkFormatProperties = %d\n", count);
         for (int i = 0; i < count; ++i) {
             // Get a format structure from JSON.
             DevsimFormatProperties devsim_format_properties = {};
@@ -763,6 +770,46 @@ class JsonLoader {
             dest->push_back(layer_properties);
         }
         return static_cast<int>(dest->size());
+    }
+
+    int GetArray(const Json::Value &parent, const char *name, ArrayOfVkExtensionProperties *dest) {
+        const Json::Value value = parent[name];
+        if (value.type() != Json::arrayValue) {
+            return -1;
+        }
+        DebugPrintf("\t\tJsonLoader::GetArray(ArrayOfVkExtensionProperties)\n");
+        dest->clear();
+        const int count = static_cast<int>(value.size());
+        DebugPrintf("\t\tSize of ArrayOfVkExtensionProperties = %d\n", count);
+        for (int i = 0; i < count; ++i) {
+            VkExtensionProperties extension_properties = {};
+            GetValue(value, i, &extension_properties);
+            dest->push_back(extension_properties);
+            DebugPrintf("\t\t\tExtension Name: %s\n", extension_properties.extensionName);
+        }
+        return static_cast<int>(dest->size());
+    }
+
+    int GetExtendedFeatures(const Json::Value &parent, MapOfExtendedFeatures *features) {
+        const Json::Value value = parent["extended"]["devicefeatures2"];
+        if (value.type() != Json::arrayValue) {
+            return -1;
+        }
+        DebugPrintf("\t\tJsonLoader::GetExtendedFeatures(MapOfExtendedFeatures)\n");
+        features->clear();
+        const int count = static_cast<int>(value.size());
+        for (int i = 0; i < count; ++i) {
+            const Json::Value extension_name = value[i]["extension"];
+            VkStructureType stype = ext_feature_name_to_stype(extension_name.asString());
+            if (stype != VK_STRUCTURE_TYPE_MAX_ENUM) {
+                if (features->find(stype) == features->end()) {
+                    (*features)[stype].base.sType = stype;
+                    (*features)[stype].base.pNext = nullptr;
+                }
+                get_extension_feature(stype, value[i], (*features)[stype]);
+            }
+        }
+        return static_cast<int>(features->size());
     }
 
     void WarnDeprecated(const Json::Value &parent, const char *name) {
@@ -843,7 +890,8 @@ bool JsonLoader::LoadFile(const char *filename) {
             GetArray(root, "ArrayOfVkQueueFamilyProperties", &pdd_.arrayof_queue_family_properties_);
             GetArray(root, "ArrayOfVkFormatProperties", &pdd_.arrayof_format_properties_);
             GetArray(root, "ArrayOfVkLayerProperties", &pdd_.arrayof_layer_properties_);
-            WarnDeprecated(root, "ArrayOfVkExtensionProperties");
+            GetArray(root, "ArrayOfVkExtensionProperties", &pdd_.arrayof_ext_properties_);
+            GetExtendedFeatures(root, &pdd_.mapof_extended_features_);
             result = true;
             break;
 
@@ -1169,6 +1217,15 @@ void JsonLoader::GetValue(const Json::Value &parent, int index, VkLayerPropertie
     GET_ARRAY(description);  // size < VK_MAX_DESCRIPTION_SIZE
 }
 
+void JsonLoader::GetValue(const Json::Value &parent, int index, VkExtensionProperties *dest) {
+    const Json::Value value = parent[index];
+    if (value.type() != Json::objectValue) {
+        return;
+    }
+    GET_ARRAY(extensionName);  // size < VK_MAX_EXTENSION_NAME_SIZE
+    GET_VALUE(specVersion);
+}
+
 #undef GET_VALUE
 #undef GET_ARRAY
 
@@ -1244,17 +1301,37 @@ static VkResult LayerSetupCreateInstance(const VkInstanceCreateInfo *pCreateInfo
     return result;
 }
 
+#define MAKE_FOURCC(a,b,c,d) \
+( ((uint32_t)d) | ( ((uint32_t)c) << 8 ) | ( ((uint32_t)b) << 16 ) | ( ((uint32_t)a) << 24 ) )
+
 void EnableCompatMode(VkInstance inst, VkPhysicalDevice phy_dev, PhysicalDeviceData& pdd) {
     if (g_run_on_compat_mode) {
         DebugPrintf("Compatible mode is enabled.\n");
-        VkPhysicalDeviceProperties physical_device_properties;
-        VkPhysicalDeviceFeatures   physical_device_features;
+        VkPhysicalDeviceProperties   physical_device_properties;
+        VkPhysicalDeviceFeatures     physical_device_features;
+        uint32_t                     count_of_extensions;
+        ArrayOfVkExtensionProperties array_of_extensions;
 
         const auto dt = instance_dispatch_table(inst);
         dt->GetPhysicalDeviceProperties(phy_dev, &physical_device_properties);
         dt->GetPhysicalDeviceFeatures(phy_dev, &physical_device_features);
+        if (dt->EnumerateDeviceExtensionProperties(phy_dev, nullptr, &count_of_extensions, nullptr) != VK_SUCCESS) {
+            ErrorPrintf("Failed to enumerate the extension count\n");
+        } else {
+            array_of_extensions.resize(count_of_extensions);
+            dt->EnumerateDeviceExtensionProperties(phy_dev, nullptr, &count_of_extensions, array_of_extensions.data());
+            ClampDevExtProps(array_of_extensions, pdd.arrayof_ext_properties_);
+            for (uint32_t i = 0; i < pdd.arrayof_ext_properties_.size(); i++) {
+                DebugPrintf("Clamped Extension Name: %s\n", pdd.arrayof_ext_properties_[i].extensionName);
+            }
+        }
+
         ClampPhyDevLimits(physical_device_properties.limits, pdd.physical_device_properties_.limits);
         ClampPhyDevFeatures(physical_device_features, pdd.physical_device_features_);
+
+        /// Override the Device Id and Driver version
+        pdd.physical_device_properties_.deviceID = MAKE_FOURCC('S', 'i', 'm', 'D');
+        pdd.physical_device_properties_.driverVersion = MAKE_FOURCC('S', 'i', 'm', 'D');
     }
 }
 
@@ -1362,12 +1439,17 @@ VKAPI_ATTR void VKAPI_CALL GetPhysicalDeviceFeatures(VkPhysicalDevice physicalDe
 }
 
 VKAPI_ATTR void VKAPI_CALL GetPhysicalDeviceFeatures2(VkPhysicalDevice physicalDevice, VkPhysicalDeviceFeatures2KHR *pFeatures) {
+    PhysicalDeviceData *pdd = nullptr;
     {
         std::lock_guard<std::mutex> lock(global_lock);
         const auto dt = instance_dispatch_table(physicalDevice);
         dt->GetPhysicalDeviceFeatures2(physicalDevice, pFeatures);
     }
     GetPhysicalDeviceFeatures(physicalDevice, &pFeatures->features);
+    pdd = PhysicalDeviceData::Find(physicalDevice);
+    if (pFeatures->pNext && g_run_on_compat_mode && pdd) {
+        ClampExtendedDevFeatures(pdd->mapof_extended_features_, pFeatures->pNext);
+    }
 }
 
 VKAPI_ATTR void VKAPI_CALL GetPhysicalDeviceFeatures2KHR(VkPhysicalDevice physicalDevice, VkPhysicalDeviceFeatures2KHR *pFeatures) {
@@ -1413,9 +1495,18 @@ VKAPI_ATTR VkResult VKAPI_CALL EnumerateDeviceExtensionProperties(VkPhysicalDevi
 
     if (pLayerName && !strcmp(pLayerName, kOurLayerName)) {
         result = EnumerateProperties(kDeviceExtensionPropertiesCount, kDeviceExtensionProperties.data(), pCount, pProperties);
+    } else if (g_run_on_compat_mode) {
+        PhysicalDeviceData *pdd = PhysicalDeviceData::Find(physicalDevice);
+        result = EnumerateProperties(pdd->arrayof_ext_properties_.size(), pdd->arrayof_ext_properties_.data(), pCount, pProperties);
     } else {
         result = dt->EnumerateDeviceExtensionProperties(physicalDevice, pLayerName, pCount, pProperties);
+        if (pProperties) {
+            for (uint32_t i = 0; i < *pCount; i++) {
+                DebugPrintf("Native Device Extension: %s\n", pProperties[i].extensionName);
+            }
+        }
     }
+
     return result;
 }
 

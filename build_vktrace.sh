@@ -160,6 +160,12 @@ if [ ${TARGET} == "android" ]; then
     fi
     ./android-generate.sh ${RELEASE_TYPE_OPTION} ${BUILD_TYPE_OPTION}
     ndk-build -j $(nproc)
+    if [ -d $dir/submodules/libcollector ]; then
+        cd $dir/submodules/libcollector/android/gradle
+        git clean -fdx
+        ANDROID_HOME=${ANDROID_SDK_HOME} ./gradlew assembleRelease
+        cd -
+    fi
     ./build_vkreplay.sh
 else
     if [ ${UPDATE_EXTERNAL} == "true" ] || [ ! -d ${dir}/external ]; then

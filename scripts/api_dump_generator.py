@@ -504,6 +504,15 @@ std::ostream& dump_text_{sctName}(const {sctName}& object, const ApiDumpSettings
 std::ostream& dump_text_{unName}(const {unName}& object, const ApiDumpSettings& settings, int indents);
 @end union
 
+template <typename T>
+inline void dump_text_double_pointer(const T *const* pointer, const ApiDumpSettings &settings, const char *type_string, const char *name, int indents) {{
+    settings.formatNameType(settings.stream(), indents, name, type_string);
+    if(settings.showAddress())
+        settings.stream() << pointer << ":\\n";
+    else
+        settings.stream() << "address:\\n";
+}}
+
 //============================= typedefs ==============================//
 // Functions for dumping typedef types that the codegen scripting can't handle
 #if defined(VK_ENABLE_BETA_EXTENSIONS)
@@ -763,6 +772,14 @@ std::ostream& dump_text_{sctName}(const {sctName}& object, const ApiDumpSettings
     dump_text_array<const {memBaseType}>(object.{memName}, object.{memLength}, settings, "{memType}", "{memChildType}", "{memName}", indents + 1, dump_text_{memTypeID}{memInheritedConditions}); // BQB
     @end if
     @end if
+    @if({memPtrLevel} == 2 and '{memLength}' != 'None' and '{memBaseType}' == 'VkAccelerationStructureGeometryKHR')
+    dump_text_double_pointer<const {memBaseType}>(object.{memName}, settings, "{memType}", "{memName}", indents + 1);
+    for (uint32_t i = 0; i < object.{memLength} && object.{memName}; ++i) {{
+        std::ostringstream oss;
+        oss << i;
+        dump_text_pointer<const {memBaseType}>(object.{memName}[i], settings, "{memChildType}", "{memName}", indents + 2, dump_text_{memTypeID}{memInheritedConditions});
+    }}
+    @end if
 
     @if('{sctName}' == 'VkShaderModuleCreateInfo')
     @if('{memName}' == 'pCode')
@@ -911,6 +928,31 @@ std::ostream& dump_text_body_{funcName}(ApiDumpInstance& dump_inst, {funcTypedPa
         @end if
         @if({prmPtrLevel} == 1 and '{prmLength}' != 'None')
         dump_text_array<const {prmBaseType}>({prmName}, {prmLength}, settings, "{prmType}", "{prmChildType}", "{prmName}", 1, dump_text_{prmTypeID}{prmInheritedConditions}); // HQA
+        @end if
+        @if('{funcName}' == 'vkBuildAccelerationStructuresKHR' and '{prmName}' == 'pInfos')
+        settings.stream() << "====================== This is for instances.data.hostAddress ==========================\\n";
+        for (uint32_t i = 0; i < infoCount; ++i) {{
+            settings.stream() << "i = " << i;
+            for (uint32_t j = 0; j < pInfos[i].geometryCount; ++j) {{
+                std::ostringstream oss_i;
+                oss_i << i;
+                std::ostringstream oss_j;
+                oss_j << j;
+                if (pInfos[i].pGeometries[j].geometryType == VK_GEOMETRY_TYPE_INSTANCES_KHR) {{
+                    uint32_t length = ppBuildRangeInfos[i][j].primitiveCount;
+                    VkAccelerationStructureInstanceKHR* pTmp = (VkAccelerationStructureInstanceKHR*)pInfos[i].pGeometries[j].geometry.instances.data.hostAddress;
+                    dump_text_array<const VkAccelerationStructureInstanceKHR>(pTmp, length, settings, "const VkAccelerationStructureInstanceKHR*", "const VkAccelerationStructureInstanceKHR", ("pInfos["+oss_i.str()+"].pGeometries["+oss_j.str()+"].geometry.instances.data.hostAddress").c_str(), 1, dump_text_VkAccelerationStructureInstanceKHR);
+                }}
+            }}
+        }}
+        @end if
+        @if({prmPtrLevel} == 2 and '{prmLength}' != 'None' and '{prmBaseType}' == 'VkAccelerationStructureBuildRangeInfoKHR')
+        dump_text_double_pointer<const {prmBaseType}>({prmName}, settings, "{prmType}", "{prmName}", 1);
+        for (uint32_t i = 0; i < {prmLength}; ++i) {{
+            std::ostringstream oss;
+            oss << i;
+            dump_text_array<const {prmBaseType}>({prmName}[i], pInfos[i].geometryCount, settings, "{prmChildType}", "{prmChildChildType}", ("{prmName}["+oss.str()+"]").c_str(), 2, dump_text_{prmTypeID}{prmInheritedConditions});
+        }}
         @end if
         @end parameter
     }}
@@ -2349,6 +2391,7 @@ class VulkanVariable:
             self.typeID = aliases[self.typeID]
         self.baseType = self.typeID                 # Type, dereferenced to the non-pointer type
         self.childType = None                       # Type, dereferenced to the non-pointer type (None if it isn't a pointer)
+        self.childChildType = None                  # Type, dereferenced to the non-pointer type from a double-pointer (None if it isn't a pointer)
         self.arrayLength = None                     # Length of the array, or None if it isn't an array
 
         # Get the text of the variable type and name, but not the comment
@@ -2366,6 +2409,7 @@ class VulkanVariable:
         if bracketMatch is not None:
             matchText = bracketMatch.string[bracketMatch.start():bracketMatch.end()]
             self.childType = self.type
+            self.childChildType = self.type
             self.type += '[' + matchText + ']'
             if matchText in constants:
                 self.arrayLength = constants[matchText]
@@ -2383,6 +2427,7 @@ class VulkanVariable:
             lengths = list(filter(('null-terminated').__ne__, lengths))
         if self.arrayLength is None and len(lengths) > 0:
             self.childType = '*'.join(self.type.split('*')[0:-1])
+            self.childChildType = '*'.join(self.childType.split('*')[0:-1])
             self.arrayLength = lengths[0]
             self.lengthMember = True
         if self.arrayLength is not None and self.arrayLength.startswith('latexmath'):
@@ -2646,6 +2691,7 @@ class VulkanFunction:
                 'prmTypeID': self.typeID,
                 'prmType': self.type,
                 'prmChildType': self.childType,
+                'prmChildChildType': self.childChildType,
                 'prmPtrLevel': self.pointerLevels,
                 'prmLength': self.arrayLength,
                 'prmInheritedConditions': self.inheritedConditions,
@@ -2746,6 +2792,7 @@ class VulkanStruct:
                 'memTypeID': self.typeID,
                 'memType': self.type,
                 'memChildType': self.childType,
+                'memChildChildType': self.childChildType,
                 'memPtrLevel': self.pointerLevels,
                 'memLength': self.arrayLength,
                 'memLengthIsMember': self.lengthMember,
@@ -2817,6 +2864,7 @@ class VulkanUnion:
                 'chcTypeID': self.typeID,
                 'chcType': self.type,
                 'chcChildType': self.childType,
+                'chcChildChildType': self.childChildType,
                 'chcPtrLevel': self.pointerLevels,
                 'chcLength': self.arrayLength,
                 #'chcLengthIsMember': self.lengthMember,

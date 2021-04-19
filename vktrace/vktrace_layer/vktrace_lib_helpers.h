@@ -332,6 +332,7 @@ static void add_VkGraphicsPipelineCreateInfos_to_trace_packet(vktrace_trace_pack
         uint32_t j;
 
         for (i = 0; i < count; i++) {
+            vktrace_add_pnext_structs_to_trace_packet(pHeader, (void*)&(pPacket[i]), (void*)&(pParam[i]));
             // shader stages array
             vktrace_add_buffer_to_trace_packet(pHeader, (void **)&(pPacket[i].pStages),
                                                sizeof(VkPipelineShaderStageCreateInfo) * pParam[i].stageCount, pParam[i].pStages);

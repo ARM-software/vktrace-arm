@@ -16,7 +16,13 @@
  *
  */
 
+#include <cstring>
+#include <list>
+#include <vector>
+#include <unordered_map>
+
 #include "vulkan/vulkan.h"
+#include "dev_sim_ext_features.h"
 #include "dev_sim_compatmode.h"
 
 template<class T> T gcd(T a, T b) {
@@ -43,6 +49,9 @@ template<class T> T lcm(T a, T b) {
 
 #define CLAMP_BIT_FLAGS(name) if (src.name != dst.name) { \
                                   dst.name = dst.name & src.name; }
+
+extern void ErrorPrintf(const char *fmt, ...);
+extern void DebugPrintf(const char *fmt, ...);
 
 void ClampPhyDevLimits(const VkPhysicalDeviceLimits& src, VkPhysicalDeviceLimits& dst) {
     CLAMP_TO_SMALL_VALUE(maxImageDimension1D);
@@ -230,6 +239,76 @@ void ClampFormatProps(const VkFormatProperties& src, VkFormatProperties& dst) {
     CLAMP_BIT_FLAGS(bufferFeatures);
     CLAMP_BIT_FLAGS(linearTilingFeatures);
     CLAMP_BIT_FLAGS(optimalTilingFeatures);
+}
+
+void ClampDevExtProps(const std::vector<VkExtensionProperties>& src, std::vector<VkExtensionProperties>& dst) {
+    std::list<VkExtensionProperties> clamped;
+    for (uint32_t i = 0; i < src.size(); i++) {
+        for (uint32_t j = 0; j < dst.size(); j++) {
+            if (strcmp(src[i].extensionName, dst[j].extensionName) == 0) {
+                clamped.push_back(src[i]);
+                break;
+            }
+        }
+    }
+    dst.resize(clamped.size());
+    uint32_t i = 0;
+    for (auto it = clamped.begin(); it != clamped.end(); it++) {
+        dst[i++] = *it;
+    }
+}
+
+void ClampExtendedDevFeatures(const std::unordered_map<uint32_t, ExtendedFeature>& features, void* pNext) {
+    while(pNext) {
+        VkApplicationInfo* pDummy = (VkApplicationInfo*)pNext;
+        switch (pDummy->sType)
+        {
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ASTC_DECODE_FEATURES_EXT:
+            {
+                VkPhysicalDeviceASTCDecodeFeaturesEXT& dst = *reinterpret_cast<VkPhysicalDeviceASTCDecodeFeaturesEXT*>(pDummy);
+                if (features.find(pDummy->sType) != features.end()) {
+                    const VkPhysicalDeviceASTCDecodeFeaturesEXT& src = features.at(pDummy->sType).astc_decode_feature;
+                    CLAMP_BOOL_VALUE(decodeModeSharedExponent);
+                }
+            }
+            break;
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SCALAR_BLOCK_LAYOUT_FEATURES:
+            {
+                VkPhysicalDeviceScalarBlockLayoutFeatures& dst = *reinterpret_cast<VkPhysicalDeviceScalarBlockLayoutFeatures*>(pDummy);
+                if (features.find(pDummy->sType) != features.end()) {
+                    const VkPhysicalDeviceScalarBlockLayoutFeatures& src = features.at(pDummy->sType).scalar_block_layout_feature;
+                    CLAMP_BOOL_VALUE(scalarBlockLayout);
+                }
+            }
+            break;
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_FLOAT16_INT8_FEATURES:
+            {
+                VkPhysicalDeviceShaderFloat16Int8Features& dst = *reinterpret_cast<VkPhysicalDeviceShaderFloat16Int8Features*>(pDummy);
+                if (features.find(pDummy->sType) != features.end()) {
+                    const VkPhysicalDeviceShaderFloat16Int8Features& src = features.at(pDummy->sType).shader_float16_int8_feature;
+                    CLAMP_BOOL_VALUE(shaderFloat16);
+                    CLAMP_BOOL_VALUE(shaderInt8);
+                }
+            }
+            break;
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_16BIT_STORAGE_FEATURES:
+            {
+                VkPhysicalDevice16BitStorageFeatures& dst = *reinterpret_cast<VkPhysicalDevice16BitStorageFeatures*>(pDummy);
+                if (features.find(pDummy->sType) != features.end()) {
+                    const VkPhysicalDevice16BitStorageFeatures& src = features.at(pDummy->sType).bit16_storage_feature;
+                    CLAMP_BOOL_VALUE(storageBuffer16BitAccess);
+                    CLAMP_BOOL_VALUE(uniformAndStorageBuffer16BitAccess);
+                    CLAMP_BOOL_VALUE(storagePushConstant16);
+                    CLAMP_BOOL_VALUE(storageInputOutput16);
+                }
+            }
+            break;
+        default:
+            ErrorPrintf("Unhandled extension %d", pDummy->sType);
+            break;
+        }
+        pNext = const_cast<void*>(pDummy->pNext);
+    }
 }
 
 #undef CLAMP_TO_SMALL_VALUE

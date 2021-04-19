@@ -49,7 +49,7 @@
 #include "decompressor.h"
 #include <json/json.h>
 
-vkreplayer_settings replaySettings = {NULL, 1, 0, UINT_MAX, true, false, NULL, NULL, NULL, NULL, NULL, TRUE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, 50, FALSE, FALSE, NULL, FALSE};
+vkreplayer_settings replaySettings = {NULL, 1, 0, UINT_MAX, true, false, NULL, NULL, NULL, NULL, NULL, TRUE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, 50, FALSE, FALSE, NULL, FALSE, 0};
 extern vkReplay* g_replay;
 static decompressor* g_decompressor = nullptr;
 
@@ -251,7 +251,14 @@ vktrace_SettingInfo g_settings_info[] = {
      {&replaySettings.forceSyncImgIdx},
      {&replaySettings.forceSyncImgIdx},
      TRUE,
-     "Force sync the acquire next image index."}
+     "Force sync the acquire next image index."},
+    {"pmm",
+     "perfMeasuringMode",
+     VKTRACE_SETTING_UINT,
+     {&replaySettings.perfMeasuringMode},
+     {&replaySettings.perfMeasuringMode},
+     TRUE,
+     "Set the performance measuring mode, 0 - off, 1 - on."}
 };
 
 vktrace_SettingGroup g_replaySettingGroup = {"vkreplay", sizeof(g_settings_info) / sizeof(g_settings_info[0]), &g_settings_info[0]};

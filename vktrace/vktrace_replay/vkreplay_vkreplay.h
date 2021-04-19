@@ -343,7 +343,11 @@ class vkReplay {
     VkResult manually_replay_vkCreateSampler(packet_vkCreateSampler* pPacket);
     VkResult manually_replay_vkCreateDisplayPlaneSurfaceKHR(packet_vkCreateDisplayPlaneSurfaceKHR *pPacket);
     void changeDeviceFeature(VkBool32 *traceFeatures,VkBool32 *deviceFeatures,uint32_t numOfFeatures);
-
+    void manually_replay_vkGetAccelerationStructureBuildSizesKHR(packet_vkGetAccelerationStructureBuildSizesKHR *pPacket);
+    VkResult manually_replay_vkCreateAccelerationStructureKHR(packet_vkCreateAccelerationStructureKHR *pPacket);
+    VkResult manually_replay_vkBuildAccelerationStructuresKHR(packet_vkBuildAccelerationStructuresKHR *pPacket);
+    void manually_replay_vkCmdBuildAccelerationStructuresKHR(packet_vkCmdBuildAccelerationStructuresKHR* pPacket);
+    void manually_replay_vkDestroyAccelerationStructureKHR(packet_vkDestroyAccelerationStructureKHR *pPacket);
     void process_screenshot_list(const char* list) {
         std::string spec(list), word;
         size_t start = 0, comma = 0;
@@ -404,6 +408,11 @@ class vkReplay {
     std::unordered_map<VkSwapchainKHR, VkDevice> replaySwapchainKHRToDevice;
     std::unordered_map<VkCommandPool, VkDevice> replayCommandPoolToDevice;
     std::unordered_map<VkImage, VkDevice> replaySwapchainImageToDevice;
+    std::unordered_map<VkDeferredOperationKHR, VkDevice> replayDeferredOperationKHRToDevice;
+    std::unordered_map<VkAccelerationStructureKHR, VkDevice> replayAccelerationStructureKHRToDevice;
+    std::unordered_map<VkPipeline, VkDevice> replayRayTracingPipelinesKHRToDevice;
+    std::unordered_map<VkAccelerationStructureNV, VkDevice> replayAccelerationStructureNVToDevice;
+    std::unordered_map<VkPipeline, VkDevice> replayRayTracingPipelinesNVToDevice;
 
     // Map VkSwapchainKHR to vector of VkImage, so we can unmap swapchain images at vkDestroySwapchainKHR
     std::unordered_map<VkSwapchainKHR, std::vector<VkImage>> traceSwapchainToImages;
@@ -460,11 +469,34 @@ class vkReplay {
 
     // Map VkSurfaceKHR to VkSwapchainKHR
     std::unordered_map<VkSurfaceKHR, VkSwapchainKHR> replaySurfToSwapchain;
+    typedef struct _traceMemoryMapInfo{
+        VkDeviceMemory traceMemory = VK_NULL_HANDLE;
+        VkDeviceSize offset = 0;
+        VkDeviceSize size = 0;
+        VkMemoryMapFlags flags = 0;
+    }traceMemoryMapInfo;
+
+    typedef struct _objDeviceAddr{
+        VkDeviceAddress replayDeviceAddr = VK_NULL_HANDLE;
+        uint64_t traceObjHandle = 0;
+    }objDeviceAddr;
+    std::unordered_map<VkDeviceAddress, objDeviceAddr> traceDeviceAddrToReplayDeviceAddr4Buf;
+    std::unordered_map<VkDeviceAddress, objDeviceAddr> traceDeviceAddrToReplayDeviceAddr4AS;
+    std::unordered_map<VkBuffer, VkDeviceMemory> traceBufferToReplayMemory;
+
+    std::unordered_map<void*, traceMemoryMapInfo> traceAddressToTraceMemoryMapInfo;
+    std::unordered_map<VkBuffer, VkAccelerationStructureBuildSizesInfoKHR> replayBufferToASBuildSizes;
+    std::unordered_map<VkAccelerationStructureKHR, VkAccelerationStructureBuildSizesInfoKHR> replayASToASBuildSizes;
+    std::unordered_map<VkDeviceSize, VkAccelerationStructureBuildSizesInfoKHR> traceSizeToReplayASBuildSizes;
+    std::unordered_map<VkDeviceSize, VkDeviceSize> traceScratchSizeToReplayScratchSize;
+    std::unordered_map<VkDeviceMemory, void*> replayMemoryToMapAddress;
+
     uint32_t swapchainRefCount = 0;
     uint32_t surfRefCount = 0;
 
     uint32_t m_instCount = 0;
 
+    void* fromTraceAddr2ReplayAddr(VkDevice replayDevice, const void* traceAddress);
     bool getReplayMemoryTypeIdx(VkDevice traceDevice, VkDevice replayDevice, uint32_t traceIdx,
                                 VkMemoryRequirements* memRequirements, uint32_t* pReplayIdx);
 

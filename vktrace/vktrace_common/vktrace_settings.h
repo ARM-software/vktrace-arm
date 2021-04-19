@@ -84,6 +84,7 @@ typedef struct vkreplayer_settings {
     BOOL enablePipelineCache;
     char* pipelineCachePath;
     BOOL forceSyncImgIdx;
+    unsigned int perfMeasuringMode;
 } vkreplayer_settings;
 
 int vktrace_SettingGroup_init(vktrace_SettingGroup* pSettingGroup, FILE* pSettingsFile, int argc, char* argv[],

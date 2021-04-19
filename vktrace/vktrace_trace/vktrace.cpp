@@ -310,6 +310,10 @@ uint32_t vktrace_appendMetaData(FILE* pTraceFile, const std::vector<uint64_t>& i
     vktrace_trace_packet_header hdr;
     uint64_t meta_data_file_offset = 0;
     uint32_t meta_data_size = str.size() + 1;
+    meta_data_size = ROUNDUP_TO_8(meta_data_size);
+    char *meta_data_str_json = new char[meta_data_size];
+    memset(meta_data_str_json, 0, meta_data_size);
+    strcpy(meta_data_str_json, str.c_str());
 
     hdr.size = sizeof(hdr) + meta_data_size;
     hdr.global_packet_index = lastPacketIndex++;
@@ -323,7 +327,7 @@ uint32_t vktrace_appendMetaData(FILE* pTraceFile, const std::vector<uint64_t>& i
     if (0 == Fseek(pTraceFile, 0, SEEK_END)) {
         meta_data_file_offset = Ftell(pTraceFile);
         if (1 == fwrite(&hdr, sizeof(hdr), 1, pTraceFile) &&
-            meta_data_size == fwrite(str.c_str(), sizeof(char), meta_data_size, pTraceFile)) {
+            meta_data_size == fwrite(meta_data_str_json, sizeof(char), meta_data_size, pTraceFile)) {
             if (0 == Fseek(pTraceFile, offsetof(vktrace_trace_file_header, meta_data_offset), SEEK_SET)) {
                 fwrite(&meta_data_file_offset, sizeof(uint64_t), 1, pTraceFile);
                 vktrace_LogVerbose("Meta data at the file offset %llu", meta_data_file_offset);
@@ -332,6 +336,7 @@ uint32_t vktrace_appendMetaData(FILE* pTraceFile, const std::vector<uint64_t>& i
     } else {
         vktrace_LogError("File operation failed during append the meta data");
     }
+    delete[] meta_data_str_json;
     return meta_data_size;
 }
 

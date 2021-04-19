@@ -1517,6 +1517,7 @@ VKAPI_ATTR VkResult VKAPI_CALL QueuePresentKHR(VkQueue queue, const VkPresentInf
     }
     DeviceMapStruct *devMap = get_dev_info((VkDevice)queue);
     assert(devMap);
+    VkLayerDispatchTable *pDisp = devMap->device_dispatch_table;
     loader_platform_thread_lock_mutex(&globalLock);
 
     if (!screenshotFrames.empty() || screenShotFrameRange.valid) {
@@ -1535,11 +1536,6 @@ VKAPI_ATTR VkResult VKAPI_CALL QueuePresentKHR(VkQueue queue, const VkPresentInf
                 fileName = vk_screenshot_dir;
                 fileName += "/" + to_string(g_frameNumber) + ".ppm";
             }
-#ifdef ANDROID
-            __android_log_print(ANDROID_LOG_INFO, "screenshot", "Screen capture file is: %s", fileName.c_str());
-#else
-            printf("Screen Capture file is: %s \n", fileName.c_str());
-#endif
 
             char buffer[64];
             snprintf(buffer, sizeof(buffer), "%d", g_frameNumber);
@@ -1551,6 +1547,10 @@ VKAPI_ATTR VkResult VKAPI_CALL QueuePresentKHR(VkQueue queue, const VkPresentInf
             // We'll dump only one image: the first
             swapchain = pPresentInfo->pSwapchains[0];
             image = swapchainMap[swapchain]->imageList[pPresentInfo->pImageIndices[0]];
+            if (devMap->queue != queue) {
+                // Multiple queues are used
+                pDisp->QueueWaitIdle(queue);
+            }
             bool ret = writePPM(fileName.c_str(), image);
             if (ret) {
 #ifdef ANDROID
@@ -1599,7 +1599,6 @@ VKAPI_ATTR VkResult VKAPI_CALL QueuePresentKHR(VkQueue queue, const VkPresentInf
     }
     g_frameNumber++;
     loader_platform_thread_unlock_mutex(&globalLock);
-    VkLayerDispatchTable *pDisp = devMap->device_dispatch_table;
     VkResult result = pDisp->QueuePresentKHR(queue, pPresentInfo);
     return result;
 }

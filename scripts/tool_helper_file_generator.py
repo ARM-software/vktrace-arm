@@ -451,7 +451,14 @@ class ToolHelperFileOutputGenerator(OutputGenerator):
                             struct_size_funcs, counter_declared = self.DeclareCounter(struct_size_funcs, counter_declared)
                             struct_size_funcs += '        for (i = 0; i < struct_ptr->%s; i++) {\n' % member.len
                             if 'ppGeometries' == member.name:
-                                struct_size_funcs += '            struct_size += vk_size_%s(struct_ptr->%s[i]);\n' % (member.type.lower(), member.name)
+                                struct_size_funcs += '            if (struct_ptr->ppGeometries) {\n'
+                                struct_size_funcs += '                struct_size += sizeof(void*);\n'
+                                struct_size_funcs += '                struct_size += vk_size_%s(struct_ptr->%s[i]);\n' % (member.type.lower(), member.name)
+                                struct_size_funcs += '            }\n'
+                            elif 'pGeometries' == member.name:
+                                struct_size_funcs += '            if (struct_ptr->pGeometries) {\n'
+                                struct_size_funcs += '                struct_size += vk_size_%s(&struct_ptr->%s[i]);\n' % (member.type.lower(), member.name)
+                                struct_size_funcs += '            }\n'
                             else:
                                 struct_size_funcs += '            struct_size += vk_size_%s(&struct_ptr->%s[i]);\n' % (member.type.lower(), member.name)
                             if 'vkrenderpasscreateinfo2' == item.name.lower():

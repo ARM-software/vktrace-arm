@@ -28,7 +28,7 @@
 // declared as extern in header
 vkreplayer_settings g_vkReplaySettings;
 
-static vkreplayer_settings s_defaultVkReplaySettings = {NULL, 1, 0, UINT_MAX, true, false, NULL, NULL, NULL, NULL, NULL, TRUE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, 50, FALSE, FALSE, NULL, FALSE};
+static vkreplayer_settings s_defaultVkReplaySettings = {NULL, 1, 0, UINT_MAX, true, false, NULL, NULL, NULL, NULL, NULL, TRUE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, 50, FALSE, FALSE, NULL, FALSE, 0};
 
 vktrace_SettingInfo g_vk_settings_info[] = {
     {"o",
@@ -180,8 +180,14 @@ vktrace_SettingInfo g_vk_settings_info[] = {
      {&g_vkReplaySettings.forceSyncImgIdx},
      {&s_defaultVkReplaySettings.forceSyncImgIdx},
      TRUE,
-     "Force sync the acquire next image index."}
-
+     "Force sync the acquire next image index."},
+    {"pmm",
+     "perfMeasuringMode",
+     VKTRACE_SETTING_UINT,
+     {&g_vkReplaySettings.perfMeasuringMode},
+     {&s_defaultVkReplaySettings.perfMeasuringMode},
+     TRUE,
+     "Set the performance measuring mode, 0 - off, 1 - on."}
 };
 
 vktrace_SettingGroup g_vkReplaySettingGroup = {"vkreplay_vk", sizeof(g_vk_settings_info) / sizeof(g_vk_settings_info[0]),

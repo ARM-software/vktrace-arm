@@ -428,6 +428,9 @@ void vktrace_add_pnext_structs_to_trace_packet(vktrace_trace_packet_header* pHea
                 case VK_STRUCTURE_TYPE_SUBPASS_DESCRIPTION_DEPTH_STENCIL_RESOLVE:
                     AddPointerToTracebuffer(VkSubpassDescriptionDepthStencilResolve, VkAttachmentReference2, pDepthStencilResolveAttachment);
                     break;
+                case VK_STRUCTURE_TYPE_FRAGMENT_SHADING_RATE_ATTACHMENT_INFO_KHR:
+                    AddPointerToTracebuffer(VkFragmentShadingRateAttachmentInfoKHR, VkAttachmentReference2, pFragmentShadingRateAttachment);
+                    break;
 #if defined(WIN32)
                 case VK_STRUCTURE_TYPE_WIN32_KEYED_MUTEX_ACQUIRE_RELEASE_INFO_KHR:
                     AddPointerWithCountToTracebuffer(VkWin32KeyedMutexAcquireReleaseInfoKHR, VkDeviceMemory, pAcquireSyncs,
@@ -456,6 +459,9 @@ void vktrace_add_pnext_structs_to_trace_packet(vktrace_trace_packet_header* pHea
                 case VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO_EXT:
                     AddPointerWithCountToTracebuffer(VkDescriptorSetLayoutBindingFlagsCreateInfoEXT, VkDescriptorBindingFlagsEXT,
                                                      pBindingFlags, bindingCount);
+                case VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR:
+                    AddPointerToTracebuffer(VkWriteDescriptorSetAccelerationStructureKHR, VkAccelerationStructureKHR, pAccelerationStructures);
+                break;
 
                 default:
                     // The cases in this switch statement are only those pnext struct types that have
@@ -578,6 +584,45 @@ void add_VkApplicationInfo_to_packet(vktrace_trace_packet_header* pHeader, VkApp
     vktrace_finalize_buffer_address(pHeader, (void**)&*ppStruct);
 }
 
+void add_VkAccelerationStructureBuildGeometryInfoKHR_to_packet(vktrace_trace_packet_header* pHeader, VkAccelerationStructureBuildGeometryInfoKHR** ppStruct,
+                                        VkAccelerationStructureBuildGeometryInfoKHR* pInStruct, bool addSelf, int *instanceSizes, bool hostAddr) {
+    if (addSelf) {
+        vktrace_add_buffer_to_trace_packet(pHeader, (void**)ppStruct, sizeof(VkAccelerationStructureBuildGeometryInfoKHR), pInStruct);
+    }
+    vktrace_add_pnext_structs_to_trace_packet(pHeader, (void*)*ppStruct, (void*)pInStruct);
+
+    uint32_t i;
+    // add pGeometries
+    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(*ppStruct)->pGeometries, sizeof(VkAccelerationStructureGeometryKHR) * pInStruct->geometryCount, pInStruct->pGeometries);
+    if ((*ppStruct)->pGeometries) {
+        for (i = 0; i < pInStruct->geometryCount; i++) {
+            vktrace_add_pnext_structs_to_trace_packet(pHeader, (void*)&(*ppStruct)->pGeometries[i], (void*)&pInStruct->pGeometries[i]);
+            if (pInStruct->pGeometries[i].geometryType == VK_GEOMETRY_TYPE_INSTANCES_KHR && instanceSizes && hostAddr) {
+                VkAccelerationStructureGeometryDataKHR *pDst = (VkAccelerationStructureGeometryDataKHR*)&((*ppStruct)->pGeometries[i].geometry);
+                VkAccelerationStructureGeometryDataKHR *pSrc = (VkAccelerationStructureGeometryDataKHR*)&((pInStruct)->pGeometries[i].geometry);
+                vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pDst->instances.data.hostAddress), sizeof(VkAccelerationStructureInstanceKHR) * instanceSizes[i], pSrc->instances.data.hostAddress);
+                vktrace_finalize_buffer_address(pHeader, (void**)&(pDst->instances.data.hostAddress));
+            }
+        }
+    }
+    vktrace_finalize_buffer_address(pHeader, (void**)&(*ppStruct)->pGeometries);
+
+    // add ppGeometries
+    if ((*ppStruct)->ppGeometries) {
+        vktrace_add_buffer_to_trace_packet(pHeader, (void**)&((*ppStruct)->ppGeometries),
+                                           pInStruct->geometryCount * sizeof(void*), pInStruct->ppGeometries);
+        for (i = 0; i < pInStruct->geometryCount; i++) {
+            vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(*ppStruct)->ppGeometries[i], sizeof(VkAccelerationStructureGeometryKHR), &pInStruct->ppGeometries[i]);
+            vktrace_finalize_buffer_address(pHeader, (void**)&(*ppStruct)->ppGeometries[i]);
+        }
+        vktrace_finalize_buffer_address(pHeader, (void**)&(*ppStruct)->ppGeometries);
+    }
+
+    if (addSelf) {
+        vktrace_finalize_buffer_address(pHeader, (void**)ppStruct);
+    }
+}
+
 void add_VkInstanceCreateInfo_to_packet(vktrace_trace_packet_header* pHeader, VkInstanceCreateInfo** ppStruct,
                                         VkInstanceCreateInfo* pInStruct) {
     vktrace_add_buffer_to_trace_packet(pHeader, (void**)ppStruct, sizeof(VkInstanceCreateInfo), pInStruct);
@@ -654,6 +699,32 @@ void add_VkDeviceCreateInfo_to_packet(vktrace_trace_packet_header* pHeader, VkDe
                                        pInStruct->pEnabledFeatures);
     vktrace_finalize_buffer_address(pHeader, (void**)&(*ppStruct)->pEnabledFeatures);
     vktrace_finalize_buffer_address(pHeader, (void**)ppStruct);
+}
+
+VkAccelerationStructureBuildGeometryInfoKHR* interpret_VkAccelerationStructureBuildGeometryInfoKHR(vktrace_trace_packet_header* pHeader, intptr_t ptr_variable, bool hostAddress) {
+    VkAccelerationStructureBuildGeometryInfoKHR* pVkASBuildGeometryInfoKHR =
+        (VkAccelerationStructureBuildGeometryInfoKHR*)vktrace_trace_packet_interpret_buffer_pointer(pHeader, (intptr_t)ptr_variable);
+    uint32_t i;
+    if (pVkASBuildGeometryInfoKHR != NULL) {
+        pVkASBuildGeometryInfoKHR->pGeometries = (const VkAccelerationStructureGeometryKHR*)vktrace_trace_packet_interpret_buffer_pointer(
+            pHeader, (intptr_t)pVkASBuildGeometryInfoKHR->pGeometries);
+        pVkASBuildGeometryInfoKHR->ppGeometries = (const VkAccelerationStructureGeometryKHR* const*)vktrace_trace_packet_interpret_buffer_pointer(
+            pHeader, (intptr_t)pVkASBuildGeometryInfoKHR->ppGeometries);
+        if (pVkASBuildGeometryInfoKHR->geometryCount > 0 && pVkASBuildGeometryInfoKHR->pGeometries) {
+            for (i = 0; i < pVkASBuildGeometryInfoKHR->geometryCount; i++) {
+                VkAccelerationStructureGeometryKHR *pTmp = (VkAccelerationStructureGeometryKHR *)&pVkASBuildGeometryInfoKHR->pGeometries[i];
+                if (pTmp->geometryType == VK_GEOMETRY_TYPE_INSTANCES_KHR && hostAddress)
+                    pTmp->geometry.instances.data.hostAddress = vktrace_trace_packet_interpret_buffer_pointer(pHeader, (intptr_t)pTmp->geometry.instances.data.hostAddress);
+            }
+        }
+        if (pVkASBuildGeometryInfoKHR->geometryCount > 0 && pVkASBuildGeometryInfoKHR->ppGeometries) {
+            for (i = 0; i < pVkASBuildGeometryInfoKHR->geometryCount; i++) {
+                VkAccelerationStructureGeometryKHR **ppTmp = (VkAccelerationStructureGeometryKHR **)&pVkASBuildGeometryInfoKHR->ppGeometries[i];
+                *ppTmp = (VkAccelerationStructureGeometryKHR *)vktrace_trace_packet_interpret_buffer_pointer(pHeader, (intptr_t)(*ppTmp));
+            }
+        }
+    }
+    return pVkASBuildGeometryInfoKHR;
 }
 
 VkInstanceCreateInfo* interpret_VkInstanceCreateInfo(vktrace_trace_packet_header* pHeader, intptr_t ptr_variable) {
@@ -849,6 +920,9 @@ void vkreplay_interpret_pnext_pointers(vktrace_trace_packet_header* pHeader, voi
             case VK_STRUCTURE_TYPE_SUBPASS_DESCRIPTION_DEPTH_STENCIL_RESOLVE:
                 InterpretPointerInPNext(VkSubpassDescriptionDepthStencilResolve, VkAttachmentReference2, pDepthStencilResolveAttachment);
                 break;
+            case VK_STRUCTURE_TYPE_FRAGMENT_SHADING_RATE_ATTACHMENT_INFO_KHR:
+                InterpretPointerInPNext(VkFragmentShadingRateAttachmentInfoKHR, VkAttachmentReference2, pFragmentShadingRateAttachment);
+                break;
 #if defined(WIN32)
             case VK_STRUCTURE_TYPE_WIN32_KEYED_MUTEX_ACQUIRE_RELEASE_INFO_KHR:
                 InterpretPointerInPNext(VkWin32KeyedMutexAcquireReleaseInfoKHR, VkDeviceMemory, pAcquireSyncs);
@@ -870,6 +944,9 @@ void vkreplay_interpret_pnext_pointers(vktrace_trace_packet_header* pHeader, voi
                 break;
             case VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO_EXT:
                 InterpretPointerInPNext(VkDescriptorSetLayoutBindingFlagsCreateInfoEXT, VkDescriptorBindingFlagsEXT, pBindingFlags);
+                break;
+            case VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR:
+                InterpretPointerInPNext(VkWriteDescriptorSetAccelerationStructureKHR, VkAccelerationStructureKHR, pAccelerationStructures);
                 break;
             default:
                 // The cases in this switch statement are only those pnext struct types that have

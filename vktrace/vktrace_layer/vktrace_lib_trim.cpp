@@ -2117,6 +2117,14 @@ void delete_objects_for_destroy_device(VkDevice device) {
     }
     delete_objects_number += DescriptorSetsToRemove.size();
 
+    // AS
+    std::vector<VkAccelerationStructureKHR> AccelerationStructureToRemove;
+    get_device_objects<VkAccelerationStructureKHR>(device, s_trimGlobalStateTracker.createdAccelerationStructures, AccelerationStructureToRemove);
+    for (size_t i = 0; i < AccelerationStructureToRemove.size(); i++) {
+        trim::remove_AccelerationStructure_object(AccelerationStructureToRemove[i]);
+    }
+    delete_objects_number += AccelerationStructureToRemove.size();
+
     // DescriptorPool
     std::vector<VkDescriptorPool> DescriptorPoolsToRemove;
     get_device_objects<VkDescriptorPool>(device, s_trimGlobalStateTracker.createdDescriptorPools, DescriptorPoolsToRemove);
@@ -3062,6 +3070,30 @@ ObjectInfo *get_DescriptorSet_objectInfo(VkDescriptorSet var) {
     return pResult;
 }
 
+ObjectInfo &add_AccelerationStructure_object(VkAccelerationStructureKHR var) {
+    vktrace_enter_critical_section(&trimStateTrackerLock);
+    ObjectInfo &info = s_trimGlobalStateTracker.add_AccelerationStructure(var);
+    vktrace_leave_critical_section(&trimStateTrackerLock);
+    return info;
+}
+
+void remove_AccelerationStructure_object(const VkAccelerationStructureKHR var) {
+    vktrace_enter_critical_section(&trimStateTrackerLock);
+    s_trimGlobalStateTracker.remove_AccelerationStructure(var);
+    vktrace_leave_critical_section(&trimStateTrackerLock);
+}
+
+ObjectInfo *get_AccelerationStructure_objectInfo(VkAccelerationStructureKHR var) {
+    vktrace_enter_critical_section(&trimStateTrackerLock);
+    auto iter = s_trimGlobalStateTracker.createdAccelerationStructures.find(var);
+    ObjectInfo *pResult = NULL;
+    if (iter != s_trimGlobalStateTracker.createdAccelerationStructures.end()) {
+        pResult = &(iter->second);
+    }
+    vktrace_leave_critical_section(&trimStateTrackerLock);
+    return pResult;
+}
+
 //=========================================================================
 
 #define TRIM_MARK_OBJECT_REFERENCE(type)                                   \
@@ -3867,6 +3899,11 @@ void record_created_buffers_commands(StateTracker &stateTracker, uint32_t &bufIt
             if (obj->second.ObjectInfo.Buffer.pBindBufferMemoryPacket != NULL) {
                 vktrace_write_trace_packet(obj->second.ObjectInfo.Buffer.pBindBufferMemoryPacket, vktrace_trace_get_trace_file());
                 vktrace_delete_trace_packet_no_lock(&(obj->second.ObjectInfo.Buffer.pBindBufferMemoryPacket));
+            }
+            // CreateAS
+            if (obj->second.ObjectInfo.Buffer.pCreateASPacket != nullptr) {
+                vktrace_write_trace_packet(obj->second.ObjectInfo.Buffer.pCreateASPacket, vktrace_trace_get_trace_file());
+                obj->second.ObjectInfo.Buffer.pCreateASPacket = nullptr;
             }
 
             if (obj->second.ObjectInfo.Buffer.needsStagingBuffer) {
@@ -5684,6 +5721,14 @@ void write_destroy_packets() {
     vktrace_leave_critical_section(&trimStateTrackerLock);
 
     vktrace_LogDebug("vktrace done destroying objects after trim.");
+}
+
+void cancel_ASPacketCreate(vktrace_trace_packet_header* pCreateASPacket) {
+    for (auto& e : s_trimGlobalStateTracker.createdBuffers) {
+        if (e.second.ObjectInfo.Buffer.pCreateASPacket == pCreateASPacket) {
+            e.second.ObjectInfo.Buffer.pCreateASPacket = nullptr;
+        }
+    }
 }
 
 }  // namespace trim

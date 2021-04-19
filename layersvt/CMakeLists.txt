@@ -129,7 +129,7 @@ run_vulkantools_vk_xml_generate(emptydriver_generator.py vktrace_emptydriver.cpp
 if (NOT APPLE)
     add_vk_layer(monitor monitor.cpp vk_layer_table.cpp)
     add_vk_layer(screenshot screenshot.cpp screenshot_parsing.h screenshot_parsing.cpp vk_layer_table.cpp)
-    add_vk_layer(device_simulation device_simulation.cpp dev_sim_compatmode.cpp vk_layer_table.cpp ${JSONCPP_SOURCE_DIR}/jsoncpp.cpp)
+    add_vk_layer(device_simulation dev_sim_ext_features.cpp device_simulation.cpp dev_sim_compatmode.cpp vk_layer_table.cpp ${JSONCPP_SOURCE_DIR}/jsoncpp.cpp)
 endif ()
 
 add_vk_layer(api_dump api_dump.cpp vk_layer_table.cpp)

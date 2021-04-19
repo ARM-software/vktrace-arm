@@ -59,8 +59,12 @@ struct simple_sem {
         std::unique_lock<std::mutex> lck(mtx);
         cv.wait(lck);
     }
-    void notify() {
+    template<typename Predicate>
+    void wait(Predicate pred) {
         std::unique_lock<std::mutex> lck(mtx);
+        cv.wait(lck, pred);
+    }
+    void notify() {
         cv.notify_one();
     }
 };
@@ -77,6 +81,7 @@ struct preload_context {
     bool        exiting_thd   = false;
     std::thread thd_obj;
     simple_sem  replay_start_sem;
+    simple_sem  preload_sem;
     bool        exceed_preloading_range = false;
     uint64_t    preload_waiting_time = 0;
 } g_preload_context;
@@ -173,8 +178,10 @@ static uint64_t load_packet(FileLike* file, void* load_addr, uint64_t packet_siz
 
     if (pHeader->packet_id == VKTRACE_TPI_VK_vkQueuePresentKHR) {
         ++frame_counter;
-        if (frame_counter + vktrace_replay::getStartFrame() >= vktrace_replay::getEndFrame())
+        if (frame_counter + vktrace_replay::getStartFrame() >= vktrace_replay::getEndFrame()) {
             g_preload_context.exceed_preloading_range = true;
+            g_preload_context.preload_sem.notify();
+        }
     }
 
     pHeader->pBody = (uintptr_t)pHeader + sizeof(vktrace_trace_packet_header);
@@ -336,6 +343,7 @@ static void chunk_loading() {
             g_preload_context.loading_idx++;
             vktrace_LogDebug("%d packets are loaded", loaded_packet_count);
             cur_chunk->mtx.unlock();
+            g_preload_context.preload_sem.notify();
         } else if (cur_chunk->status != CHUNK_READY) {
             vktrace_LogWarning("Chunk loading thread: Not right, the chunk status(%d) confused !", cur_chunk->status);
         }
@@ -428,9 +436,9 @@ vktrace_trace_packet_header* preload_get_next_packet()
         g_preload_context.using_idx++;
         cur_chunk->mtx.unlock();
         if (g_preload_context.loading_idx == g_preload_context.using_idx) {
-            while (cur_chunk->status == CHUNK_EMPTY && !g_preload_context.exceed_preloading_range && g_preload_context.next_pkt_size) {
-                std::this_thread::yield();
-            }
+            g_preload_context.preload_sem.wait([&]{
+                return cur_chunk->status != CHUNK_EMPTY || g_preload_context.exceed_preloading_range || !g_preload_context.next_pkt_size;
+            });
         }
     }
     return pHeader;

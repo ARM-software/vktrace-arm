@@ -36,6 +36,9 @@ set -ev
 LAYER_BUILD_DIR=$PWD
 echo LAYER_BUILD_DIR="${LAYER_BUILD_DIR}"
 
+# libcollector path
+LIBCOLLECTOR_LAYER_DIR=${LAYER_BUILD_DIR}/../submodules/libcollector
+
 function create_APK() {
     aapt package -f -M AndroidManifest.xml -I "$ANDROID_SDK_HOME/platforms/android-23/android.jar" -S res -F bin/$1-unaligned.apk bin/libs
     # update this logic to detect if key is already there.  If so, use it, otherwise create it.
@@ -60,6 +63,8 @@ do
     cp $LAYER_BUILD_DIR/libs/${abi}/libVkLayer_api_dump.so $LAYER_BUILD_DIR/vkreplay/bin/libs/lib/${abi}/libVkLayer_api_dump.so
     cp $LAYER_BUILD_DIR/libs/${abi}/libVkLayer_systrace.so $LAYER_BUILD_DIR/vkreplay/bin/libs/lib/${abi}/libVkLayer_systrace.so
     cp $LAYER_BUILD_DIR/libs/${abi}/libVkLayer_emptydriver.so $LAYER_BUILD_DIR/vkreplay/bin/libs/lib/${abi}/libVkLayer_emptydriver.so
+    cp $LIBCOLLECTOR_LAYER_DIR/android/gradle/layer_android/build/intermediates/transforms/stripDebugSymbol/release/0/lib/${abi}/libVkLayer_libcollector.so \
+            $LAYER_BUILD_DIR/vkreplay/bin/libs/lib/${abi}/libVkLayer_libcollector.so
 done
 create_APK vkreplay
 popd
@@ -81,6 +86,8 @@ cp $LAYER_BUILD_DIR/libs/${abi}/libVkLayer_api_cost.so $LAYER_BUILD_DIR/vkreplay
 cp $LAYER_BUILD_DIR/libs/${abi}/libVkLayer_api_dump.so $LAYER_BUILD_DIR/vkreplay/bin/libs/lib/${abi}/libVkLayer_api_dump.so
 cp $LAYER_BUILD_DIR/libs/${abi}/libVkLayer_systrace.so $LAYER_BUILD_DIR/vkreplay/bin/libs/lib/${abi}/libVkLayer_systrace.so
 cp $LAYER_BUILD_DIR/libs/${abi}/libVkLayer_emptydriver.so $LAYER_BUILD_DIR/vkreplay/bin/libs/lib/${abi}/libVkLayer_emptydriver.so
+cp $LIBCOLLECTOR_LAYER_DIR/android/gradle/layer_android/build/intermediates/transforms/stripDebugSymbol/release/0/lib/${abi}/libVkLayer_libcollector.so \
+        $LAYER_BUILD_DIR/vkreplay/bin/libs/lib/${abi}/libVkLayer_libcollector.so
 sed -i 's/com.example.vkreplay/com.example.vkreplay32/' AndroidManifest.xml
 create_APK vkreplay32
 popd

@@ -23,5 +23,7 @@ void ClampPhyDevLimits(const VkPhysicalDeviceLimits& src, VkPhysicalDeviceLimits
 void ClampPhyDevFeatures(const VkPhysicalDeviceFeatures& src, VkPhysicalDeviceFeatures& dst);
 void ClampQueueFamilyProps(const VkQueueFamilyProperties& src, VkQueueFamilyProperties& dst);
 void ClampFormatProps(const VkFormatProperties& src, VkFormatProperties& dst);
+void ClampDevExtProps(const std::vector<VkExtensionProperties>& src, std::vector<VkExtensionProperties>& dst);
+void ClampExtendedDevFeatures(const std::unordered_map<uint32_t, ExtendedFeature>& features, void* pNext);
 
 #endif // _DEV_SIM_COMPATMODE_H_
