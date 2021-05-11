@@ -278,11 +278,11 @@ There is a build script **build_vktrace.sh** in the root of the repo.
 
 It has following arguments:
 
-> --target [android|x86|x64|arm_32|arm_64] (optional, default is android)
-> --release-type [dev|release] (optional, default is dev)
-> --build-type [debug|release] (optional, default is debug)
-> --update-external [true|false] (optional, set to true to force update external directories, default is false)
-> --package [true|false] (optional, set to true to package build outputs to vktrace_<TARGET>_<BUILD_TYPE>.tgz, default is true)
+	--target [android|x86|x64|arm_32|arm_64] (optional, default is android)
+	--release-type [dev|release] (optional, default is dev)
+	--build-type [debug|release] (optional, default is debug)
+	--update-external [true|false] (optional, set to true to force update external directories, default is false)
+	--package [true|false] (optional, set to true to package build outputs to vktrace_<TARGET>_<BUILD_TYPE>.tgz, default is true)
 
 ## Linux Build
 
