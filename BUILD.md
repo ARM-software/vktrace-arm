@@ -273,79 +273,36 @@ Make sure the following items are installed for proper building of VkConfig:
 Please note that not building VkConfig is purely fine as well and will not
 impact the generation of any other targets.
 
+## Build Script
+There is a build script **build_vktrace.sh** in the root of the repo.
+
+It has following arguments:
+
+> --target [android|x86|x64|arm_32|arm_64] (optional, default is android)
+> --release-type [dev|release] (optional, default is dev)
+> --build-type [debug|release] (optional, default is debug)
+> --update-external [true|false] (optional, set to true to force update external directories, default is false)
+> --package [true|false] (optional, set to true to package build outputs to vktrace_<TARGET>_<BUILD_TYPE>.tgz, default is true)
 
 ## Linux Build
 
 This build process builds all items in the VulkanTools repository
 
-Example debug build:
+Build with script:
 ```
-cd VulkanTools  # cd to the root of the VulkanTools git repository
-cmake -H. -Bdbuild -DCMAKE_BUILD_TYPE=Debug -DCMAKE_INSTALL_PREFIX=build/install -DVULKAN_HEADERS_INSTALL_DIR=absolute_path_to_install_directory -DVULKAN_LOADER_INSTALL_DIR=absolute_path_to_install_directory -DVULKAN_VALIDATIONLAYERS_INSTALL_DIR=absolute_path_to_install_directory
-cd dbuild
-make -j8
+./build_vktrace.sh --target [x86|x64|arm_32|arm_64] --update-external true
+# Or if you do not want to update the external folder:
+./build_vktrace.sh --target [x86|x64|arm_32|arm_64]
 ```
-
-## Windows System Requirements
-
-Windows 7+ with additional required software packages:
-
-- Microsoft Visual Studio 2015 Professional or 2017 Professional.  Note: it is possible that lesser/older versions may work, but not guaranteed.
-- [CMake 3.10.2](https://cmake.org/files/v3.10/cmake-3.10.2-win64-x64.zip) is recommended.
-  - Tell the installer to "Add CMake to the system PATH" environment variable.
-- Python 3 (from https://www.python.org/downloads).  Notes:
-  - Select to install the optional sub-package to add Python to the system PATH environment variable.
-  - Need python3.3 or later to get the Windows py.exe launcher that is used to get python3 rather than python2 if both are installed on Windows
-- Git (from http://git-scm.com/download/win).
-  - Tell the installer to allow it to be used for "Developer Prompt" as well as "Git Bash".
-  - Tell the installer to treat line endings "as is" (i.e. both DOS and Unix-style line endings).
-
-Optional software packages:
-
-- Cygwin (from https://www.cygwin.com/).  Notes:
-  - Cygwin provides some Linux-like tools, which are valuable for obtaining the source code, and running CMake.
-    Especially valuable are the BASH shell and git packages.
-  - If you do not wish to use Cygwin, there are other shells and environments that can be used.
-    You can also use a Git package that does not come from Cygwin.
-
-## Windows Build
-
-Cygwin is used in order to obtain a local copy of the Git repository, and to run the CMake command that creates Visual Studio files.
-Visual Studio is used to build the software, and will re-run CMake as appropriate.
-
-To build all Windows targets (e.g. in a "Developer Command Prompt for VS2015" window):
+Or build manually:
 ```
-cd VulkanTools  # cd to the root of the VulkanTools git repository
-cmake -H. -Bdbuild -DCMAKE_BUILD_TYPE=Debug -G "Visual Studio 14 2015 Win64" -DCMAKE_INSTALL_PREFIX=build/install -DVULKAN_HEADERS_INSTALL_DIR=absolute_path_to_install_directory -DVULKAN_LOADER_INSTALL_DIR=absolute_path_to_install_directory -DVULKAN_VALIDATIONLAYERS_INSTALL_DIR=absolute_path_to_install_directory
-cmake --build dbuild --config Debug --target install
-```
-
-At this point, you can use Windows Explorer to launch Visual Studio by double-clicking on the "VULKAN.sln" file in the \build folder.
-Once Visual Studio comes up, you can select "Debug" or "Release" from a drop-down list.
-You can start a build with either the menu (Build->Build Solution), or a keyboard shortcut (Ctrl+Shift+B).
-As part of the build process, Python scripts will create additional Visual Studio files and projects,
-along with additional source files.
-All of these auto-generated files are under the "build" folder.
-
-Vulkan programs must be able to find and use the Vulkan-1.dll library.
-Make sure it is either installed in the C:\Windows\System32 folder,
-or the PATH environment variable includes the folder that it is located in.
-
-### Windows 64-bit Installation Notes
-If you plan on creating a Windows Install file (done in the windowsRuntimeInstaller sub-directory) you will need to build for both 32-bit
-and 64-bit Windows since both versions of EXEs and DLLs exist simultaneously on Windows 64.
-
-To do this, simply create and build the release versions of each target:
-```
-cd VulkanTools  # cd to the root of the Vulkan git repository
-mkdir build
-cd build
-cmake -G "Visual Studio 14 Win64" ..
-msbuild ALL_BUILD.vcxproj /p:Platform=x64 /p:Configuration=Release
-mkdir build32
-cd build32
-cmake -G "Visual Studio 14" ..
-msbuild ALL_BUILD.vcxproj /p:Platform=x86 /p:Configuration=Release
+# Make sure the external folder which contains glslang, Vulkan-Headers, and Vulkan-Loader is cleaned up.
+rm -rf external
+# Start to build
+./update_external_sources.sh
+cmake -H. -Bdbuild_x64 -DCMAKE_BUILD_TYPE=Debug
+cd dbuild_x64
+make -j $(nproc)
 ```
 
 ## Android Build
@@ -371,50 +328,34 @@ On OSX:
 ```
 export PATH=$HOME/Library/Android/sdk/ndk-bundle:$PATH
 ```
-### Additional OSX System Requirements
-Tested on OSX version 10.11.4
-
-- [CMake 3.10.2](https://cmake.org/files/v3.10/cmake-3.10.2-Darwin-x86_64.tar.gz) is recommended.
-
-Setup Homebrew and components
-- Follow instructions on [brew.sh](http://brew.sh) to get homebrew installed.
-```
-/usr/bin/ruby -e "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/master/install)"
-```
-- Ensure Homebrew is at the beginning of your PATH:
-```
-export PATH=/usr/local/bin:$PATH
-```
-- Add packages with the following (may need refinement)
-```
-brew install python python3 git
-```
 
 ### Build steps for Android
 Use the following to ensure the Android build works.
 #### Linux
-Follow the setup steps for Linux, then from your terminal:
+
+Build with script:
+```
+./build_vktrace.sh --target android --update-external true
+# Or if you do not want to update the build-android/thirdparty folder:
+./build_vktrace.sh --target android
+```
+
+Or build manually:
 ```
 cd build-android
+export ANDROID_SDK_HOME=<path/to/android/sdk>
+# aapt can be found in android_sdk/build-tools/version/ e.g. android_sdk/build-tools/23.0.3/
+export PATH=<path/to/the/directory/of/aapt>:${PATH}
+export PATH=<path/to/android/ndk-bundle>:${PATH}
 ./update_external_sources_android.sh
 ./android-generate.sh
 ndk-build -j $(nproc)
-```
-#### OSX
-Follow the setup steps for OSX above, then from your terminal:
-```
-cd build-android
-./update_external_sources_android.sh
-./android-generate.sh
-ndk-build -j $(sysctl -n hw.ncpu)
-```
-#### Windows
-Follow the setup steps for Windows above, then from Developer Command Prompt for VS2015:
-```
-cd build-android
-update_external_sources_android.bat
-android-generate.bat
-ndk-build
+# Generate a debug.keystore if there is no such file under ~/.android/
+keytool -genkey -v -keystore ~/.android/debug.keystore -storepass android -alias androiddebugkey -keypass android -dname "CN=Android Debug,O=Android,C=US"
+./build_vkreplay.sh
+# This will build two APKs:
+# 1. vkreplay.apk which has package name "com.example.vkreplay" and can be installed as 64-bit or 32-bit (via "--abi armeabi-v7a" option in adb install command)
+# 2. vkreplay32.apk which has package name "com.example.vkreplay32" and is a 32-bit only APK to make it possible for user to have both 32-bit and 64-bit version of vkreplay installed on Android.
 ```
 
 ## Android usage
