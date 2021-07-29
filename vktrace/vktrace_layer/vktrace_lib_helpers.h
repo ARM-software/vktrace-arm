@@ -79,6 +79,7 @@ typedef struct _layer_device_data {
     VkLayerDispatchTable devTable;
     bool KHRDeviceSwapchainEnabled;
 } layer_device_data;
+
 typedef struct _layer_instance_data {
     VkLayerInstanceDispatchTable instTable;
     bool LunargDebugReportEnabled;
@@ -90,6 +91,12 @@ typedef struct _layer_instance_data {
     bool KHRAndroidSurfaceEnabled;
     bool KHRHeadlessSurfaceEnabled;
 } layer_instance_data;
+
+typedef struct _memoryMapParam{
+    VkDeviceMemory memory;
+    VkDeviceSize offset;
+    VkDeviceSize size;
+}memoryMapParam;
 
 // defined in manually written file: vktrace_lib_trace.c
 extern VKMemInfo g_memInfo;

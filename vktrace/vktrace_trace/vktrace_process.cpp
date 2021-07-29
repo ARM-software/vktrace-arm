@@ -35,6 +35,7 @@
 #endif
 
 #include <vector>
+#include <unordered_map>
 
 #if defined(WIN32)
 #include <TlHelp32.h>
@@ -229,6 +230,7 @@ VKTRACE_THREAD_ROUTINE_RETURN_TYPE Process_RunRecordTraceThread(LPVOID _threadIn
     vktrace_trace_packet_header* pHeader = NULL;
     uint64_t bytes_written;
     uint64_t fileOffset;
+    bool useAsApi = false;
 #if defined(WIN32)
     BOOL rval;
 #elif defined(PLATFORM_LINUX)
@@ -334,6 +336,7 @@ VKTRACE_THREAD_ROUTINE_RETURN_TYPE Process_RunRecordTraceThread(LPVOID _threadIn
 
     std::vector<uint64_t> portabilityTable;
     std::vector<uint64_t> injectedCalls;
+    std::unordered_map<VkDevice, uint32_t> deviceToFeatures;
     uint64_t decompress_file_size = fileOffset;
     while (!terminationSignalArrived && pInfo->serverRequestsTermination == FALSE) {
         // get a packet
@@ -377,6 +380,18 @@ VKTRACE_THREAD_ROUTINE_RETURN_TYPE Process_RunRecordTraceThread(LPVOID _threadIn
                 && (vktrace_get_trace_packet_tag(pHeader) & PACKET_TAG__INJECTED)) {
                     injectedCalls.push_back(pHeader->global_packet_index);
             }
+            if ((file_header.trace_file_version > VKTRACE_TRACE_FILE_VERSION_10)
+                && (pHeader->packet_id == VKTRACE_TPI_VK_vkCreateDevice)) {
+                vktrace_trace_packet_header *pCreateDeviceHeader = static_cast<vktrace_trace_packet_header *>(malloc((size_t)pHeader->size));
+                if (pCreateDeviceHeader != nullptr) {
+                    memcpy(pCreateDeviceHeader, pHeader, (size_t)pHeader->size);
+                    pCreateDeviceHeader->pBody = (uintptr_t)(((char*)pCreateDeviceHeader) + sizeof(vktrace_trace_packet_header));
+                }
+                packet_vkCreateDevice* pPacket = (packet_vkCreateDevice*)pCreateDeviceHeader->pBody;
+                pPacket->pDevice = (VkDevice*)vktrace_trace_packet_interpret_buffer_pointer(pCreateDeviceHeader, (intptr_t)pPacket->pDevice);
+                deviceToFeatures[*pPacket->pDevice] = vktrace_get_trace_packet_tag(pCreateDeviceHeader);
+                delete pCreateDeviceHeader;
+            }
 
             if (pInfo->pTraceFile != NULL) {
                 decompress_file_size += pHeader->size;
@@ -393,7 +408,10 @@ VKTRACE_THREAD_ROUTINE_RETURN_TYPE Process_RunRecordTraceThread(LPVOID _threadIn
                 if (bytes_written != pHeader->size) {
                     vktrace_LogError("Failed to write the packet for packet_id = %hu", pHeader->packet_id);
                 }
-
+                if (pHeader->packet_id == VKTRACE_TPI_VK_vkBuildAccelerationStructuresKHR || pHeader->packet_id == VKTRACE_TPI_VK_vkCreateAccelerationStructureKHR ||
+                    pHeader->packet_id == VKTRACE_TPI_VK_vkGetAccelerationStructureBuildSizesKHR || pHeader->packet_id == VKTRACE_TPI_VK_vkCmdBuildAccelerationStructuresKHR) {
+                    useAsApi = true;
+                }
                 // If the packet is one we need to track, add it to the table
                 if (vktrace_append_portabilitytable(pHeader->packet_id)) {
                     vktrace_LogDebug("Add packet to portability table: %s",
@@ -411,10 +429,14 @@ VKTRACE_THREAD_ROUTINE_RETURN_TYPE Process_RunRecordTraceThread(LPVOID _threadIn
         vktrace_delete_trace_packet_no_lock(&pHeader);
     }
     decompress_file_size += (sizeof(vktrace_trace_packet_header) + (portabilityTable.size() + 1)* sizeof(uint64_t));
-
+    uint64_t meta_data_offset = 0;
     if (file_header.trace_file_version > VKTRACE_TRACE_FILE_VERSION_9) {
-        uint32_t meta_data_str_size = vktrace_appendMetaData(pInfo->pTraceFile, injectedCalls);
+        uint32_t meta_data_str_size = vktrace_appendMetaData(pInfo->pTraceFile, injectedCalls, meta_data_offset);
         decompress_file_size += sizeof(vktrace_trace_packet_header) + meta_data_str_size;
+    }
+    if (file_header.trace_file_version > VKTRACE_TRACE_FILE_VERSION_10 && meta_data_offset > 0) {
+        uint32_t device_features_str_size = vktrace_appendDeviceFeatures(pInfo->pTraceFile, deviceToFeatures, meta_data_offset);
+        decompress_file_size += device_features_str_size;
     }
 
     vktrace_appendPortabilityPacket(pInfo->pTraceFile, portabilityTable);
@@ -423,7 +445,12 @@ VKTRACE_THREAD_ROUTINE_RETURN_TYPE Process_RunRecordTraceThread(LPVOID _threadIn
 #if defined(WIN32)
     PostThreadMessage(pInfo->pProcessInfo->parentThreadId, VKTRACE_WM_COMPLETE, 0, 0);
 #endif
-
+    if (useAsApi) {
+        file_header.bit_flags = file_header.bit_flags | VKTRACE_USE_ACCELERATION_STRUCTURE_API_BIT;
+        fseek(pInfo->pTraceFile, offsetof(vktrace_trace_file_header, bit_flags), SEEK_SET);
+        fwrite(&file_header.bit_flags, sizeof(uint16_t), 1, pInfo->pTraceFile);
+        vktrace_LogAlways("There are AS related functions in the trace file.");
+    }
     if (g_compressor && g_compressor->compress_packet_counter > 0) {
         fseek(pInfo->pTraceFile, offsetof(vktrace_trace_file_header, compress_type), SEEK_SET);
         VKTRACE_COMPRESS_TYPE type = compressTypeConvert(g_settings.compressType);

@@ -53,7 +53,12 @@ extern uint64_t g_trimStartFrame;
 extern uint64_t g_trimEndFrame;
 extern bool g_trimAlreadyFinished;
 extern bool g_TraceLockEnabled;
-extern std::unordered_map<VkDevice, VkPhysicalDevice> g_deviceToPhyscialDevice;
+extern std::unordered_map<VkDevice, VkPhysicalDevice> g_deviceToPhysicalDevice;
+
+typedef struct _DeviceMemory {
+    VkDevice device;
+    VkDeviceMemory memory;
+} DeviceMemory;
 
 // This mutex is used to protect API calls sequence
 // during trace
@@ -212,6 +217,7 @@ void mark_QueryPool_reference(VkQueryPool var);
 void mark_DeviceMemory_reference(VkDeviceMemory var);
 void mark_Buffer_reference(VkBuffer var);
 void mark_BufferView_reference(VkBufferView var);
+void mark_AccelerationStructure_reference(VkAccelerationStructureKHR var);
 
 ObjectInfo &add_Instance_object(VkInstance var);
 ObjectInfo *get_Instance_objectInfo(VkInstance var);
@@ -302,6 +308,8 @@ ObjectInfo *get_DescriptorSet_objectInfo(VkDescriptorSet var);
 ObjectInfo &add_AccelerationStructure_object(VkAccelerationStructureKHR var);
 ObjectInfo *get_AccelerationStructure_objectInfo(VkAccelerationStructureKHR var);
 
+void        add_BuildAccelerationStructure_object(vktrace_trace_packet_header* var);
+
 void remove_Instance_object(const VkInstance var);
 void remove_PhysicalDevice_object(const VkPhysicalDevice var);
 void remove_Device_object(const VkDevice var);
@@ -331,6 +339,9 @@ void remove_DescriptorSetLayout_object(const VkDescriptorSetLayout var);
 void remove_DescriptorUpdateTemplate_object(VkDescriptorUpdateTemplate var);
 void remove_DescriptorSet_object(const VkDescriptorSet var);
 void remove_AccelerationStructure_object(const VkAccelerationStructureKHR var);
+void remove_BuildAccelerationStructure_object(vktrace_trace_packet_header* var);
+
+void reset_CommandPool_object(VkCommandPool var);
 
 void add_binding_Pipeline_to_CommandBuffer(VkCommandBuffer commandBuffer, VkPipeline pipeLine);
 void clear_binding_Pipelines_from_CommandBuffer(VkCommandBuffer commandBuffer);

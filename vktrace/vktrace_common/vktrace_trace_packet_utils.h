@@ -47,6 +47,7 @@ uint64_t get_arch();
 uint64_t get_os();
 
 char* find_available_filename(const char* originalFilename, BOOL bForceOverwrite);
+deviceFeatureSupport query_device_feature(PFN_vkGetPhysicalDeviceFeatures2KHR GetPhysicalDeviceFeatures, VkPhysicalDevice physicalDevice, const VkDeviceCreateInfo *pCreateInfo);
 static FILE* vktrace_open_trace_file(vktrace_process_capture_trace_thread_info* trace_thread_info) {
     FILE* tracefp = NULL;
     assert(trace_thread_info != NULL);
@@ -80,7 +81,25 @@ static FILE* vktrace_open_trace_file(vktrace_process_capture_trace_thread_info* 
 
 typedef enum packet_tag {
     PACKET_TAG__INJECTED = 0x1,
+    PACKET_TAG_ASCAPTUREREPLAY = 0x2,
+    PACKET_TAG_BUFFERCAPTUREREPLAY = 0x4
 } packet_tag;
+
+enum TripleValue
+{
+    YES,
+    NO,
+    NO_VALUE
+};
+
+enum ASGeometryData {
+    AS_GEOMETRY_TRIANGLES_VERTEXDATA_BIT = 0x1,
+    AS_GEOMETRY_TRIANGLES_INDEXDATA_BIT = 0x2,
+    AS_GEOMETRY_TRIANGLES_TRANSFORMDATA_BIT = 0x4,
+    AS_GEOMETRY_AABB_DATA_BIT = 0x8,
+};
+
+int getVertexIndexStride(VkIndexType type);
 
 //=============================================================================
 // trace packets
@@ -125,7 +144,7 @@ void vktrace_finalize_trace_packet(vktrace_trace_packet_header* pHeader);
 void vktrace_write_trace_packet(const vktrace_trace_packet_header* pHeader, FileLike* pFile);
 
 // Tag the trace packet
-void vktrace_tag_trace_packet(vktrace_trace_packet_header* pHeader, packet_tag tag);
+void vktrace_tag_trace_packet(vktrace_trace_packet_header* pHeader, uint32_t tag);
 
 //=============================================================================
 // Methods for Reading and interpretting trace packets
@@ -145,7 +164,7 @@ void* vktrace_trace_packet_interpret_buffer_pointer(vktrace_trace_packet_header*
 // Adding to packets TODO: Move to codegen
 void add_VkApplicationInfo_to_packet(vktrace_trace_packet_header* pHeader, VkApplicationInfo** ppStruct,
                                      const VkApplicationInfo* pInStruct);
-void add_VkAccelerationStructureBuildGeometryInfoKHR_to_packet(vktrace_trace_packet_header* pHeader, VkAccelerationStructureBuildGeometryInfoKHR** ppStruct, VkAccelerationStructureBuildGeometryInfoKHR* pInStruct, bool addSelf, int *instanceSizes, bool hostAddr);
+void add_VkAccelerationStructureBuildGeometryInfoKHR_to_packet(vktrace_trace_packet_header* pHeader, VkAccelerationStructureBuildGeometryInfoKHR** ppStruct, VkAccelerationStructureBuildGeometryInfoKHR* pInStruct, bool addSelf, const VkAccelerationStructureBuildRangeInfoKHR* pBuildRangeInfos, bool hostAddr, char* geometryDataBit);
 void add_VkInstanceCreateInfo_to_packet(vktrace_trace_packet_header* pHeader, VkInstanceCreateInfo** ppStruct,
                                         VkInstanceCreateInfo* pInStruct);
 void add_VkDeviceCreateInfo_to_packet(vktrace_trace_packet_header* pHeader, VkDeviceCreateInfo** ppStruct,

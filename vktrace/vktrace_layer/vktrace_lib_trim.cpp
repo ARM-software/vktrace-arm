@@ -576,7 +576,7 @@ void initialize() {
             g_trimEndFrame = g_trimStartFrame + numFrames;
         } else {
             int U_ASSERT_ONLY matches = sscanf(trimFrames, "%" PRIu64 "-%" PRIu64, &g_trimStartFrame, &g_trimEndFrame);
-            assert(matches == 2);
+            assert(matches > 0);
         }
 
         // make sure the start/end frames are in expected order.
@@ -1289,6 +1289,9 @@ void snapshot_state_tracker() {
             VkDevice device = imageIter->second.belongsToDevice;
             VkImage image = imageIter->first;
 
+            if (imageIter->second.ObjectInfo.Image.mostRecentLayout == VK_IMAGE_LAYOUT_UNDEFINED)
+                continue;
+
             if ((imageIter->second.ObjectInfo.Image.memorySize != 0) && (device != VK_NULL_HANDLE)) {
                 // If the memorysize is zero, it mean the image is not bound to any
                 // memory so far, it might be just created when starting to trim.
@@ -1440,15 +1443,15 @@ void snapshot_state_tracker() {
                             copyRegion.bufferOffset = lay.offset;
 
                             if (imageIter->second.ObjectInfo.Image.imageType == VK_IMAGE_TYPE_3D) {
-                                copyRegion.imageExtent.depth = imageIter->second.ObjectInfo.Image.extent.depth >> i;
+                                copyRegion.imageExtent.depth = std::max((imageIter->second.ObjectInfo.Image.extent.depth >> i), static_cast<uint32_t>(1));
                             } else {
                                 copyRegion.imageExtent.depth = 1;
                             }
 
-                            copyRegion.imageExtent.width = (imageIter->second.ObjectInfo.Image.extent.width >> i);
+                            copyRegion.imageExtent.width = std::max((imageIter->second.ObjectInfo.Image.extent.width >> i), static_cast<uint32_t>(1));
 
                             if (imageIter->second.ObjectInfo.Image.imageType != VK_IMAGE_TYPE_1D) {
-                                copyRegion.imageExtent.height = (imageIter->second.ObjectInfo.Image.extent.height >> i);
+                                copyRegion.imageExtent.height = std::max((imageIter->second.ObjectInfo.Image.extent.height >> i), static_cast<uint32_t>(1));
                             } else {
                                 copyRegion.imageExtent.height = 1;
                             }
@@ -1587,6 +1590,9 @@ void snapshot_state_tracker() {
              itrCount++, imageIter++) {
             VkDevice device = imageIter->second.belongsToDevice;
             VkImage image = imageIter->first;
+
+            if (imageIter->second.ObjectInfo.Image.mostRecentLayout == VK_IMAGE_LAYOUT_UNDEFINED)
+                continue;
 
             if ((imageIter->second.ObjectInfo.Image.memorySize != 0) && (device != VK_NULL_HANDLE)) {
                 // If the memorysize is zero, it mean the image is not bound to any
@@ -2125,6 +2131,11 @@ void delete_objects_for_destroy_device(VkDevice device) {
     }
     delete_objects_number += AccelerationStructureToRemove.size();
 
+    for (size_t i = 0; i < s_trimGlobalStateTracker.buildAccelerationStructures.size(); i++) {
+        trim::remove_BuildAccelerationStructure_object(s_trimGlobalStateTracker.buildAccelerationStructures[i]);
+    }
+    delete_objects_number += s_trimGlobalStateTracker.buildAccelerationStructures.size();
+
     // DescriptorPool
     std::vector<VkDescriptorPool> DescriptorPoolsToRemove;
     get_device_objects<VkDescriptorPool>(device, s_trimGlobalStateTracker.createdDescriptorPools, DescriptorPoolsToRemove);
@@ -2414,6 +2425,7 @@ ObjectInfo &add_CommandPool_object(VkCommandPool var) {
 //=========================================================================
 void remove_CommandPool_object(const VkCommandPool var) {
     vktrace_enter_critical_section(&trimStateTrackerLock);
+    reset_CommandPool_object(var);
     s_trimGlobalStateTracker.remove_CommandPool(var);
     vktrace_leave_critical_section(&trimStateTrackerLock);
 }
@@ -2428,6 +2440,22 @@ ObjectInfo *get_CommandPool_objectInfo(VkCommandPool var) {
     }
     vktrace_leave_critical_section(&trimStateTrackerLock);
     return pResult;
+}
+
+//=========================================================================
+void reset_CommandPool_object(VkCommandPool var) {
+    vktrace_enter_critical_section(&trimStateTrackerLock);
+    auto iter = s_trimGlobalStateTracker.createdCommandBuffers.begin();
+    while(iter != s_trimGlobalStateTracker.createdCommandBuffers.end()) {
+        if (iter->second.ObjectInfo.CommandBuffer.commandPool == var) {
+            remove_CommandBuffer_calls(iter->first);
+            trim::ClearImageTransitions(iter->first);
+            trim::ClearBufferTransitions(iter->first);
+            trim::clear_binding_Pipelines_from_CommandBuffer(iter->first);
+        }
+        iter++;
+    }
+    vktrace_leave_critical_section(&trimStateTrackerLock);
 }
 
 //=========================================================================
@@ -3094,6 +3122,18 @@ ObjectInfo *get_AccelerationStructure_objectInfo(VkAccelerationStructureKHR var)
     return pResult;
 }
 
+void add_BuildAccelerationStructure_object(vktrace_trace_packet_header* var) {
+    vktrace_enter_critical_section(&trimStateTrackerLock);
+    s_trimGlobalStateTracker.add_BuildAccelerationStructure(var);
+    vktrace_leave_critical_section(&trimStateTrackerLock);
+}
+
+void remove_BuildAccelerationStructure_object(vktrace_trace_packet_header* var)
+{
+    vktrace_enter_critical_section(&trimStateTrackerLock);
+    s_trimGlobalStateTracker.remove_BuildAccelerationStructure(var);
+    vktrace_leave_critical_section(&trimStateTrackerLock);
+}
 //=========================================================================
 
 #define TRIM_MARK_OBJECT_REFERENCE(type)                                   \
@@ -3204,6 +3244,19 @@ void mark_DescriptorSet_reference(VkDescriptorSet var) {
             info->bReferencedInTrimChecked = true;
             info->bReferencedInTrim = true;
             mark_DescriptorPool_reference(info->ObjectInfo.DescriptorSet.descriptorPool);
+        }
+    }
+    vktrace_leave_critical_section(&trimStateTrackerLock);
+}
+
+void mark_AccelerationStructure_reference(VkAccelerationStructureKHR var) {
+    vktrace_enter_critical_section(&trimStateTrackerLock);
+    auto iter = s_trimStateTrackerSnapshot.createdAccelerationStructures.find(var);
+    if (iter != s_trimStateTrackerSnapshot.createdAccelerationStructures.end()) {
+        ObjectInfo *info = &iter->second;
+        if (info != nullptr && !(info->bReferencedInTrimChecked)) {
+            info->bReferencedInTrimChecked = true;
+            info->bReferencedInTrim = true;
         }
     }
     vktrace_leave_critical_section(&trimStateTrackerLock);
@@ -3325,6 +3378,24 @@ bool isValidDescriptorIndex(const VkWriteDescriptorSet *pDescriptorWrites, uint3
                     isValidDescriptor = false;
                     vktrace_LogWarning(
                         "The descriptorType does not match when trim generate vkUpdateDescriptorSets call for update the bindings "
+                        "of the DescriptorSet.");
+                }
+            } break;
+            case VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR: {
+                if (pDescriptorWrites->pNext != nullptr) {
+                    VkWriteDescriptorSetAccelerationStructureKHR* pWriteDSAS = (VkWriteDescriptorSetAccelerationStructureKHR*)(pDescriptorWrites->pNext);
+                    for (int i = 0; i < pWriteDSAS->accelerationStructureCount; i++){
+                        ObjectInfo *objectInfo = trim::get_AccelerationStructure_objectInfo(pWriteDSAS->pAccelerationStructures[i]);
+                        if (objectInfo == nullptr) {
+                            isValidDescriptor = false;
+                            break;
+                        }
+                    }
+                } else {
+                    assert(false);
+                    isValidDescriptor = false;
+                    vktrace_LogWarning(
+                        "The descriptorType:AS does not match when trim generate vkUpdateDescriptorSets call for update the bindings "
                         "of the DescriptorSet.");
                 }
             } break;
@@ -3460,9 +3531,7 @@ bool UpdateInvalidDescriptors(const VkWriteDescriptorSet *pDescriptorWrites) {
 // valid one.
 void UpdateInvalidDescriptors(uint32_t descriptorWriteCount, const VkWriteDescriptorSet *pDescriptorWrites) {
     for (uint32_t i = 0; i < descriptorWriteCount; i++) {
-        if (!UpdateInvalidDescriptors(&pDescriptorWrites[i])) {
-            assert(false);
-        }
+        UpdateInvalidDescriptors(&pDescriptorWrites[i]);
     }
 }
 
@@ -3485,6 +3554,18 @@ void recreate_instances(StateTracker &stateTracker) {
             vktrace_write_trace_packet(obj->second.ObjectInfo.Instance.pEnumeratePhysicalDevicesPacket,
                                        vktrace_trace_get_trace_file());
             vktrace_delete_trace_packet_no_lock(&(obj->second.ObjectInfo.Instance.pEnumeratePhysicalDevicesPacket));
+        }
+
+        if (obj->second.ObjectInfo.Instance.pEnumeratePhysicalDeviceGroupsCountPacket != NULL) {
+            vktrace_write_trace_packet(obj->second.ObjectInfo.Instance.pEnumeratePhysicalDeviceGroupsCountPacket,
+                                       vktrace_trace_get_trace_file());
+            vktrace_delete_trace_packet_no_lock(&(obj->second.ObjectInfo.Instance.pEnumeratePhysicalDeviceGroupsCountPacket));
+        }
+
+        if (obj->second.ObjectInfo.Instance.pEnumeratePhysicalDeviceGroupsPacket != NULL) {
+            vktrace_write_trace_packet(obj->second.ObjectInfo.Instance.pEnumeratePhysicalDeviceGroupsPacket,
+                                       vktrace_trace_get_trace_file());
+            vktrace_delete_trace_packet_no_lock(&(obj->second.ObjectInfo.Instance.pEnumeratePhysicalDeviceGroupsPacket));
         }
     }
 }
@@ -3900,11 +3981,6 @@ void record_created_buffers_commands(StateTracker &stateTracker, uint32_t &bufIt
                 vktrace_write_trace_packet(obj->second.ObjectInfo.Buffer.pBindBufferMemoryPacket, vktrace_trace_get_trace_file());
                 vktrace_delete_trace_packet_no_lock(&(obj->second.ObjectInfo.Buffer.pBindBufferMemoryPacket));
             }
-            // CreateAS
-            if (obj->second.ObjectInfo.Buffer.pCreateASPacket != nullptr) {
-                vktrace_write_trace_packet(obj->second.ObjectInfo.Buffer.pCreateASPacket, vktrace_trace_get_trace_file());
-                obj->second.ObjectInfo.Buffer.pCreateASPacket = nullptr;
-            }
 
             if (obj->second.ObjectInfo.Buffer.needsStagingBuffer) {
                 StagingInfo stagingInfo = s_bufferToStagedInfoMap[buffer];
@@ -4319,6 +4395,18 @@ void recreate_buffers(StateTracker &stateTracker) {
 
     vktrace_LogDebug("Recreating Buffers (Done).");
 }
+
+void recreate_as(StateTracker &stateTracker){
+    for (auto obj = stateTracker.createdAccelerationStructures.begin(); obj != stateTracker.createdAccelerationStructures.end(); obj++) {
+        vktrace_write_trace_packet(obj->second.ObjectInfo.AccelerationStructure.pCreatePacket, vktrace_trace_get_trace_file());
+        vktrace_delete_trace_packet_no_lock(&(obj->second.ObjectInfo.AccelerationStructure.pCreatePacket));
+    }
+    for (auto obj = stateTracker.buildAccelerationStructures.begin(); obj != stateTracker.buildAccelerationStructures.end(); obj++) {
+        vktrace_write_trace_packet(*obj, vktrace_trace_get_trace_file());
+        vktrace_delete_trace_packet_no_lock(&(*obj));
+    }
+}
+
 
 void recreate_device_persistently_map_mem(StateTracker &stateTracker) {
     for (auto obj = stateTracker.createdDeviceMemorys.begin(); obj != stateTracker.createdDeviceMemorys.end(); obj++) {
@@ -5170,6 +5258,13 @@ void write_all_referenced_object_calls() {
                                         case VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER: {
                                             trim::mark_BufferView_reference(pDescriptorWrites[i].pTexelBufferView[j]);
                                         } break;
+                                        case VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR: {
+                                            assert(pDescriptorWrites[i].pNext != nullptr);
+                                            VkWriteDescriptorSetAccelerationStructureKHR *pWriteDSAS = (VkWriteDescriptorSetAccelerationStructureKHR*)(pDescriptorWrites[i].pNext);
+                                            for(int asi = 0; asi < pWriteDSAS->accelerationStructureCount; asi++) {
+                                                trim::mark_AccelerationStructure_reference(pWriteDSAS->pAccelerationStructures[asi]);
+                                            }
+                                        } break;
                                         default:
                                             break;
                                     }
@@ -5245,6 +5340,9 @@ void write_all_referenced_object_calls() {
 
     // DeviceMemory (Persistently Map Memory)
     recreate_device_persistently_map_mem(stateTracker);
+
+    // AccelerationStructure
+    recreate_as(stateTracker);
 
     // BufferView
     recreate_bufferviews(stateTracker);
@@ -5721,14 +5819,6 @@ void write_destroy_packets() {
     vktrace_leave_critical_section(&trimStateTrackerLock);
 
     vktrace_LogDebug("vktrace done destroying objects after trim.");
-}
-
-void cancel_ASPacketCreate(vktrace_trace_packet_header* pCreateASPacket) {
-    for (auto& e : s_trimGlobalStateTracker.createdBuffers) {
-        if (e.second.ObjectInfo.Buffer.pCreateASPacket == pCreateASPacket) {
-            e.second.ObjectInfo.Buffer.pCreateASPacket = nullptr;
-        }
-    }
 }
 
 }  // namespace trim

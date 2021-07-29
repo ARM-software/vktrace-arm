@@ -27,13 +27,14 @@ extern "C" {
 #include <thread>
 #include <mutex>
 #include <condition_variable>
+#include <fstream>
 
 #include "vkreplay_factory.h"
 #include "vkreplay_preload.h"
 #include "vkreplay_vkreplay.h"
 #include "vkreplay_main.h"
 
-#define MAX_CHUNK_COUNT 16
+#define MAX_CHUNK_COUNT 6
 #define SIZE_1K         1024
 #define SIZE_1M         (SIZE_1K * SIZE_1K)
 
@@ -108,12 +109,55 @@ static uint64_t get_system_memory_size() {
     return result;
 }
 
+static uint64_t get_free_memory_size() {
+     uint64_t free_mem = 0;
+#if defined(ANDROID) || defined(__linux__)
+        std::string token;
+        std::ifstream file("/proc/meminfo");
+        while(file >> token) {
+            if(token == "MemFree:") {
+                unsigned long mem;
+                if(file >> mem) {
+                    free_mem += mem;
+                }
+            }
+            else if(token == "Buffers:") {
+                unsigned long mem;
+                if(file >> mem) {
+                    free_mem += mem;
+                }
+            }
+            else if(token == "Cached:") {
+                unsigned long mem;
+                if(file >> mem) {
+                    free_mem += mem;
+                }
+            }
+            // ignore rest of the line
+            file.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+        }
+        free_mem = free_mem * 1024; // To bytes
+#endif
+    return free_mem;
+}
+
 static uint32_t calc_chunk_count(uint64_t sys_mem_size, uint64_t chunk_size, uint64_t file_size) {
+    uint32_t chunk_count = 0;
+    uint64_t system_total_mem_size = get_system_memory_size();
     uint64_t preload_mem_size = sys_mem_size * replaySettings.memoryPercentage / 100;
-
-    preload_mem_size = preload_mem_size < file_size ? preload_mem_size : file_size;
-    uint32_t chunk_count = (preload_mem_size + chunk_size - 1) / chunk_size;
-
+    if (preload_mem_size > system_total_mem_size / 2) {
+        vktrace_LogAlways("Init preload: The system total memory size = %llu, the free memory size greater than system_total_mem_size / 2.", system_total_mem_size);
+        preload_mem_size = system_total_mem_size / 2;
+    }
+    preload_mem_size = std::min(preload_mem_size, MAX_CHUNK_COUNT * chunk_size);
+    if (file_size <= preload_mem_size) {
+        chunk_count = (file_size + chunk_size - 1) / chunk_size;
+    } else {
+        chunk_count = preload_mem_size / chunk_size;
+    }
+    if (chunk_count == 1 && file_size > chunk_size) {
+        chunk_count = 0;   //Only 1 chunk free memory size, and it can't preload the whole file, so the preloading is meaningless.
+    }
     return chunk_count;
 }
 
@@ -357,22 +401,26 @@ static void chunk_loading() {
 }
 
 bool init_preload(FileLike* file, vktrace_replay::vktrace_trace_packet_replay_library *replayer_array[], decompressor* decompressor, uint64_t filesize) {
-
     g_decompressor = decompressor;
     replayerArray = replayer_array;
     bool ret = true;
-    uint64_t system_mem_size = get_system_memory_size();
-    vktrace_LogAlways("Init preload: the total size of system memory = 0x%llX, the decompress size = 0x%llX, original size = 0x%llX of the trace file.", system_mem_size, filesize, file->mFileLen);
+    uint64_t system_free_mem_size = get_free_memory_size();
+    vktrace_LogAlways("Init preload: the free memory size = %llu, the decompress file size = %llu, original file size = %llu.", system_free_mem_size, filesize, file->mFileLen);
 
     static const uint64_t chunk_size  = 400 * SIZE_1M;
-    uint32_t chunk_count = calc_chunk_count(system_mem_size, chunk_size, filesize);
-    chunk_count = chunk_count < MAX_CHUNK_COUNT ? chunk_count : MAX_CHUNK_COUNT;
+    uint32_t chunk_count = calc_chunk_count(system_free_mem_size, chunk_size, filesize);
+    if (chunk_count < 1) {
+        return false;
+    }
 
     char* preload_mem = (char*)vktrace_malloc(chunk_size * chunk_count);
     while (preload_mem == nullptr && chunk_count > 1) {
         // Allocate memory failed, then decrease the chunk count
         chunk_count--;
         preload_mem = (char*)vktrace_malloc(chunk_size * chunk_count);
+    }
+    if (preload_mem == nullptr) {
+        return false;
     }
 
     g_preload_context.chunk_count = chunk_count;
@@ -381,7 +429,7 @@ bool init_preload(FileLike* file, vktrace_replay::vktrace_trace_packet_replay_li
     g_preload_context.using_idx   = chunk_count;
 
     if (preload_mem) {
-        vktrace_LogAlways("Init preload: the chunk size = 0x%llX and the chunk count = %d ...", chunk_size, chunk_count);
+        vktrace_LogAlways("Init preload: the chunk size = %llu and the chunk count = %d ...", chunk_size, chunk_count);
 
         g_preload_context.preload_mem = preload_mem;
 

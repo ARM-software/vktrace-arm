@@ -442,7 +442,7 @@ vktrace_trace_packet_header *vkMapMemory(bool makeCall, VkDevice device, VkDevic
     pPacket->offset = offset;
     pPacket->size = size;
     pPacket->flags = flags;
-    vktrace_add_buffer_to_trace_packet(pHeader, (void **)&(pPacket->ppData), sizeof(void *), *ppData);
+    vktrace_add_buffer_to_trace_packet(pHeader, (void **)&(pPacket->ppData), sizeof(void *), ppData);
     vktrace_finalize_buffer_address(pHeader, (void **)&(pPacket->ppData));
     pPacket->result = result;
     vktrace_finalize_trace_packet(pHeader);
@@ -853,6 +853,7 @@ vktrace_trace_packet_header *vkUpdateDescriptorSets(bool makeCall, VkDevice devi
             default:
                 break;
         }
+        vktrace_add_pnext_structs_to_trace_packet(pHeader, (void*)(pPacket->pDescriptorWrites + i), pDescriptorWrites + i);
     }
     vktrace_finalize_buffer_address(pHeader, (void **)&(pPacket->pDescriptorWrites));
 

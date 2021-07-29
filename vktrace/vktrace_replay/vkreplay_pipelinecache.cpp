@@ -91,7 +91,7 @@ namespace vktrace_replay {
             }
         #else // LINUX
             g_default_pipelinecache_rootpath = "./pipelinecache";
-        #endif 
+        #endif
         }
 
         return g_default_pipelinecache_rootpath;
@@ -216,7 +216,7 @@ namespace vktrace_replay {
         std::stringstream ss;
         ss << cache_handle_value;
         for (const auto &full_path : file_list) {
-            if (std::string::npos == full_path.find_first_of(ss.str())) {
+            if (std::string::npos == full_path.find(ss.str())) {
                 continue;
             }
             result = full_path;
@@ -240,9 +240,9 @@ namespace vktrace_replay {
         ss_gpu_info << gpu_info;
         std::string &&uuid = PipelinecacheUUIDToString(pipelinecache_uuid);
         for (const auto &full_path : file_list) {
-            if (std::string::npos != full_path.find_first_of(ss_cache_handle.str()) &&
-                std::string::npos != full_path.find_first_of(ss_gpu_info.str()) &&
-                std::string::npos != full_path.find_first_of(uuid)) {
+            if (std::string::npos != full_path.find(ss_cache_handle.str()) &&
+                std::string::npos != full_path.find(ss_gpu_info.str()) &&
+                std::string::npos != full_path.find(uuid)) {
                 result = full_path;
                 break;
             }

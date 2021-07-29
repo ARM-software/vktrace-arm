@@ -25,5 +25,6 @@ void ClampQueueFamilyProps(const VkQueueFamilyProperties& src, VkQueueFamilyProp
 void ClampFormatProps(const VkFormatProperties& src, VkFormatProperties& dst);
 void ClampDevExtProps(const std::vector<VkExtensionProperties>& src, std::vector<VkExtensionProperties>& dst);
 void ClampExtendedDevFeatures(const std::unordered_map<uint32_t, ExtendedFeature>& features, void* pNext);
+void ClampExtendedDevProperties(const std::unordered_map<uint32_t, ExtendedProperty>& properties, void* pNext);
 
 #endif // _DEV_SIM_COMPATMODE_H_

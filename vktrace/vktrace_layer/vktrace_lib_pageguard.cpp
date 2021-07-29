@@ -33,9 +33,9 @@ static const VkDeviceSize PAGEGUARD_TARGET_RANGE_SIZE_DEFAULT = 2 * ONE_KBYTE;  
                                                                                     // may be less than 1 page, so processing for mapped memory
                                                                                     // size<1 page is already added,
                                                                                     // other value: 32 * 1024 * 1024 (32M),  64M, this is the size which cause DOOM4 capture very slow.
-static const VkDeviceSize PAGEGUARD_PAGEGUARD_TARGET_RANGE_SIZE_MIN = ONE_KBYTE;  // already tested: 2,2M,4M,32M,64M, because commonly page
-                                                                                      // size is 4k, so only range size=2 can cover small size
-                                                                                      // mapped memory.
+static const VkDeviceSize PAGEGUARD_PAGEGUARD_TARGET_RANGE_SIZE_MIN = 0;        // already tested: 2,2M,4M,32M,64M, because commonly page
+                                                                                    // size is 4k, so only range size=2 can cover small size
+                                                                                    // mapped memory.
 
 static vktrace_sem_id ref_amount_sem_id;  // TODO if vktrace implement cross platform lib or dll load or unload function, this sem
                                           // can be putted in those functions, but now we leave it to process quit.
@@ -46,6 +46,12 @@ static bool map_lock_sem_id_create_success __attribute__((unused)) = vktrace_sem
 #else
 static bool map_lock_sem_id_create_success = vktrace_sem_create(&map_lock_sem_id, 1);
 #endif
+
+#if defined(USE_PAGEGUARD_SPEEDUP) && !defined(PAGEGUARD_ADD_PAGEGUARD_ON_REAL_MAPPED_MEMORY)
+extern std::unordered_map<VkBuffer, DeviceMemory> g_bufferToDeviceMemory;
+extern std::unordered_map<VkAccelerationStructureKHR, VkBuffer> g_AStoBuffer;
+#endif
+extern std::unordered_map<VkDeviceAddress, VkBuffer> g_BuftoDeviceAddrRev;
 
 void pageguardEnter() {
     // Reference this variable to avoid compiler warnings
@@ -113,7 +119,7 @@ bool getPageGuardEnableFlag() {
                     if (env_target_range_size) {
                         VkDeviceSize rangesize;
                         if (sscanf(env_target_range_size, "%" PRIx64, &rangesize) == 1) {
-                            if (rangesize > PAGEGUARD_PAGEGUARD_TARGET_RANGE_SIZE_MIN) {
+                            if (rangesize >= PAGEGUARD_PAGEGUARD_TARGET_RANGE_SIZE_MIN) {
                                 set_pageguard_target_range_size(rangesize);
                             }
                         }
@@ -305,7 +311,30 @@ void flushTargetChangedMappedMemory(LPPageGuardMappedMemory TargetMappedMemory, 
     pMemoryRanges[0].pNext = nullptr;
     pMemoryRanges[0].size = TargetMappedMemory->getMappedSize();
     pMemoryRanges[0].sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE;
-    (*pFunc)(TargetMappedMemory->getMappedDevice(), 1, pMemoryRanges, apiFlush);
+
+    bool isAsMemory = false;
+#if defined(USE_PAGEGUARD_SPEEDUP) && !defined(PAGEGUARD_ADD_PAGEGUARD_ON_REAL_MAPPED_MEMORY)
+    if (g_AStoBuffer.size()) {
+        VkBuffer buffer = VK_NULL_HANDLE;
+        for(auto it = g_bufferToDeviceMemory.begin(); it != g_bufferToDeviceMemory.end(); it++) {
+            if (it->second.memory == pMemoryRanges[0].memory) {
+                buffer = it->first;
+                break;
+            }
+        }
+        if (buffer != VK_NULL_HANDLE) {
+            for(auto it = g_AStoBuffer.begin(); it != g_AStoBuffer.end(); it++) {
+                if (it->second == buffer) {
+                    isAsMemory = true;
+                    break;
+                }
+            }
+        }
+    }
+#endif
+    if (isAsMemory == false) {
+        (*pFunc)(TargetMappedMemory->getMappedDevice(), 1, pMemoryRanges, apiFlush);
+    }
     if (newMemoryRangesInside) {
         delete[] pMemoryRanges;
     }
@@ -501,6 +530,26 @@ void disableHandlerCheck() {
     }
 }
 
+extern std::unordered_map<VkDeviceMemory, VkBuffer> g_shaderDeviceAddrBufferToMemRev;
+
+bool getFlushMappedMemoryRangesRemapEnableFlag() {
+    static bool EnableBuffer = false;
+    static bool FirstTimeRun = true;
+    if (FirstTimeRun) {
+        FirstTimeRun = false;
+        const char* env_remap_buffer_enable = vktrace_get_global_var(VKTRACE_ENABLE_VKFLUSHMAPPEDMEMORYRANGES_REMAP_ENV);
+        if (env_remap_buffer_enable) {
+            int envvalue;
+            if (sscanf(env_remap_buffer_enable, "%d", &envvalue) == 1) {
+                if (envvalue != 0) {
+                    EnableBuffer = true;
+                }
+            }
+        }
+    }
+    return EnableBuffer;
+}
+
 // The function source code is modified from __HOOKED_vkFlushMappedMemoryRanges
 // for coherent map, need this function to dump data so simulate target application write data when playback.
 VkResult vkFlushMappedMemoryRangesWithoutAPICall(VkDevice device, uint32_t memoryRangeCount,
@@ -544,6 +593,7 @@ VkResult vkFlushMappedMemoryRangesWithoutAPICall(VkDevice device, uint32_t memor
 
     // now the actual memory
     vktrace_enter_critical_section(&g_memInfoLock);
+    bool deviceAddrFound = false;
     for (iter = 0; iter < memoryRangeCount; iter++) {
         VkMappedMemoryRange* pRange = (VkMappedMemoryRange*)&pMemoryRanges[iter];
         VKAllocInfo* pEntry = find_mem_info_entry(pRange->memory);
@@ -552,6 +602,7 @@ VkResult vkFlushMappedMemoryRangesWithoutAPICall(VkDevice device, uint32_t memor
             assert(pEntry->handle == pRange->memory);
             assert(pEntry->totalSize >= (pRange->size + pRange->offset));
             assert(pEntry->totalSize >= pRange->size);
+            int actualSize = 0;
 #if defined(USE_PAGEGUARD_SPEEDUP)
             if (dataSize > 0) {
                 LPPageGuardMappedMemory pOPTMemoryTemp = getPageGuardControlInstance().findMappedMemoryObject(device, pRange);
@@ -563,6 +614,7 @@ VkResult vkFlushMappedMemoryRangesWithoutAPICall(VkDevice device, uint32_t memor
                         setFlagTovkFlushMappedMemoryRangesSpecial(pOPTDataTemp);
                         tag = (packet_tag)0;
                     }
+                    actualSize = OPTPackageSizeTemp;
                     vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->ppData[iter]), OPTPackageSizeTemp, pOPTDataTemp);
                     pOPTMemoryTemp->clearChangedDataPackage();
                     pOPTMemoryTemp->resetMemoryObjectAllChangedFlagAndPageGuard();
@@ -573,15 +625,27 @@ VkResult vkFlushMappedMemoryRangesWithoutAPICall(VkDevice device, uint32_t memor
                         setFlagTovkFlushMappedMemoryRangesSpecial(pOPTDataTemp);
                         tag = (packet_tag)0;
                     }
+                    actualSize = OPTPackageSizeTemp;
                     vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->ppData[iter]), OPTPackageSizeTemp, pOPTDataTemp);
                     vktrace_tag_trace_packet(pHeader, tag);
                     getPageGuardControlInstance().clearChangedDataPackageOutOfMap(ppPackageData, iter);
                 }
             }
 #else
+            actualSize = pRange->size;
             vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->ppData[iter]), pRange->size,
                                                pEntry->pData + pRange->offset);
 #endif
+            if (getFlushMappedMemoryRangesRemapEnableFlag() && g_shaderDeviceAddrBufferToMemRev.find(pMemoryRanges[iter].memory) != g_shaderDeviceAddrBufferToMemRev.end()) {
+                VkDeviceAddress* pDeviceAddress = (VkDeviceAddress *)pPacket->ppData[iter];
+                for (unsigned long j = 0; j < actualSize / sizeof(VkDeviceAddress); ++j) {
+                    auto it0 = g_BuftoDeviceAddrRev.find(pDeviceAddress[j]);
+                    if (it0 != g_BuftoDeviceAddrRev.end()) {
+                        deviceAddrFound = true;
+                        break;
+                    }
+                }
+            }
             vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->ppData[iter]));
             pEntry->didFlush = InternalFlush;
         } else {
@@ -594,6 +658,11 @@ VkResult vkFlushMappedMemoryRangesWithoutAPICall(VkDevice device, uint32_t memor
 #endif
     vktrace_leave_critical_section(&g_memInfoLock);
 
+    if (deviceAddrFound) {
+        vktrace_LogDebug("Created a VKTRACE_TPI_VK_vkFlushMappedMemoryRangesRemap packet");
+        pHeader->packet_id = VKTRACE_TPI_VK_vkFlushMappedMemoryRangesRemap;
+    }
+
     // now finalize the ppData array since it is done being updated
     vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->ppData));
 
@@ -603,17 +672,23 @@ VkResult vkFlushMappedMemoryRangesWithoutAPICall(VkDevice device, uint32_t memor
     pPacket->memoryRangeCount = memoryRangeCount;
     pPacket->result = result;
 
-    if (!g_trimEnabled) {
-        // trim not enabled, send packet as usual
-        FINISH_TRACE_PACKET();
-    } else {
-        vktrace_finalize_trace_packet(pHeader);
-        if (g_trimIsInTrim) {
-            // Currently tracing the frame, so need to track references & store packet to write post-tracing.
-            trim::write_packet(pHeader);
+    // if the data size only inlcudes one *PageGuardChangedBlockInfo* struct,
+    // it means no dirty data and the flush packet is not needed.
+    if (dataSize > sizeof(PageGuardChangedBlockInfo)) {
+        if (!g_trimEnabled) {
+            // trim not enabled, send packet as usual
+            FINISH_TRACE_PACKET();
         } else {
-            vktrace_delete_trace_packet(&pHeader);
+            vktrace_finalize_trace_packet(pHeader);
+            if (g_trimIsInTrim) {
+                // Currently tracing the frame, so need to track references & store packet to write post-tracing.
+                trim::write_packet(pHeader);
+            } else {
+                vktrace_delete_trace_packet(&pHeader);
+            }
         }
+    } else {
+        vktrace_delete_trace_packet(&pHeader);
     }
     return result;
 }

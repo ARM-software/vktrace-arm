@@ -415,6 +415,8 @@ StateTracker &StateTracker::operator=(const StateTracker &other) {
         COPY_PACKET(obj->second.ObjectInfo.Instance.pCreatePacket);
         COPY_PACKET(obj->second.ObjectInfo.Instance.pEnumeratePhysicalDevicesCountPacket);
         COPY_PACKET(obj->second.ObjectInfo.Instance.pEnumeratePhysicalDevicesPacket);
+        COPY_PACKET(obj->second.ObjectInfo.Instance.pEnumeratePhysicalDeviceGroupsCountPacket);
+        COPY_PACKET(obj->second.ObjectInfo.Instance.pEnumeratePhysicalDeviceGroupsPacket);
     }
 
     createdPhysicalDevices = other.createdPhysicalDevices;
@@ -575,18 +577,17 @@ StateTracker &StateTracker::operator=(const StateTracker &other) {
         COPY_PACKET(obj->second.ObjectInfo.Buffer.pBindBufferMemoryPacket);
         COPY_PACKET(obj->second.ObjectInfo.Buffer.pMapMemoryPacket);
         COPY_PACKET(obj->second.ObjectInfo.Buffer.pUnmapMemoryPacket);
-        obj->second.ObjectInfo.Buffer.pCreateASPacket = nullptr;
     }
 
     createdAccelerationStructures = other.createdAccelerationStructures;
     for (auto obj = createdAccelerationStructures.begin(); obj != createdAccelerationStructures.end(); obj++) {
         COPY_PACKET(obj->second.ObjectInfo.AccelerationStructure.pCreatePacket);
-        auto it = createdBuffers.find(obj->second.ObjectInfo.AccelerationStructure.buffer);
-        if (it != createdBuffers.end()) {
-            it->second.ObjectInfo.Buffer.pCreateASPacket = obj->second.ObjectInfo.AccelerationStructure.pCreatePacket;
-        }
     }
 
+    buildAccelerationStructures = other.buildAccelerationStructures;
+    for (auto obj = buildAccelerationStructures.begin(); obj != buildAccelerationStructures.end(); obj++) {
+        COPY_PACKET(*obj);
+    }
     createdBufferViews = other.createdBufferViews;
     for (auto obj = createdBufferViews.begin(); obj != createdBufferViews.end(); obj++) {
         COPY_PACKET(obj->second.ObjectInfo.BufferView.pCreatePacket);
@@ -685,6 +686,18 @@ StateTracker &StateTracker::operator=(const StateTracker &other) {
                     memcpy(pTmp, obj->second.ObjectInfo.DescriptorSet.pWriteDescriptorSets[s].pTexelBufferView,
                            count * sizeof(VkBufferView));
                     obj->second.ObjectInfo.DescriptorSet.pWriteDescriptorSets[s].pTexelBufferView = pTmp;
+                }
+                VkApplicationInfo* pNext = (VkApplicationInfo*)obj->second.ObjectInfo.DescriptorSet.pWriteDescriptorSets[s].pNext;
+                if (pNext != nullptr && pNext->sType == VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR) {
+                    int size = sizeof(VkWriteDescriptorSetAccelerationStructureKHR) + obj->second.ObjectInfo.DescriptorSet.pWriteDescriptorSets[s].descriptorCount * sizeof(VkAccelerationStructureKHR);
+                    VkWriteDescriptorSetAccelerationStructureKHR *pWriteDSAS = (VkWriteDescriptorSetAccelerationStructureKHR*)malloc(size);
+                    pWriteDSAS->sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR;
+                    pWriteDSAS->pNext = nullptr;
+                    pWriteDSAS->accelerationStructureCount = obj->second.ObjectInfo.DescriptorSet.pWriteDescriptorSets[s].descriptorCount;
+                    pWriteDSAS->pAccelerationStructures = (VkAccelerationStructureKHR*)((char*)pWriteDSAS + sizeof(VkWriteDescriptorSetAccelerationStructureKHR));
+                    VkWriteDescriptorSetAccelerationStructureKHR* pOldWDSAS = (VkWriteDescriptorSetAccelerationStructureKHR*)pNext;
+                    memcpy((void*)pWriteDSAS->pAccelerationStructures, (void*)pOldWDSAS->pAccelerationStructures, obj->second.ObjectInfo.DescriptorSet.pWriteDescriptorSets[s].descriptorCount * sizeof(VkAccelerationStructureKHR));
+                    obj->second.ObjectInfo.DescriptorSet.pWriteDescriptorSets[s].pNext = (void*)pWriteDSAS;
                 }
             }
         } else {
@@ -1139,6 +1152,9 @@ ObjectInfo &StateTracker::add_AccelerationStructure(VkAccelerationStructureKHR v
     return info;
 }
 
+void StateTracker::add_BuildAccelerationStructure(vktrace_trace_packet_header* pBuildAS) {
+    buildAccelerationStructures.push_back(pBuildAS);
+}
 //---------------------------------------------------------------------
 //---------------------------------------------------------------------
 ObjectInfo *StateTracker::get_Instance(VkInstance var) {
@@ -1436,6 +1452,8 @@ void StateTracker::remove_Instance(const VkInstance var) {
         vktrace_delete_trace_packet(&pInfo->ObjectInfo.Instance.pCreatePacket);
         vktrace_delete_trace_packet(&pInfo->ObjectInfo.Instance.pEnumeratePhysicalDevicesCountPacket);
         vktrace_delete_trace_packet(&pInfo->ObjectInfo.Instance.pEnumeratePhysicalDevicesPacket);
+        vktrace_delete_trace_packet(&pInfo->ObjectInfo.Instance.pEnumeratePhysicalDeviceGroupsCountPacket);
+        vktrace_delete_trace_packet(&pInfo->ObjectInfo.Instance.pEnumeratePhysicalDeviceGroupsPacket);
     }
     createdInstances.erase(var);
 }
@@ -1483,6 +1501,15 @@ void StateTracker::remove_Queue(const VkQueue var) {
 }
 
 void StateTracker::remove_CommandPool(const VkCommandPool var) {
+    auto iter = createdCommandBuffers.begin();
+    while (iter != createdCommandBuffers.end()) {
+        if (iter->second.ObjectInfo.CommandBuffer.commandPool == var) {
+            remove_CommandBuffer_calls(iter->first);
+            iter = createdCommandBuffers.erase(iter);
+        } else {
+            iter++;
+        }
+    }
     ObjectInfo *pInfo = get_CommandPool(var);
     if (pInfo != nullptr) {
         vktrace_delete_trace_packet(&pInfo->ObjectInfo.CommandPool.pCreatePacket);
@@ -1542,7 +1569,6 @@ void StateTracker::remove_Buffer(const VkBuffer var) {
         vktrace_delete_trace_packet(&pInfo->ObjectInfo.Buffer.pBindBufferMemoryPacket);
         vktrace_delete_trace_packet(&pInfo->ObjectInfo.Buffer.pMapMemoryPacket);
         vktrace_delete_trace_packet(&pInfo->ObjectInfo.Buffer.pUnmapMemoryPacket);
-        pInfo->ObjectInfo.Buffer.pCreateASPacket = nullptr;
     }
     createdBuffers.erase(var);
 }
@@ -1744,6 +1770,11 @@ void StateTracker::remove_DescriptorSet(const VkDescriptorSet var) {
                     delete[] pInfo->ObjectInfo.DescriptorSet.pWriteDescriptorSets[s].pTexelBufferView;
                     pInfo->ObjectInfo.DescriptorSet.pWriteDescriptorSets[s].pTexelBufferView = nullptr;
                 }
+                VkApplicationInfo* pNext = (VkApplicationInfo*)pInfo->ObjectInfo.DescriptorSet.pWriteDescriptorSets[s].pNext;
+                if (pNext != nullptr && pNext->sType == VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR) {
+                    free(pNext);
+                    pInfo->ObjectInfo.DescriptorSet.pWriteDescriptorSets[s].pNext = nullptr;
+                }
             }
 
             delete[] pInfo->ObjectInfo.DescriptorSet.pWriteDescriptorSets;
@@ -1798,6 +1829,18 @@ void StateTracker::remove_AccelerationStructure(const VkAccelerationStructureKHR
         vktrace_delete_trace_packet(&pInfo->ObjectInfo.AccelerationStructure.pCreatePacket);
     }
     createdAccelerationStructures.erase(var);
+}
+
+void StateTracker::remove_BuildAccelerationStructure(vktrace_trace_packet_header* pBuildAS) {
+    auto it = buildAccelerationStructures.begin();
+    while (it != buildAccelerationStructures.end()) {
+        if (*it == pBuildAS) {
+            vktrace_delete_trace_packet(&pBuildAS);
+            buildAccelerationStructures.erase(it);
+            break;
+        }
+        it++;
+    }
 }
 
 }

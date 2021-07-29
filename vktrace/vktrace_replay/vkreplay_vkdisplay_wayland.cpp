@@ -115,7 +115,7 @@ int vkDisplayWayland::create_window(const unsigned int width, const unsigned int
     return 0;
 }
 
-void vkDisplayWayland::resize_window(const unsigned int width, const unsigned int height) {
+void vkDisplayWayland::resize_window(const unsigned int width, const unsigned int height, VkSurfaceTransformFlagBitsKHR rot) {
     if (width != m_windowWidth || height != m_windowHeight) {
         m_windowWidth = width;
         m_windowHeight = height;

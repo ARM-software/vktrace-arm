@@ -271,3 +271,23 @@ static uint32_t getAHardwareBufBPP(uint32_t fmt) {
 // from frame 0 to the frame indicated by this env var. Set this env var to 0 to disable
 // the feature.
 #define VKTRACE_CHECK_PAGEGUARD_HANDLER_IN_FRAMES_ENV "VKTRACE_CHECK_PAGEGUARD_HANDLER_IN_FRAMES"
+
+// VKTRACE_ENABLE_VKCMDCOPYBUFFER_REMAP_AS env var is an option used to control whether
+// to generate private packages in vkCmdCopyBuffer for acceleration structures when tracing.
+// Its default value is false. Set it to non-zero values to enable this feature and to 0 to disable it.
+#define VKTRACE_ENABLE_VKCMDCOPYBUFFER_REMAP_AS_ENV "VKTRACE_ENABLE_VKCMDCOPYBUFFER_REMAP_AS"
+
+// VKTRACE_ENABLE_VKCMDCOPYBUFFER_REMAP_BUFFER env var is an option used to control whether
+// to generate private packages in vkCmdCopyBuffer for buffers when tracing.
+// Its default value is false. Set it to non-zero values to enable this feature and to 0 to disable it.
+#define VKTRACE_ENABLE_VKCMDCOPYBUFFER_REMAP_BUFFER_ENV "VKTRACE_ENABLE_VKCMDCOPYBUFFER_REMAP_BUFFER"
+
+// VKTRACE_ENABLE_VKFLUSHMAPPEDMEMORYRANGES_REMAP env var is an option used to control whether
+// to generate private packages in vkFlushMappedMemoryRanges when tracing.
+// Its default value is false. Set it to non-zero values to enable this feature and to 0 to disable it.
+#define VKTRACE_ENABLE_VKFLUSHMAPPEDMEMORYRANGES_REMAP_ENV "VKTRACE_ENABLE_VKFLUSHMAPPEDMEMORYRANGES_REMAP"
+
+// VKTRACE_ENABLE_VKCMDPUSHCONSTANTS_REMAP env var is an option used to control whether
+// to generate private packages in vkCmdPushConstants when tracing.
+// Its default value is false. Set it to non-zero values to enable this feature and to 0 to disable it.
+#define VKTRACE_ENABLE_VKCMDPUSHCONSTANTS_REMAP_ENV "VKTRACE_ENABLE_VKCMDPUSHCONSTANTS_REMAP"

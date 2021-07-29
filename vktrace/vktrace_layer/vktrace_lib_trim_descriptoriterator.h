@@ -49,6 +49,7 @@ typedef union descriptorInfo {
     VkDescriptorImageInfo image_info;
     VkDescriptorBufferInfo buffer_info;
     VkBufferView buffer_view;
+    VkWriteDescriptorSetAccelerationStructureKHR as;
 } DescriptorInfo;
 
 class DescriptorIterator {

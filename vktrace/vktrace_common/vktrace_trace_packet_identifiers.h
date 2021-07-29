@@ -32,7 +32,8 @@
 #define VKTRACE_TRACE_FILE_VERSION_8  0x0008  // Compression format
 #define VKTRACE_TRACE_FILE_VERSION_9  0x0009  // Add tracer version in the file header
 #define VKTRACE_TRACE_FILE_VERSION_10 0x000A  // Add tracer enabled features and meta data for injected calls in the file header
-#define VKTRACE_TRACE_FILE_VERSION VKTRACE_TRACE_FILE_VERSION_10
+#define VKTRACE_TRACE_FILE_VERSION_11 0x000B  // Add ray query support
+#define VKTRACE_TRACE_FILE_VERSION VKTRACE_TRACE_FILE_VERSION_11
 
 // vkreplay can replay version 6 (the last Vulkan 1.0 format)
 #define VKTRACE_TRACE_FILE_VERSION_MINIMUM_COMPATIBLE VKTRACE_TRACE_FILE_VERSION_6
@@ -466,6 +467,11 @@ typedef enum _VKTRACE_TRACE_PACKET_ID_VK {
     VKTRACE_TPI_VK_vkSetDebugUtilsObjectNameEXT = 382,
     VKTRACE_TPI_VK_vkSetDebugUtilsObjectTagEXT = 383,
     VKTRACE_TPI_VK_vkSubmitDebugUtilsMessageEXT = 384,
+    VKTRACE_TPI_VK_vkCmdPushConstantsRemap = 0xFFEC,            // non-standard API derived from vkCmdPushConstants
+    VKTRACE_TPI_VK_vkFlushMappedMemoryRangesRemap = 0xFFED,     // non-standard API derived from vkFlushMappedMemoryRanges
+    VKTRACE_TPI_VK_vkCmdCopyBufferRemapBuffer = 0xFFEE,         // non-standard API derived from vkCmdCopyBuffer
+    VKTRACE_TPI_VK_vkCmdCopyBufferRemapAS = 0xFFEF,             // non-standard API derived from vkCmdCopyBuffer
+    VKTRACE_TPI_VK_vkCmdCopyBufferRemapASandBuffer = 0xFFF0,    // non-standard API derived from vkCmdCopyBuffer
     VKTRACE_TPI_META_DATA = 0xFFF1,
     VKTRACE_TPI_RESERVED_ID_1 = 0xFFF2,
     VKTRACE_TPI_RESERVED_ID_2 = 0xFFF3,
@@ -509,10 +515,19 @@ typedef enum VKTRACE_TRACER_FEATURE {
     TRACER_FEAT_DELAY_SIGNAL_FENCE      = 0x4
 } VKTRACE_TRACER_FEATURE;
 
+typedef enum VKTRACE_FILE_HEADER_FLAG {
+    VKTRACE_USE_ACCELERATION_STRUCTURE_API_BIT        = 0x1
+} VKTRACE_FILE_HEADER_FLAG;
+
+typedef struct _deviceFeatureSupport{
+    VkBool32 accelerationStructureCaptureReplay;
+    VkBool32 bufferDeviceAddressCaptureReplay;
+}deviceFeatureSupport;
+
 typedef struct {
     uint16_t trace_file_version;
     uint16_t tracer_version;
-    uint16_t reserved1[1];
+    uint16_t bit_flags;
     uint16_t compress_type;
     ALIGN8 uint64_t magic;
     uint32_t uuid[4];
@@ -578,3 +593,4 @@ typedef vktrace_trace_packet_marker_checkpoint vktrace_trace_packet_marker_api_g
 typedef vktrace_trace_packet_marker_checkpoint vktrace_trace_packet_marker_api_group_end;
 
 typedef VKTRACE_TRACER_ID(VKTRACER_CDECL* funcptr_VKTRACE_GetTracerId)();
+

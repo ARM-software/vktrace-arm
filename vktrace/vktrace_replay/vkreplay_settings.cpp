@@ -28,7 +28,7 @@
 // declared as extern in header
 vkreplayer_settings g_vkReplaySettings;
 
-static vkreplayer_settings s_defaultVkReplaySettings = {NULL, 1, 0, UINT_MAX, true, false, NULL, NULL, NULL, NULL, NULL, TRUE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, 50, FALSE, FALSE, NULL, FALSE, 0};
+static vkreplayer_settings s_defaultVkReplaySettings = {NULL, 1, 0, UINT_MAX, true, false, NULL, NULL, NULL, NULL, NULL, TRUE, TRUE, FALSE, FALSE, FALSE, FALSE, FALSE, 90, FALSE, FALSE, NULL, FALSE, FALSE, FALSE, FALSE, 0};
 
 vktrace_SettingInfo g_vk_settings_info[] = {
     {"o",
@@ -181,6 +181,27 @@ vktrace_SettingInfo g_vk_settings_info[] = {
      {&s_defaultVkReplaySettings.forceSyncImgIdx},
      TRUE,
      "Force sync the acquire next image index."},
+    {"dascr",
+     "disableAsCaptureReplay",
+     VKTRACE_SETTING_BOOL,
+     {&g_vkReplaySettings.disableAsCaptureReplay},
+     {&s_defaultVkReplaySettings.disableAsCaptureReplay},
+     TRUE,
+     "Disable acceleration structure capture replay feature."},
+    {"dbcr",
+     "disableBufferCaptureReplay",
+     VKTRACE_SETTING_BOOL,
+     {&g_vkReplaySettings.disableBufferCaptureReplay},
+     {&s_defaultVkReplaySettings.disableBufferCaptureReplay},
+     TRUE,
+     "Disable buffer capture replay feature."},
+    {"frq",
+     "forceRayQuery",
+     VKTRACE_SETTING_BOOL,
+     {&g_vkReplaySettings.forceRayQuery},
+     {&s_defaultVkReplaySettings.forceRayQuery},
+     TRUE,
+     "Force to replay this trace file as a ray-query one."},
     {"pmm",
      "perfMeasuringMode",
      VKTRACE_SETTING_UINT,

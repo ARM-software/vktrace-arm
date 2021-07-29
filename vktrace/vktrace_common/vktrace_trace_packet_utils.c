@@ -235,6 +235,65 @@ char* find_available_filename(const char* originalFilename, BOOL bForceOverwrite
     return pOutputFilename;
 }
 
+deviceFeatureSupport query_device_feature(PFN_vkGetPhysicalDeviceFeatures2KHR GetPhysicalDeviceFeatures, VkPhysicalDevice physicalDevice, const VkDeviceCreateInfo *pCreateInfo) {
+    deviceFeatureSupport dfs;
+    memset(&dfs, 0, sizeof(dfs));
+    if (GetPhysicalDeviceFeatures == NULL) {
+        return dfs;
+    }
+    if (pCreateInfo->pNext == NULL) {
+        return dfs;
+    }
+    VkPhysicalDeviceFeatures2 pdf2;
+    memset(&pdf2, 0, sizeof(pdf2));
+    pdf2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+    VkPhysicalDeviceBufferDeviceAddressFeatures pdbf;
+    memset(&pdbf, 0, sizeof(pdbf));
+    pdbf.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES;
+    VkPhysicalDeviceVulkan12Features pdvf12;
+    memset(&pdvf12, 0, sizeof(pdvf12));
+    pdvf12.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
+    VkPhysicalDeviceAccelerationStructureFeaturesKHR pdasf;
+    memset(&pdasf, 0, sizeof(pdasf));
+    pdasf.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR;
+    bool supportVk12 = false;
+    VkApplicationInfo* pNext = (VkApplicationInfo*)(pCreateInfo->pNext);
+    while (pNext != NULL) {
+        switch(pNext->sType) {
+            case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES: {
+                void* pNext = pdf2.pNext;
+                pdf2.pNext = &pdvf12;
+                pdvf12.pNext = pNext;
+                supportVk12 = true;
+                break;
+            }
+            case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES: {
+                void* pNext = pdf2.pNext;
+                pdf2.pNext = &pdbf;
+                pdbf.pNext = pNext;
+                break;
+            }
+            case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR: {
+                void* pNext = pdf2.pNext;
+                pdf2.pNext = &pdasf;
+                pdasf.pNext = pNext;
+                break;
+            }
+            default:
+                break;
+        }
+        pNext = (VkApplicationInfo*)(pNext->pNext);
+    }
+    GetPhysicalDeviceFeatures(physicalDevice, &pdf2);
+    dfs.accelerationStructureCaptureReplay = pdasf.accelerationStructureCaptureReplay;
+    if (supportVk12) {
+        dfs.bufferDeviceAddressCaptureReplay = pdvf12.bufferDeviceAddressCaptureReplay;
+    } else {
+        dfs.bufferDeviceAddressCaptureReplay = pdbf.bufferDeviceAddressCaptureReplay;
+    }
+    return dfs;
+}
+
 //=============================================================================
 // Methods for creating, populating, and writing trace packets
 
@@ -353,7 +412,8 @@ void vktrace_add_pnext_structs_to_trace_packet(vktrace_trace_packet_header* pHea
     while (((VkApplicationInfo*)pIn)->pNext) {
         ppOutNext = (void**)&(((VkApplicationInfo*)pOut)->pNext);
         pInNext = (void*)((VkApplicationInfo*)pIn)->pNext;
-        size_t size = get_struct_size(pInNext);
+        size_t size = 0;
+        get_struct_size(pInNext, &size);
         if (size > 0) {
             vktrace_add_buffer_to_trace_packet(pHeader, ppOutNext, size, pInNext);
             // TODO: Might be able codegen this switch statement
@@ -460,7 +520,7 @@ void vktrace_add_pnext_structs_to_trace_packet(vktrace_trace_packet_header* pHea
                     AddPointerWithCountToTracebuffer(VkDescriptorSetLayoutBindingFlagsCreateInfoEXT, VkDescriptorBindingFlagsEXT,
                                                      pBindingFlags, bindingCount);
                 case VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR:
-                    AddPointerToTracebuffer(VkWriteDescriptorSetAccelerationStructureKHR, VkAccelerationStructureKHR, pAccelerationStructures);
+                    AddPointerWithCountToTracebuffer(VkWriteDescriptorSetAccelerationStructureKHR, VkAccelerationStructureKHR, pAccelerationStructures, accelerationStructureCount);
                 break;
 
                 default:
@@ -500,7 +560,7 @@ void vktrace_write_trace_packet(const vktrace_trace_packet_header* pHeader, File
     }
 }
 
-void vktrace_tag_trace_packet(vktrace_trace_packet_header* pHeader, packet_tag tag) {
+void vktrace_tag_trace_packet(vktrace_trace_packet_header* pHeader, uint32_t tag) {
     const uint32_t tag_word_size = sizeof(uint32_t);
     uint64_t offset_to_tag_word = pHeader->size - tag_word_size;
     uint32_t* tag_word = (uint32_t*)(((unsigned char*)pHeader) + offset_to_tag_word);
@@ -569,6 +629,24 @@ void* vktrace_trace_packet_interpret_buffer_pointer(vktrace_trace_packet_header*
     return buffer_location;
 }
 
+int getVertexIndexStride(VkIndexType type) {
+    int stride = 0;
+    switch(type) {
+    case VK_INDEX_TYPE_UINT8_EXT:
+        stride = 8;
+        break;
+    case VK_INDEX_TYPE_UINT16:
+        stride = 16;
+        break;
+    case VK_INDEX_TYPE_UINT32:
+        stride = 32;
+        break;
+    default:
+        assert(VK_INDEX_TYPE_NONE_KHR == type);
+    }
+    return stride;
+}
+
 void add_VkApplicationInfo_to_packet(vktrace_trace_packet_header* pHeader, VkApplicationInfo** ppStruct,
                                      const VkApplicationInfo* pInStruct) {
     vktrace_add_buffer_to_trace_packet(pHeader, (void**)ppStruct, sizeof(VkApplicationInfo), pInStruct);
@@ -585,7 +663,7 @@ void add_VkApplicationInfo_to_packet(vktrace_trace_packet_header* pHeader, VkApp
 }
 
 void add_VkAccelerationStructureBuildGeometryInfoKHR_to_packet(vktrace_trace_packet_header* pHeader, VkAccelerationStructureBuildGeometryInfoKHR** ppStruct,
-                                        VkAccelerationStructureBuildGeometryInfoKHR* pInStruct, bool addSelf, int *instanceSizes, bool hostAddr) {
+                                        VkAccelerationStructureBuildGeometryInfoKHR* pInStruct, bool addSelf, const VkAccelerationStructureBuildRangeInfoKHR* pBuildRangeInfos, bool hostAddr, char* geometryDataBit) {
     if (addSelf) {
         vktrace_add_buffer_to_trace_packet(pHeader, (void**)ppStruct, sizeof(VkAccelerationStructureBuildGeometryInfoKHR), pInStruct);
     }
@@ -597,11 +675,39 @@ void add_VkAccelerationStructureBuildGeometryInfoKHR_to_packet(vktrace_trace_pac
     if ((*ppStruct)->pGeometries) {
         for (i = 0; i < pInStruct->geometryCount; i++) {
             vktrace_add_pnext_structs_to_trace_packet(pHeader, (void*)&(*ppStruct)->pGeometries[i], (void*)&pInStruct->pGeometries[i]);
-            if (pInStruct->pGeometries[i].geometryType == VK_GEOMETRY_TYPE_INSTANCES_KHR && instanceSizes && hostAddr) {
-                VkAccelerationStructureGeometryDataKHR *pDst = (VkAccelerationStructureGeometryDataKHR*)&((*ppStruct)->pGeometries[i].geometry);
-                VkAccelerationStructureGeometryDataKHR *pSrc = (VkAccelerationStructureGeometryDataKHR*)&((pInStruct)->pGeometries[i].geometry);
-                vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pDst->instances.data.hostAddress), sizeof(VkAccelerationStructureInstanceKHR) * instanceSizes[i], pSrc->instances.data.hostAddress);
+            VkAccelerationStructureGeometryDataKHR *pDst = (VkAccelerationStructureGeometryDataKHR*)&((*ppStruct)->pGeometries[i].geometry);
+            VkAccelerationStructureGeometryDataKHR *pSrc = (VkAccelerationStructureGeometryDataKHR*)&((pInStruct)->pGeometries[i].geometry);
+            if (pInStruct->pGeometries[i].geometryType == VK_GEOMETRY_TYPE_INSTANCES_KHR && pBuildRangeInfos != NULL && hostAddr) {
+                vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pDst->instances.data.hostAddress), sizeof(VkAccelerationStructureInstanceKHR) * pBuildRangeInfos[i].primitiveCount, pSrc->instances.data.hostAddress);
                 vktrace_finalize_buffer_address(pHeader, (void**)&(pDst->instances.data.hostAddress));
+            }
+            else if (pInStruct->pGeometries[i].geometryType == VK_GEOMETRY_TYPE_TRIANGLES_KHR && pBuildRangeInfos != NULL && hostAddr) {
+                if (geometryDataBit[i] & AS_GEOMETRY_TRIANGLES_VERTEXDATA_BIT) {
+                    int vbOffset = pBuildRangeInfos[i].primitiveOffset + pSrc->triangles.vertexStride * pBuildRangeInfos[i].firstVertex;
+                    int vbUsedSize = pSrc->triangles.vertexStride * pBuildRangeInfos[i].primitiveCount * 3;
+                    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pDst->triangles.vertexData.hostAddress), vbUsedSize, ((char*)pSrc->triangles.vertexData.hostAddress) + vbOffset);
+                    vktrace_finalize_buffer_address(pHeader, (void**)&(pDst->triangles.vertexData.hostAddress));
+                }
+                if (geometryDataBit[i] & AS_GEOMETRY_TRIANGLES_INDEXDATA_BIT) {
+                    int ibOffset = pBuildRangeInfos[i].primitiveOffset;
+                    int ibUsedSize = pBuildRangeInfos[i].primitiveCount * getVertexIndexStride(pSrc->triangles.indexType) * 3;
+                    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pDst->triangles.indexData.hostAddress), ibUsedSize, ((char*)pSrc->triangles.indexData.hostAddress) + ibOffset);
+                    vktrace_finalize_buffer_address(pHeader, (void**)&(pDst->triangles.indexData.hostAddress));
+                }
+                if (geometryDataBit[i] & AS_GEOMETRY_TRIANGLES_TRANSFORMDATA_BIT) {
+                    int transOffset = pBuildRangeInfos[i].transformOffset;
+                    int transUsedSize = sizeof(VkTransformMatrixKHR);
+                    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pDst->triangles.transformData.hostAddress), transUsedSize, ((char*)pSrc->triangles.transformData.hostAddress) + transOffset);
+                    vktrace_finalize_buffer_address(pHeader, (void**)&(pDst->triangles.transformData.hostAddress));
+                }
+            }
+            else if (pInStruct->pGeometries[i].geometryType == VK_GEOMETRY_TYPE_AABBS_KHR && pBuildRangeInfos != NULL && hostAddr) {
+                if (geometryDataBit[i] & AS_GEOMETRY_AABB_DATA_BIT) {
+                    int aabbOffset = pBuildRangeInfos[i].primitiveOffset;
+                    int aabbUsedSize = pBuildRangeInfos[i].primitiveCount * pSrc->aabbs.stride;
+                    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pDst->aabbs.data.hostAddress), aabbUsedSize, ((char*)pSrc->aabbs.data.hostAddress) + aabbOffset);
+                    vktrace_finalize_buffer_address(pHeader, (void**)&(pDst->aabbs.data.hostAddress));
+                }
             }
         }
     }

@@ -53,7 +53,7 @@ class ReplayDisplayImp {
     virtual ~ReplayDisplayImp() {}
     virtual int init(const unsigned int gpu_idx) = 0;
     virtual int create_window(const unsigned int width, const unsigned int height) = 0;
-    virtual void resize_window(const unsigned int width, const unsigned int height) = 0;
+    virtual void resize_window(const unsigned int width, const unsigned int height, VkSurfaceTransformFlagBitsKHR rot) = 0;
     virtual void process_event() = 0;
     virtual bool get_pause_status() = 0;
     virtual void set_pause_status(bool pause) = 0;

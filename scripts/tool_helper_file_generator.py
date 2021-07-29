@@ -345,7 +345,7 @@ class ToolHelperFileOutputGenerator(OutputGenerator):
     def GenerateStructSizeHeader(self):
         outstring = ''
         outstring += 'size_t get_struct_chain_size(const void* struct_ptr);\n'
-        outstring += 'size_t get_struct_size(const void* struct_ptr);\n'
+        outstring += 'size_t get_struct_size(const void* struct_ptr, size_t* next_struct_size);\n'
         for item in self.structMembers:
             lower_case_name = item.name.lower()
             if item.ifdef_protect is not None:
@@ -404,13 +404,14 @@ class ToolHelperFileOutputGenerator(OutputGenerator):
     #
     # Build the header of the get_struct_size function
     def GenerateStructSizePreamble(self):
-        preamble = '\nsize_t get_struct_size(const void* struct_ptr) {\n'
+        preamble = '\nsize_t get_struct_size(const void* struct_ptr, size_t* next_struct_size) {\n'
         preamble += '    switch (((VkApplicationInfo*)struct_ptr)->sType) {\n'
         return preamble
     #
     # Build the footer of the get_struct_size function
     def GenerateStructSizePostamble(self):
         postamble  = '    default:\n'
+        postamble += '        *next_struct_size = 0;\n'
         postamble += '        return(0);\n'
         postamble += '    }\n'
         postamble += '}'
@@ -436,6 +437,7 @@ class ToolHelperFileOutputGenerator(OutputGenerator):
                 chain_size += '                break;\n'
                 chain_size += '            }\n'
                 struct_size += '    case %s: \n' % self.structTypes[item.name].value
+                struct_size += '        *next_struct_size = sizeof(%s);\n' % item.name
                 struct_size += '        return vk_size_%s((%s*)struct_ptr);\n' % (item.name.lower(), item.name)
             struct_size_funcs += 'size_t vk_size_%s(const %s* struct_ptr) { \n' % (item.name.lower(), item.name)
             struct_size_funcs += '    size_t struct_size = 0;\n'

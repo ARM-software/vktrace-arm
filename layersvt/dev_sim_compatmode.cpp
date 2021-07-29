@@ -303,8 +303,99 @@ void ClampExtendedDevFeatures(const std::unordered_map<uint32_t, ExtendedFeature
                 }
             }
             break;
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MULTIVIEW_FEATURES:
+            {
+                VkPhysicalDeviceMultiviewFeatures& dst = *reinterpret_cast<VkPhysicalDeviceMultiviewFeatures*>(pDummy);
+                if (features.find(pDummy->sType) != features.end()) {
+                    const VkPhysicalDeviceMultiviewFeatures& src = features.at(pDummy->sType).multiview_feature;
+                    CLAMP_BOOL_VALUE(multiview);
+                    CLAMP_BOOL_VALUE(multiviewGeometryShader);
+                    CLAMP_BOOL_VALUE(multiviewTessellationShader);
+                }
+            }
+            break;
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SAMPLER_YCBCR_CONVERSION_FEATURES:
+            {
+                VkPhysicalDeviceSamplerYcbcrConversionFeatures& dst = *reinterpret_cast<VkPhysicalDeviceSamplerYcbcrConversionFeatures*>(pDummy);
+                if (features.find(pDummy->sType) != features.end()) {
+                    const VkPhysicalDeviceSamplerYcbcrConversionFeatures& src = features.at(pDummy->sType).sampler_ycbcr_conv_feature;
+                    CLAMP_BOOL_VALUE(samplerYcbcrConversion);
+                }
+            }
+            break;
         default:
-            ErrorPrintf("Unhandled extension %d", pDummy->sType);
+            ErrorPrintf("Unhandled extension feature %d", pDummy->sType);
+            break;
+        }
+        pNext = const_cast<void*>(pDummy->pNext);
+    }
+}
+
+void ClampExtendedDevProperties(const std::unordered_map<uint32_t, ExtendedProperty>& properties, void* pNext) {
+    while(pNext) {
+        VkApplicationInfo* pDummy = (VkApplicationInfo*)pNext;
+        switch (pDummy->sType)
+        {
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_PROPERTIES_KHR:
+            {
+                VkPhysicalDeviceAccelerationStructurePropertiesKHR& dst = *reinterpret_cast<VkPhysicalDeviceAccelerationStructurePropertiesKHR*>(pDummy);
+                if (properties.find(pDummy->sType) != properties.end()) {
+                    const VkPhysicalDeviceAccelerationStructurePropertiesKHR& src = properties.at(pDummy->sType).acceleration_structure_prop;
+                    CLAMP_TO_SMALL_VALUE(maxGeometryCount);
+                    CLAMP_TO_SMALL_VALUE(maxInstanceCount);
+                    CLAMP_TO_SMALL_VALUE(maxPrimitiveCount);
+                    CLAMP_TO_SMALL_VALUE(maxPerStageDescriptorAccelerationStructures);
+                    CLAMP_TO_SMALL_VALUE(maxPerStageDescriptorUpdateAfterBindAccelerationStructures);
+                    CLAMP_TO_SMALL_VALUE(maxDescriptorSetAccelerationStructures);
+                    CLAMP_TO_SMALL_VALUE(maxDescriptorSetUpdateAfterBindAccelerationStructures);
+                    CLAMP_TO_LARGE_VALUE(minAccelerationStructureScratchOffsetAlignment);
+                }
+            }
+            break;
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_MEMORY_HOST_PROPERTIES_EXT:
+            {
+                VkPhysicalDeviceExternalMemoryHostPropertiesEXT& dst = *reinterpret_cast<VkPhysicalDeviceExternalMemoryHostPropertiesEXT*>(pDummy);
+                if (properties.find(pDummy->sType) != properties.end()) {
+                    const VkPhysicalDeviceExternalMemoryHostPropertiesEXT& src = properties.at(pDummy->sType).external_memory_host_prop;
+                    CLAMP_TO_LCM_VALUE(minImportedHostPointerAlignment);
+                }
+            }
+            break;
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TRANSFORM_FEEDBACK_PROPERTIES_EXT:
+            {
+                VkPhysicalDeviceTransformFeedbackPropertiesEXT& dst = *reinterpret_cast<VkPhysicalDeviceTransformFeedbackPropertiesEXT*>(pDummy);
+                if (properties.find(pDummy->sType) != properties.end()) {
+                    const VkPhysicalDeviceTransformFeedbackPropertiesEXT& src = properties.at(pDummy->sType).transform_feedback_prop;
+                    CLAMP_TO_SMALL_VALUE(maxTransformFeedbackStreams);
+                    CLAMP_TO_SMALL_VALUE(maxTransformFeedbackBuffers);
+                    CLAMP_TO_SMALL_VALUE(maxTransformFeedbackBufferSize);
+                    CLAMP_TO_SMALL_VALUE(maxTransformFeedbackStreamDataSize);
+                    CLAMP_TO_SMALL_VALUE(maxTransformFeedbackBufferDataSize);
+                    CLAMP_TO_SMALL_VALUE(maxTransformFeedbackBufferDataStride);
+                    CLAMP_BOOL_VALUE(transformFeedbackQueries);
+                    CLAMP_BOOL_VALUE(transformFeedbackStreamsLinesTriangles);
+                    CLAMP_BOOL_VALUE(transformFeedbackRasterizationStreamSelect);
+                    CLAMP_BOOL_VALUE(transformFeedbackDraw);
+                }
+            }
+            break;
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES:
+            {
+                VkPhysicalDeviceSubgroupProperties& dst = *reinterpret_cast<VkPhysicalDeviceSubgroupProperties*>(pDummy);
+                if (properties.find(pDummy->sType) != properties.end()) {
+                    const VkPhysicalDeviceSubgroupProperties& src = properties.at(pDummy->sType).physical_device_subgroup_prop;
+                    CLAMP_BOOL_VALUE(quadOperationsInAllStages);
+                    CLAMP_TO_SMALL_VALUE(subgroupSize);
+                    CLAMP_TO_SMALL_VALUE(supportedOperations);
+                    CLAMP_TO_SMALL_VALUE(supportedStages);
+                }
+            }
+            break;
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES:
+            // ignore
+            break;
+        default:
+            ErrorPrintf("Unhandled extension property %d", pDummy->sType);
             break;
         }
         pNext = const_cast<void*>(pDummy->pNext);

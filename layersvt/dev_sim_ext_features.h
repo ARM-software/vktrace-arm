@@ -30,13 +30,30 @@ typedef union {
         VkStructureType    sType;
         void*              pNext;
     } base;
-    VkPhysicalDeviceASTCDecodeFeaturesEXT     astc_decode_feature;
-    VkPhysicalDeviceScalarBlockLayoutFeatures scalar_block_layout_feature;
-    VkPhysicalDeviceShaderFloat16Int8Features shader_float16_int8_feature;
-    VkPhysicalDevice16BitStorageFeatures      bit16_storage_feature;
+    VkPhysicalDeviceASTCDecodeFeaturesEXT           astc_decode_feature;
+    VkPhysicalDeviceScalarBlockLayoutFeatures       scalar_block_layout_feature;
+    VkPhysicalDeviceShaderFloat16Int8Features       shader_float16_int8_feature;
+    VkPhysicalDevice16BitStorageFeatures            bit16_storage_feature;
+    VkPhysicalDeviceMultiviewFeatures               multiview_feature;
+    VkPhysicalDeviceSamplerYcbcrConversionFeatures  sampler_ycbcr_conv_feature;
+    // Todo: Add more extended features here
 } ExtendedFeature;
+
+typedef union {
+    struct {
+        VkStructureType    sType;
+        void*              pNext;
+    } base;
+    VkPhysicalDeviceAccelerationStructurePropertiesKHR  acceleration_structure_prop;
+    VkPhysicalDeviceExternalMemoryHostPropertiesEXT     external_memory_host_prop;
+    VkPhysicalDeviceTransformFeedbackPropertiesEXT      transform_feedback_prop;
+    VkPhysicalDeviceSubgroupProperties                  physical_device_subgroup_prop;
+    // Todo: Add more extended properties here
+} ExtendedProperty;
 
 VkStructureType ext_feature_name_to_stype(const std::string& ext_feat_name);
 void get_extension_feature(VkStructureType stype, const Json::Value& value, ExtendedFeature& feature);
+VkStructureType ext_property_name_to_stype(const std::string& ext_prop_name);
+void get_extension_property(VkStructureType stype, const Json::Value& value, ExtendedProperty& property);
 
 #endif // _DEV_SIM_EXT_FEATURES_H_

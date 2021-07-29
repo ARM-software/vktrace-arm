@@ -49,7 +49,7 @@
 #include "decompressor.h"
 #include <json/json.h>
 
-vkreplayer_settings replaySettings = {NULL, 1, 0, UINT_MAX, true, false, NULL, NULL, NULL, NULL, NULL, TRUE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, 50, FALSE, FALSE, NULL, FALSE, 0};
+vkreplayer_settings replaySettings = {NULL, 1, 0, UINT_MAX, true, false, NULL, NULL, NULL, NULL, NULL, TRUE, TRUE, FALSE, FALSE, FALSE, FALSE, FALSE, 90, FALSE, FALSE, NULL, FALSE, FALSE, FALSE, 0};
 extern vkReplay* g_replay;
 static decompressor* g_decompressor = nullptr;
 
@@ -252,6 +252,27 @@ vktrace_SettingInfo g_settings_info[] = {
      {&replaySettings.forceSyncImgIdx},
      TRUE,
      "Force sync the acquire next image index."},
+    {"dascr",
+     "disableAsCaptureReplay",
+     VKTRACE_SETTING_BOOL,
+     {&replaySettings.disableAsCaptureReplay},
+     {&replaySettings.disableAsCaptureReplay},
+     TRUE,
+     "Disable acceleration structure capture replay feature."},
+    {"dbcr",
+     "disableBufferCaptureReplay",
+     VKTRACE_SETTING_BOOL,
+     {&replaySettings.disableBufferCaptureReplay},
+     {&replaySettings.disableBufferCaptureReplay},
+     TRUE,
+     "Disable buffer capture replay feature."},
+    {"frq",
+     "forceRayQuery",
+     VKTRACE_SETTING_BOOL,
+     {&replaySettings.forceRayQuery},
+     {&replaySettings.forceRayQuery},
+     TRUE,
+     "Force to replay this trace file as a ray-query one."},
     {"pmm",
      "perfMeasuringMode",
      VKTRACE_SETTING_UINT,
@@ -261,8 +282,7 @@ vktrace_SettingInfo g_settings_info[] = {
      "Set the performance measuring mode, 0 - off, 1 - on."}
 };
 
-vktrace_SettingGroup g_replaySettingGroup = {"vkreplay", sizeof(g_settings_info) / sizeof(g_settings_info[0]), &g_settings_info[0]};
-bool g_pOptionsOverridedByCmd[sizeof(g_settings_info) / sizeof(g_settings_info[0])];
+vktrace_SettingGroup g_replaySettingGroup = {"vkreplay", sizeof(g_settings_info) / sizeof(g_settings_info[0]), &g_settings_info[0], nullptr};
 
 
 static vktrace_replay::vktrace_trace_packet_replay_library* g_replayer_interface = NULL;
@@ -323,7 +343,11 @@ int main_loop(vktrace_replay::ReplayDisplay display, Sequencer& seq, vktrace_tra
     if (start_frame == 0) {
         if (replaySettings.preloadTraceFile) {
             vktrace_LogAlways("Preloading trace file...");
-            seq.start_preload(replayerArray, g_decompressor);
+            bool success = seq.start_preload(replayerArray, g_decompressor);
+            if (!success) {
+               vktrace_LogAlways("The chunk count is 0, won't use preloading to replay.");
+               replaySettings.preloadTraceFile =  FALSE;
+            }
         }
         timer_started = true;
         vktrace_LogAlways("================== Start timer (Frame: %llu) ==================", start_frame);
@@ -346,7 +370,7 @@ int main_loop(vktrace_replay::ReplayDisplay display, Sequencer& seq, vktrace_tra
             switch (packet->packet_id) {
                 case VKTRACE_TPI_MESSAGE:
 #if defined(ANDROID) || !defined(ARM_ARCH)
-                    if (replaySettings.preloadTraceFile) {
+                    if (replaySettings.preloadTraceFile && timerStarted()) {
                         msgPacket = (vktrace_trace_packet_message*)packet->pBody;
                     } else {
                         msgPacket = vktrace_interpret_body_as_trace_packet_message(packet);
@@ -386,7 +410,11 @@ int main_loop(vktrace_replay::ReplayDisplay display, Sequencer& seq, vktrace_tra
                         seq.get_bookmark(startingPacket);
                         if (replaySettings.preloadTraceFile) {
                             vktrace_LogAlways("Preloading trace file...");
-                            seq.start_preload(replayerArray, g_decompressor);
+                            bool success = seq.start_preload(replayerArray, g_decompressor);
+                            if (!success) {
+                                vktrace_LogAlways("The chunk count is 0, won't use preloading to replay.");
+                                replaySettings.preloadTraceFile =  FALSE;
+                            }
                         }
                         timer_started = true;
                         start_time = vktrace_get_time();
@@ -464,7 +492,7 @@ int main_loop(vktrace_replay::ReplayDisplay display, Sequencer& seq, vktrace_tra
     timer_started = false;
     g_replayer_interface->SetInFrameRange(false);
     g_replayer_interface->OnTerminate();
-    vktrace_LogAlways("================== End timer (Frame: %llu) ==================", (end_frame - 1));
+    vktrace_LogAlways("================== End timer (Frame: %llu) ==================", end_frame);
     if (end_time > start_time) {
         double fps = static_cast<double>(totalLoopFrames) / (end_time - start_time) * NANOSEC_IN_ONE_SEC;
         if (g_ruiFrames) {
@@ -472,7 +500,7 @@ int main_loop(vktrace_replay::ReplayDisplay display, Sequencer& seq, vktrace_tra
         }
         vktrace_LogAlways("%f fps, %f seconds, %" PRIu64 " frame%s, %" PRIu64 " loop%s, framerange %" PRId64 "-%" PRId64, fps,
                           static_cast<double>(end_time - start_time) / NANOSEC_IN_ONE_SEC, totalLoopFrames, totalLoopFrames > 1 ? "s" : "",
-                          totalLoops, totalLoops > 1 ? "s" : "", start_frame, end_frame - 1);
+                          totalLoops, totalLoops > 1 ? "s" : "", start_frame, end_frame);
         vktrace_LogAlways("start frame at %.6f, end frame at %.6f [ perf arg: --time %.6f,%.6f ]",
                           static_cast<double>(start_time) / NANOSEC_IN_ONE_SEC,
                           static_cast<double>(end_time) / NANOSEC_IN_ONE_SEC,
@@ -631,7 +659,7 @@ static int vktrace_SettingGroup_init_from_metadata(const Json::Value &replay_opt
         for (settingIndex = 0; settingIndex < num_settings; settingIndex++) {
             const char* pSettingName = pSettings[settingIndex].pShortName;
 
-            if (pSettingName != NULL && g_pOptionsOverridedByCmd[settingIndex] == false && curArg == pSettingName) {
+            if (pSettingName != NULL && g_replaySettingGroup.pOptionsOverridedByCmd[settingIndex] == false && curArg == pSettingName) {
                 if (vktrace_SettingInfo_parse_value(&pSettings[settingIndex], curValue.c_str())) {
                     const int MAX_NAME_LENGTH = 100;
                     const int MAX_VALUE_LENGTH = 100;
@@ -672,8 +700,18 @@ static void readMetaData(vktrace_trace_file_header* pFileHeader) {
                     vktrace_LogError("readMetaData(): Failed to parse the meta data json string");
                 }
                 Json::Value replay_options = meda_data_json["ReplayOptions"];
-
                 vktrace_SettingGroup_init_from_metadata(replay_options);
+
+                if (meda_data_json.isMember("deviceFeatures")) {
+                    Json::Value device = meda_data_json["deviceFeatures"];
+                    int deviceCount = device["device"].size();
+                    extern std::unordered_map<VkDevice, deviceFeatureSupport> g_TraceDeviceToDeviceFeatures;
+                    for(unsigned int i = 0; i < deviceCount; i++){
+                        VkDevice traceDevice = (VkDevice)std::strtoul(device["device"][i]["deviceHandle"].asCString(), 0, 16);
+                        deviceFeatureSupport deviceFeatures = {device["device"][i]["accelerationStructureCaptureReplay"].asUInt(), device["device"][i]["bufferDeviceAddressCaptureReplay"].asUInt()};
+                        g_TraceDeviceToDeviceFeatures[traceDevice] = deviceFeatures;
+                    }
+                }
             }
             delete[] meta_data_json_str;
         }
@@ -691,9 +729,9 @@ int vkreplay_main(int argc, char** argv, vktrace_replay::ReplayDisplayImp* pDisp
     vktrace_LogSetLevel(VKTRACE_LOG_ERROR);
 
     // apply settings from cmd-line args
-    int setting_size = sizeof(g_settings_info) / sizeof(g_settings_info[0]);
-    std::fill(g_pOptionsOverridedByCmd, g_pOptionsOverridedByCmd + setting_size, false);
-    if (vktrace_SettingGroup_init_from_cmdline(&g_replaySettingGroup, argc, argv, &replaySettings.pTraceFilePath, g_pOptionsOverridedByCmd) != 0) {
+    std::vector<BOOL> optionsOverridedByCmd(g_replaySettingGroup.numSettings, false);
+    g_replaySettingGroup.pOptionsOverridedByCmd = optionsOverridedByCmd.data();
+    if (vktrace_SettingGroup_init_from_cmdline(&g_replaySettingGroup, argc, argv, &replaySettings.pTraceFilePath) != 0) {
         // invalid options specified
         if (pAllSettings != NULL) {
             vktrace_SettingGroup_Delete_Loaded(&pAllSettings, &numAllSettings);
@@ -705,7 +743,7 @@ int vkreplay_main(int argc, char** argv, vktrace_replay::ReplayDisplayImp* pDisp
         vktrace_LogError("Bad loop frame range, the end frame number must be greater than start frame number");
         return -1;
     }
-    if (replaySettings.memoryPercentage >= 90 || replaySettings.memoryPercentage == 0) {
+    if (replaySettings.memoryPercentage > 100 || replaySettings.memoryPercentage == 0) {
         vktrace_LogError("Bad preload memory Percentage");
         return -1;
     }
@@ -852,6 +890,12 @@ int vkreplay_main(int argc, char** argv, vktrace_replay::ReplayDisplayImp* pDisp
         vktrace_free(pTraceFile);
         vktrace_free(traceFile);
         return -1;
+    }
+
+    extern bool g_hasAsApi;
+    g_hasAsApi = (fileHeader.bit_flags & VKTRACE_USE_ACCELERATION_STRUCTURE_API_BIT) ? true : false;
+    if (fileHeader.trace_file_version == VKTRACE_TRACE_FILE_VERSION_10 || replaySettings.forceRayQuery == TRUE) {
+        g_hasAsApi = true;
     }
 
     // set global version num

@@ -95,7 +95,7 @@ class vkDisplayXcb : public vktrace_replay::ReplayDisplayImp {
     ~vkDisplayXcb();
     int init(const unsigned int gpu_idx) override;
     int create_window(const unsigned int width, const unsigned int height) override;
-    void resize_window(const unsigned int width, const unsigned int height) override;
+    void resize_window(const unsigned int width, const unsigned int height, VkSurfaceTransformFlagBitsKHR rot) override;
     void process_event() override;
     bool get_pause_status() override { return m_pause; }
     void set_pause_status(bool pause) override { m_pause = pause; }
@@ -145,7 +145,7 @@ class vkDisplayWayland : public vktrace_replay::ReplayDisplayImp {
     ~vkDisplayWayland();
     int init(const unsigned int gpu_idx) override;
     int create_window(const unsigned int width, const unsigned int height) override;
-    void resize_window(const unsigned int width, const unsigned int height) override;
+    void resize_window(const unsigned int width, const unsigned int height, VkSurfaceTransformFlagBitsKHR rot) override;
     void process_event() override;
     bool get_pause_status() override { return m_pause; }
     void set_pause_status(bool pause) override { m_pause = pause; }
@@ -229,7 +229,7 @@ class vkDisplayAndroid : public vktrace_replay::ReplayDisplayImp {
     ~vkDisplayAndroid();
     int init(const unsigned int gpu_idx) override;
     int create_window(const unsigned int width, const unsigned int height) override;
-    void resize_window(const unsigned int width, const unsigned int height) override;
+    void resize_window(const unsigned int width, const unsigned int height, VkSurfaceTransformFlagBitsKHR rot) override;
     void process_event() override;
     bool get_pause_status() override { return m_pause; }
     void set_pause_status(bool pause) override { m_pause = pause; }
@@ -247,6 +247,7 @@ class vkDisplayAndroid : public vktrace_replay::ReplayDisplayImp {
 
     unsigned int m_windowWidth;
     unsigned int m_windowHeight;
+    VkSurfaceTransformFlagBitsKHR m_currentRot;
     std::vector<VkExtent2D> imageExtents;
     std::vector<VkImage> imageHandles;
     std::vector<VkDeviceMemory> imageMemory;
@@ -271,7 +272,7 @@ class vkDisplayWin32 : public vktrace_replay::ReplayDisplayImp {
     ~vkDisplayWin32();
     int init(const unsigned int gpu_idx) override;
     int create_window(const unsigned int width, const unsigned int height) override;
-    void resize_window(const unsigned int width, const unsigned int height) override;
+    void resize_window(const unsigned int width, const unsigned int height, VkSurfaceTransformFlagBitsKHR rot) override;
     void process_event() override;
     bool get_pause_status() override { return m_pause; }
     void set_pause_status(bool pause) override { m_pause = pause; }
@@ -317,7 +318,7 @@ class vkDisplay : public vktrace_replay::ReplayDisplayImp {
     ~vkDisplay();
     int init(const unsigned int gpu_idx) override;
     int create_window(const unsigned int width, const unsigned int height) override;
-    void resize_window(const unsigned int width, const unsigned int height) override;
+    void resize_window(const unsigned int width, const unsigned int height, VkSurfaceTransformFlagBitsKHR rot) override;
     void process_event() override { return; };
     bool get_pause_status() override { return m_pause; }
     void set_pause_status(bool pause) override { m_pause = pause; }

@@ -82,6 +82,8 @@ typedef struct _Trim_ObjectInfo {
             const VkAllocationCallbacks *pAllocator;
             vktrace_trace_packet_header *pEnumeratePhysicalDevicesCountPacket;
             vktrace_trace_packet_header *pEnumeratePhysicalDevicesPacket;
+            vktrace_trace_packet_header *pEnumeratePhysicalDeviceGroupsCountPacket;
+            vktrace_trace_packet_header *pEnumeratePhysicalDeviceGroupsPacket;
         } Instance;
         struct _PhysicalDevice {  // VkPhysicalDevice
             vktrace_trace_packet_header *pGetPhysicalDevicePropertiesPacket;
@@ -178,7 +180,6 @@ typedef struct _Trim_ObjectInfo {
             vktrace_trace_packet_header *pBindBufferMemoryPacket;
             vktrace_trace_packet_header *pMapMemoryPacket;
             vktrace_trace_packet_header *pUnmapMemoryPacket;
-            vktrace_trace_packet_header *pCreateASPacket;
             uint32_t queueFamilyIndex;
             VkAccessFlags accessFlags;
             VkDeviceMemory memory;
@@ -201,6 +202,7 @@ typedef struct _Trim_ObjectInfo {
             uint32_t numImages;
             uint32_t numBuffers;
             uint32_t numTexelBufferViews;
+            uint32_t numAS;
             uint32_t bindingCount;
             VkDescriptorSetLayoutBinding *pBindings;
         } DescriptorSetLayout;
@@ -274,7 +276,6 @@ typedef struct _Trim_ObjectInfo {
         } Framebuffer;
         struct _AccelerationStructure {  // VkAccelerationStructureKHR
             vktrace_trace_packet_header *pCreatePacket;
-            VkBuffer                     buffer;
             const VkAllocationCallbacks *pAllocator;
         } AccelerationStructure;
         struct _Semaphore {  // VkSemaphore
@@ -390,6 +391,7 @@ class StateTracker {
     ObjectInfo &add_DescriptorSet(VkDescriptorSet var);
     ObjectInfo &add_DescriptorUpdateTemplate(VkDescriptorUpdateTemplate var);
     ObjectInfo &add_AccelerationStructure(VkAccelerationStructureKHR var);
+    void add_BuildAccelerationStructure(vktrace_trace_packet_header* pBuildAS);
 
     ObjectInfo *get_Instance(VkInstance var);
     ObjectInfo *get_PhysicalDevice(VkPhysicalDevice var);
@@ -452,6 +454,7 @@ class StateTracker {
     void remove_DescriptorUpdateTemplate(const VkDescriptorUpdateTemplate var);
     void remove_DescriptorSet(const VkDescriptorSet var);
     void remove_AccelerationStructure(const VkAccelerationStructureKHR var);
+    void remove_BuildAccelerationStructure(vktrace_trace_packet_header* pBuildAS);
 
     static void copy_VkRenderPassCreateInfo(VkRenderPassCreateInfo *pDst, const VkRenderPassCreateInfo &src);
 
@@ -511,6 +514,7 @@ class StateTracker {
     std::unordered_map<VkDescriptorUpdateTemplate, ObjectInfo> createdDescriptorUpdateTemplates;
     std::unordered_map<VkDescriptorSet, ObjectInfo> createdDescriptorSets;
     std::unordered_map<VkAccelerationStructureKHR, ObjectInfo> createdAccelerationStructures;
+    std::vector<vktrace_trace_packet_header *> buildAccelerationStructures;
 
     std::unordered_set<VkShaderModule> destroyedShaderModules;
 };

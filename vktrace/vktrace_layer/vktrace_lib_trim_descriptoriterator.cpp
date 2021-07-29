@@ -71,6 +71,10 @@ DescriptorIterator &DescriptorIterator::operator*() const {
                 descriptorset_->pWriteDescriptorSets[current_descriptor_binding_index_].pTexelBufferView +
                 current_descriptor_index_));
         } break;
+        case VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR: {
+            descriptor_info = reinterpret_cast<DescriptorIterator *>(const_cast<VkWriteDescriptorSetAccelerationStructureKHR *>(
+                (VkWriteDescriptorSetAccelerationStructureKHR*)(descriptorset_->pWriteDescriptorSets[current_descriptor_binding_index_].pNext) + current_descriptor_index_));
+        } break;
         default:
             assert(false);  // something wrong or it's a new type
                             // that we cannot handle.

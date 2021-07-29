@@ -297,7 +297,7 @@ void vktrace_resetFilesize(FILE* pTraceFile, uint64_t decompressFilesize) {
     }
 }
 
-uint32_t vktrace_appendMetaData(FILE* pTraceFile, const std::vector<uint64_t>& injectedData) {
+uint32_t vktrace_appendMetaData(FILE* pTraceFile, const std::vector<uint64_t>& injectedData, uint64_t &meta_data_offset) {
     Json::Value root;
     Json::Value injectedCallList;
     for (uint32_t i = 0; i < injectedData.size(); i++) {
@@ -333,11 +333,76 @@ uint32_t vktrace_appendMetaData(FILE* pTraceFile, const std::vector<uint64_t>& i
                 vktrace_LogVerbose("Meta data at the file offset %llu", meta_data_file_offset);
             }
         }
+        meta_data_offset = meta_data_file_offset;
     } else {
         vktrace_LogError("File operation failed during append the meta data");
     }
     delete[] meta_data_str_json;
     return meta_data_size;
+}
+
+uint32_t vktrace_appendDeviceFeatures(FILE* pTraceFile, const std::unordered_map<VkDevice, uint32_t>& deviceToFeatures, uint64_t meta_data_offset) {
+    /**************************************************************
+     * JSON format:
+     * "deviceFeatures" : {
+     *      "device" : [
+     *          {  // device 0
+     *              "accelerationStructureCaptureReplay" : 1,
+     *              "bufferDeviceAddressCaptureReplay" : 0,
+     *              "deviceHandle" : "0xaaaaaaaa"
+     *          }
+     *          {  // device 1
+     *              "accelerationStructureCaptureReplay" : 1,
+     *              "bufferDeviceAddressCaptureReplay" : 1,
+     *              "deviceHandle" : "0xbbbbbbbb"
+     *          }
+     *      ]
+     * }
+     * ***********************************************************/
+    Json::Reader reader;
+    Json::Value metaRoot;
+    Json::Value featuresRoot;
+    char device[16] = {0};
+    for (auto e : deviceToFeatures) {
+        char deviceHandle[16] = {0};
+        sprintf(deviceHandle, "%p", e.first);
+        Json::Value features;
+        features["deviceHandle"] = Json::Value(deviceHandle);
+        features["accelerationStructureCaptureReplay"] = Json::Value((e.second & PACKET_TAG_ASCAPTUREREPLAY) ? 1 : 0);
+        features["bufferDeviceAddressCaptureReplay"] = Json::Value((e.second & PACKET_TAG_BUFFERCAPTUREREPLAY) ? 1 : 0);
+        featuresRoot["device"].append(features);
+    }
+    FileLike fileLike = {.mMode = FileLike::File, .mFile = pTraceFile};
+    vktrace_trace_packet_header hdr = {0};
+    uint32_t device_features_string_size = 0;
+    if (vktrace_FileLike_SetCurrentPosition(&fileLike, meta_data_offset)
+        && vktrace_FileLike_ReadRaw(&fileLike, &hdr, sizeof(hdr))
+        && hdr.packet_id == VKTRACE_TPI_META_DATA) {
+        uint64_t meta_data_json_str_size = hdr.size - sizeof(hdr);
+        char* meta_data_json_str = new char[meta_data_json_str_size];
+        memset(meta_data_json_str, 0, meta_data_json_str_size);
+        if (!meta_data_json_str || !vktrace_FileLike_ReadRaw(&fileLike, meta_data_json_str, meta_data_json_str_size)) {
+            vktrace_LogError("Reading meta data of the original file failed");
+            return 0;
+        }
+        reader.parse(meta_data_json_str, metaRoot);
+        metaRoot["deviceFeatures"] = featuresRoot;
+        delete[] meta_data_json_str;
+        auto metaStr = metaRoot.toStyledString();
+        hdr.size = sizeof(hdr) + metaStr.size();
+        device_features_string_size = metaStr.size() - meta_data_json_str_size;
+        vktrace_FileLike_SetCurrentPosition(&fileLike, meta_data_offset);
+        if (1 == fwrite(&hdr, sizeof(hdr), 1, pTraceFile)) {
+            fwrite(metaStr.c_str(), sizeof(char), metaStr.size(), pTraceFile);
+        }
+        auto featureStr = featuresRoot.toStyledString();
+        vktrace_LogVerbose("Device features: %s", featureStr.c_str());
+    } else {
+        vktrace_LogAlways("Dump device features failed");
+        return 0;
+    }
+
+    return device_features_string_size;
 }
 
 // ------------------------------------------------------------------------------------------------

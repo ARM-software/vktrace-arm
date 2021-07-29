@@ -594,14 +594,20 @@ class VkTraceFileOutputGenerator(OutputGenerator):
             if item in remapped_objects:
                 replay_objmapper_header += '        std::unordered_map<%s, %s>::const_iterator q = %s.find(value);\n' % (item, obj_name, mangled_name)
                 if item == 'VkDeviceMemory':
-                    replay_objmapper_header += '        if (q == %s.end()) { vktrace_LogError("Failed to remap %s."); return VK_NULL_HANDLE; }\n' % (mangled_name, item)
+                    replay_objmapper_header += '        if (q == %s.end()) { vktrace_LogError("Failed to remap %s(%%llu).", value); return VK_NULL_HANDLE; }\n' % (mangled_name, item)
                 else:
                     replay_objmapper_header += '        if (q == %s.end()) return VK_NULL_HANDLE;\n' % mangled_name
                 replay_objmapper_header += '        return q->second.replay%s;\n' % item[2:]
             else:
                 replay_objmapper_header += '        std::unordered_map<%s, %s>::const_iterator q = %s.find(value);\n' % (item, obj_name, mangled_name)
                 replay_objmapper_header += '        if (q == %s.end()) { \n' % (mangled_name)
-                replay_objmapper_header += '           vktrace_LogError("Failed to remap %s.");\n' % (item)
+                if mangled_name == 'm_accelerationstructurekhrs':
+                    replay_objmapper_header += '            if (value == 0)\n'
+                    replay_objmapper_header += '                vktrace_LogDebug("Failed to remap %s = %%llu.", value);\n' % (item)
+                    replay_objmapper_header += '            else \n'
+                    replay_objmapper_header += '                vktrace_LogError("Failed to remap %s = %%llu.", value);\n' % (item)
+                else:
+                    replay_objmapper_header += '            vktrace_LogError("Failed to remap %s = %%llu.", value);\n' % (item)
                 replay_objmapper_header += '           return VK_NULL_HANDLE; }\n'
                 replay_objmapper_header += '        return q->second;\n'
             replay_objmapper_header += '    }\n\n'
@@ -1064,8 +1070,10 @@ class VkTraceFileOutputGenerator(OutputGenerator):
                                  'DestroyDebugReportCallbackEXT',
                                  'AllocateCommandBuffers',
                                  'GetImageMemoryRequirements',
+                                 'GetImageMemoryRequirements2',
                                  'GetImageMemoryRequirements2KHR',
                                  'GetBufferMemoryRequirements',
+                                 'GetBufferMemoryRequirements2',
                                  'GetBufferMemoryRequirements2KHR',
                                  'CreateDescriptorUpdateTemplateKHR',
                                  'CreateDescriptorUpdateTemplate',
@@ -1093,7 +1101,14 @@ class VkTraceFileOutputGenerator(OutputGenerator):
                                  'CreateAccelerationStructureKHR',
                                  'BuildAccelerationStructuresKHR',
                                  'CmdBuildAccelerationStructuresKHR',
-                                 'DestroyAccelerationStructureKHR'
+                                 'CmdBuildAccelerationStructuresIndirectKHR',
+                                 'CmdCopyAccelerationStructureToMemoryKHR',
+                                 'CmdCopyMemoryToAccelerationStructureKHR',
+                                 'GetAccelerationStructureDeviceAddressKHR',
+                                 'CmdPushConstants',
+                                 'DestroyAccelerationStructureKHR',
+                                 'CopyAccelerationStructureToMemoryKHR',
+                                 'CopyMemoryToAccelerationStructureKHR'
                                  ]
         # Map APIs to functions if body is fully custom
         custom_body_dict = {'CreateInstance': self.GenReplayCreateInstance,
@@ -1359,6 +1374,13 @@ class VkTraceFileOutputGenerator(OutputGenerator):
                     replay_gen_source += '                surfRefCount--;\n'
                     replay_gen_source += '                return vktrace_replay::VKTRACE_REPLAY_SUCCESS;\n'
                     replay_gen_source += '            }\n'
+                elif 'CopyAccelerationStructureKHR' in cmdname and 'Cmd' not in cmdname:
+                    replay_gen_source += '            remappeddeferredOperation = VK_NULL_HANDLE;\n'
+                    replay_gen_source += '            const_cast<VkCopyAccelerationStructureInfoKHR*>(pPacket->pInfo)->src = m_objMapper.remap_accelerationstructurekhrs(pPacket->pInfo->src);\n'
+                    replay_gen_source += '            const_cast<VkCopyAccelerationStructureInfoKHR*>(pPacket->pInfo)->dst = m_objMapper.remap_accelerationstructurekhrs(pPacket->pInfo->dst);\n'
+                elif 'WriteAccelerationStructuresPropertiesKHR' in cmdname and 'Cmd' not in cmdname:
+                    replay_gen_source += '            void* pData = pPacket->pData;\n'
+                    replay_gen_source += '            pPacket->pData = malloc(pPacket->dataSize);\n'
                 elif 'CreateSemaphore' in cmdname:
                     replay_gen_source += '            // This code is only used to get the frame number of AndroidR UI Trace.\n'
                     replay_gen_source += '            extern vkReplay* g_pReplayer; \n'
@@ -1436,6 +1458,9 @@ class VkTraceFileOutputGenerator(OutputGenerator):
                     replay_gen_source += '                return vktrace_replay::VKTRACE_REPLAY_ERROR;\n'
                     replay_gen_source += '            }\n'
                     replay_gen_source += '            const_cast<VkSemaphoreGetFdInfoKHR*>(pPacket->pGetFdInfo)->semaphore = semaphore;\n'
+                elif 'CmdCopyAccelerationStructureKHR' in cmdname:
+                    replay_gen_source += '            const_cast<VkCopyAccelerationStructureInfoKHR*>(pPacket->pInfo)->src = m_objMapper.remap_accelerationstructurekhrs(pPacket->pInfo->src);\n'
+                    replay_gen_source += '            const_cast<VkCopyAccelerationStructureInfoKHR*>(pPacket->pInfo)->dst = m_objMapper.remap_accelerationstructurekhrs(pPacket->pInfo->dst);\n'
                 elif 'GetBufferDeviceAddress' in cmdname:
                     replay_gen_source += '            uint64_t traceBufHandle = (uint64_t)(pPacket->pInfo->buffer);\n'
                     replay_gen_source += '            const_cast<VkBufferDeviceAddressInfo*>(pPacket->pInfo)->buffer = m_objMapper.remap_buffers(pPacket->pInfo->buffer);\n'
@@ -1454,7 +1479,7 @@ class VkTraceFileOutputGenerator(OutputGenerator):
                         if 'GetBufferDeviceAddress' in cmdname or 'GetAccelerationStructureDeviceAddress' in cmdname:
                             rr_string += 'VkDeviceAddress replayDeviceAddr = '
                     else:
-                        rr_string += '    replayResult = '
+                        rr_string += 'replayResult = '
                 if cmdname == "EnumerateInstanceExtensionProperties" or cmdname == "EnumerateInstanceLayerProperties" or cmdname == "EnumerateInstanceVersion":
                     rr_string += 'vk%s(' % cmdname # TODO figure out if we need this case
                 elif isInstanceCmd(api):
@@ -1528,6 +1553,7 @@ class VkTraceFileOutputGenerator(OutputGenerator):
                     if 'allocationcallbacks' not in clean_type.lower():
                         replay_gen_source += '            m_objMapper.rm_from_%ss_map(pPacket->%s);\n' % (clean_type.lower()[2:], params[-2].name)
                 if 'DestroyDevice' in cmdname:
+                    replay_gen_source += '            m_objMapper.rm_from_devices_map(pPacket->device);\n'
                     replay_gen_source += '            m_pCBDump = NULL;\n'
                     replay_gen_source += '            m_pDSDump = NULL;\n'
                     #TODO138 : disabling snapshot
@@ -1614,21 +1640,24 @@ class VkTraceFileOutputGenerator(OutputGenerator):
                     replay_gen_source += '                m_CallStats[call_id].total++;\n'
                     replay_gen_source += '                m_CallStats[call_id].injectedCallCount++;\n'
                     replay_gen_source += '                if (call_id && replaySettings.perfMeasuringMode > 0) {\n'
-                    replay_gen_source += '                    VkDebugUtilsObjectTagInfoEXT tagInfo = {};\n'
-                    replay_gen_source += '                    tagInfo.sType = VK_STRUCTURE_TYPE_MAX_ENUM;\n'
-                    replay_gen_source += '                    tagInfo.tagSize = 1;\n'
-                    replay_gen_source += '                    m_vkDeviceFuncs.SetDebugUtilsObjectTagEXT(remappeddevice, &tagInfo);\n'
+                    replay_gen_source += '                    VkPresentInfoKHR PresentInfo = {};\n'
+                    replay_gen_source += '                    PresentInfo.sType = VK_STRUCTURE_TYPE_MAX_ENUM;\n'
+                    replay_gen_source += '                    PresentInfo.waitSemaphoreCount = 1;\n'
+                    replay_gen_source += '                    m_vkDeviceFuncs.QueuePresentKHR(VK_NULL_HANDLE, &PresentInfo);\n'
                     replay_gen_source += '                }\n'
                     replay_gen_source += '            } while (%s);\n' % do_while_dict[cmdname]
                     replay_gen_source += '            m_CallStats[call_id].injectedCallCount--;\n'
                     replay_gen_source += '            if (call_id && replaySettings.perfMeasuringMode > 0) {\n'
-                    replay_gen_source += '                VkDebugUtilsObjectTagInfoEXT tagInfo = {};\n'
-                    replay_gen_source += '                tagInfo.sType = VK_STRUCTURE_TYPE_MAX_ENUM;\n'
-                    replay_gen_source += '                tagInfo.tagSize = 0;\n'
-                    replay_gen_source += '                m_vkDeviceFuncs.SetDebugUtilsObjectTagEXT(remappeddevice, &tagInfo);\n'
+                    replay_gen_source += '                VkPresentInfoKHR PresentInfo = {};\n'
+                    replay_gen_source += '                PresentInfo.sType = VK_STRUCTURE_TYPE_MAX_ENUM;\n'
+                    replay_gen_source += '                PresentInfo.waitSemaphoreCount = 0;\n'
+                    replay_gen_source += '                m_vkDeviceFuncs.QueuePresentKHR(VK_NULL_HANDLE, &PresentInfo);\n'
                     replay_gen_source += '            }\n'
                     replay_gen_source += '            if (pPacket->result != VK_NOT_READY || replayResult != VK_SUCCESS)\n'
-            if ret_value:
+            if ret_value and 'GetAccelerationStructureDeviceAddressKHR' not in cmdname:
+                if 'WriteAccelerationStructuresPropertiesKHR' in cmdname and 'Cmd' not in cmdname:
+                    replay_gen_source += '            free(pPacket->pData);\n'
+                    replay_gen_source += '            pPacket->pData = pData;\n'
                 replay_gen_source += '            CHECK_RETURN_VALUE(vk%s);\n' % cmdname
             replay_gen_source += '            break;\n'
             replay_gen_source += '        }\n'
@@ -1656,6 +1685,23 @@ class VkTraceFileOutputGenerator(OutputGenerator):
         replay_gen_source += '        case VKTRACE_TPI_VK_vkCmdDrawIndexed + PREMAP_SHIFT: {\n'
         replay_gen_source += '            packet_vkCmdDrawIndexed* pPacket = (packet_vkCmdDrawIndexed*)(packet->pBody);\n'
         replay_gen_source += '            manually_replay_vkCmdDrawIndexedPremapped(pPacket);\n'
+        replay_gen_source += '            break;\n'
+        replay_gen_source += '        }\n'
+        replay_gen_source += '        case VKTRACE_TPI_VK_vkCmdCopyBufferRemapBuffer:\n'
+        replay_gen_source += '        case VKTRACE_TPI_VK_vkCmdCopyBufferRemapAS:\n'
+        replay_gen_source += '        case VKTRACE_TPI_VK_vkCmdCopyBufferRemapASandBuffer: {\n'
+        replay_gen_source += '            packet_vkCmdCopyBuffer* pPacket = (packet_vkCmdCopyBuffer*)(packet->pBody);\n'
+        replay_gen_source += '            manually_replay_vkCmdCopyBufferRemap(pPacket);\n'
+        replay_gen_source += '            break;\n'
+        replay_gen_source += '        }\n'
+        replay_gen_source += '        case VKTRACE_TPI_VK_vkFlushMappedMemoryRangesRemap: {\n'
+        replay_gen_source += '            packet_vkFlushMappedMemoryRanges* pPacket = (packet_vkFlushMappedMemoryRanges*)(packet->pBody);\n'
+        replay_gen_source += '            manually_replay_vkFlushMappedMemoryRangesRemap(pPacket);\n'
+        replay_gen_source += '            break;\n'
+        replay_gen_source += '        }\n'
+        replay_gen_source += '        case VKTRACE_TPI_VK_vkCmdPushConstantsRemap: {\n'
+        replay_gen_source += '            packet_vkCmdPushConstants* pPacket = (packet_vkCmdPushConstants*)(packet->pBody);\n'
+        replay_gen_source += '            manually_replay_vkCmdPushConstantsRemap(pPacket);\n'
         replay_gen_source += '            break;\n'
         replay_gen_source += '        }\n'
         replay_gen_source += '        default:\n'
@@ -1925,6 +1971,14 @@ class VkTraceFileOutputGenerator(OutputGenerator):
                 continue
             interp_func_body += '        case VKTRACE_TPI_VK_%s: {\n' % api.name
             interp_func_body += '            return interpret_body_as_%s(pHeader)->header;\n        }\n' % api.name
+        interp_func_body += '        case VKTRACE_TPI_VK_vkCmdCopyBufferRemapBuffer:\n'
+        interp_func_body += '        case VKTRACE_TPI_VK_vkCmdCopyBufferRemapAS:\n'
+        interp_func_body += '        case VKTRACE_TPI_VK_vkCmdCopyBufferRemapASandBuffer: {\n'
+        interp_func_body += '            return interpret_body_as_vkCmdCopyBuffer(pHeader)->header;\n        }\n'
+        interp_func_body += '        case VKTRACE_TPI_VK_vkFlushMappedMemoryRangesRemap: {\n'
+        interp_func_body += '            return interpret_body_as_vkFlushMappedMemoryRanges(pHeader)->header;\n        }\n'
+        interp_func_body += '        case VKTRACE_TPI_VK_vkCmdPushConstantsRemap: {\n'
+        interp_func_body += '            return interpret_body_as_vkCmdPushConstants(pHeader)->header;\n        }\n'
         interp_func_body += '        default:\n'
         interp_func_body += '            return NULL;\n'
         interp_func_body += '    }\n'
@@ -2744,6 +2798,9 @@ class VkTraceFileOutputGenerator(OutputGenerator):
             trim_instructions.append("                pCreateInfo->pBindings[i].descriptorType == VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER) {")
             trim_instructions.append("                    info.ObjectInfo.DescriptorSetLayout.numTexelBufferViews++;")
             trim_instructions.append("            }")
+            trim_instructions.append("            if (pCreateInfo->pBindings[i].descriptorType == VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR) {")
+            trim_instructions.append("                    info.ObjectInfo.DescriptorSetLayout.numAS++;")
+            trim_instructions.append("            }")
             trim_instructions.append("        }")
             trim_instructions.append("        if (pAllocator != NULL) {")
             trim_instructions.append("            info.ObjectInfo.DescriptorSetLayout.pAllocator = pAllocator;")
@@ -3323,6 +3380,16 @@ class VkTraceFileOutputGenerator(OutputGenerator):
         trace_vk_src += '\n'
         trace_vk_src += 'extern VKTRACE_CRITICAL_SECTION g_memInfoLock;\n'
         trace_vk_src += 'extern std::unordered_map<VkCommandBuffer, std::list<VkBuffer>> g_cmdBufferToBuffers;\n'
+        trace_vk_src += 'extern std::unordered_map<VkCommandBuffer, std::list<VkImage>> g_cmdBufferToImages;\n'
+        trace_vk_src += 'extern std::unordered_map<VkBuffer, DeviceMemory> g_bufferToDeviceMemory;\n'
+        trace_vk_src += 'extern std::unordered_map<VkImage, DeviceMemory> g_imageToDeviceMemory;\n'
+        trace_vk_src += 'extern std::unordered_map<VkCommandBuffer, std::list<VkAccelerationStructureKHR>> g_cmdBufferToAS;\n'
+        trace_vk_src += 'extern std::unordered_map<VkImageView, VkImage> g_imageViewToImage;\n'
+        trace_vk_src += 'extern std::unordered_map<VkCommandBuffer, std::list<VkDescriptorSet>> g_cmdbufferToDescriptorSets;\n'
+        trace_vk_src += 'extern std::unordered_map<VkAccelerationStructureKHR, VkDeviceAddress> g_AStoDeviceAddr;\n'
+        trace_vk_src += 'extern std::unordered_map<VkDeviceAddress, VkAccelerationStructureKHR> g_AStoDeviceAddrRev;\n'
+        trace_vk_src += 'extern std::unordered_map<VkBuffer, VkDeviceAddress> g_BuftoDeviceAddr;\n'
+        trace_vk_src += 'extern std::unordered_map<VkDeviceAddress, VkBuffer> g_BuftoDeviceAddrRev;\n'
         trace_vk_src += '\n'
         trace_vk_src += '#ifdef WIN32\n'
         trace_vk_src += 'BOOL CALLBACK InitTracer(_Inout_ PINIT_ONCE initOnce, _Inout_opt_ PVOID param, _Out_opt_ PVOID *lpContext) {\n'
@@ -3452,6 +3519,8 @@ class VkTraceFileOutputGenerator(OutputGenerator):
                                          'vkCmdBuildAccelerationStructuresKHR',
                                          'vkCreateAccelerationStructureKHR',
                                          'vkDestroyAccelerationStructureKHR',
+                                         'vkResetCommandPool',
+                                         'vkCmdCopyBuffer',
                                          # TODO: VK_EXT_display_control
                                          ]
 
@@ -3522,6 +3591,17 @@ class VkTraceFileOutputGenerator(OutputGenerator):
                 ptr_packet_update_list = self.GetPacketPtrParamList(proto.members)
                 # End of function declaration portion, begin function body
                 trace_vk_src += ' {\n'
+                if 'vkSetDebugUtilsObjectName' in proto.name or 'vkCmdBeginDebugUtilsLabel' in proto.name or 'vkCmdEndDebugUtilsLabel' in proto.name:
+                    trace_vk_src += '    // TODO: Add support for __HOOKED_%s: Only call driver without tracing for now.\n' % proto.name
+                    table_txt = 'mdd(%s)->devTable' % proto.members[0].name
+                    paramstext = '%s' % proto.members[0].name
+                    for param in proto.members[1:]:
+                        if param.name != '':
+                            paramstext += ', %s' % param.name
+                    c_call = proto.name[2:] + '(' + paramstext + ')'
+                    trace_vk_src += '    return %s.%s;\n' % (table_txt, c_call)
+                    trace_vk_src += '}\n'
+                    continue
                 trace_vk_src += '    trim::TraceLock<std::mutex> lock(g_mutex_trace);\n'
                 if 'void' not in resulttype or '*' in resulttype:
                     trace_vk_src += '    %s result;\n' % resulttype
@@ -3538,6 +3618,8 @@ class VkTraceFileOutputGenerator(OutputGenerator):
                     trace_vk_src += '    getPageGuardControlInstance().vkDestroyDevice(%s, %s);\n' % (proto.members[0].name, proto.members[1].name)
                     trace_vk_src += '    pageguardExit();\n'
                     trace_vk_src += '#endif\n'
+                if proto.name == 'vkCreateAccelerationStructureKHR':
+                    trace_vk_src += '    const_cast<VkAccelerationStructureCreateInfoKHR*>(pCreateInfo)->createFlags |= VK_ACCELERATION_STRUCTURE_CREATE_DEVICE_ADDRESS_CAPTURE_REPLAY_BIT_KHR;\n'
                 if proto.name == 'vkGetPhysicalDeviceSurfaceFormats2KHR':
                     trace_vk_src += '    if (pSurfaceFormats == nullptr && pSurfaceFormatCount != nullptr) {\n'
                     trace_vk_src += '       *pSurfaceFormatCount = 0;\n'
@@ -3596,10 +3678,99 @@ class VkTraceFileOutputGenerator(OutputGenerator):
                     trace_vk_src += '        replayCreateInfo.usage |= VK_BUFFER_USAGE_TRANSFER_DST_BIT;\n'
                     trace_vk_src += '        pCreateInfo = &replayCreateInfo;\n'
                     trace_vk_src += '    }\n'
-                elif proto.name == 'vkCmdCopyBuffer':
+                elif proto.name == 'vkCreateImageView':
+                    trace_vk_src += '#if defined(USE_PAGEGUARD_SPEEDUP) && !defined(PAGEGUARD_ADD_PAGEGUARD_ON_REAL_MAPPED_MEMORY)\n'
+                    trace_vk_src += '    if (!UseMappedExternalHostMemoryExtension()) {\n'
+                    trace_vk_src += '        g_imageViewToImage[*pView] = pCreateInfo->image;\n'
+                    trace_vk_src += '    }\n'
+                    trace_vk_src += '#endif\n'
+                elif proto.name == 'vkFreeCommandBuffers':
+                    trace_vk_src += '#if defined(USE_PAGEGUARD_SPEEDUP) && !defined(PAGEGUARD_ADD_PAGEGUARD_ON_REAL_MAPPED_MEMORY)\n'
+                    trace_vk_src += '    if (!UseMappedExternalHostMemoryExtension()) {\n'
+                    trace_vk_src += '        for (uint32_t i = 0; i < commandBufferCount; i++) {\n'
+                    trace_vk_src += '            auto bufferIt = g_cmdBufferToBuffers.find(pCommandBuffers[i]);\n'
+                    trace_vk_src += '            if (bufferIt != g_cmdBufferToBuffers.end()) {\n'
+                    trace_vk_src += '                g_cmdBufferToBuffers.erase(bufferIt);\n'
+                    trace_vk_src += '            }\n'
+                    trace_vk_src += '            auto imageIt = g_cmdBufferToImages.find(pCommandBuffers[i]);\n'
+                    trace_vk_src += '            if (imageIt != g_cmdBufferToImages.end()) {\n'
+                    trace_vk_src += '                g_cmdBufferToImages.erase(imageIt);\n'
+                    trace_vk_src += '            }\n'
+                    trace_vk_src += '            auto dsIt = g_cmdbufferToDescriptorSets.find(pCommandBuffers[i]);\n'
+                    trace_vk_src += '            if (dsIt != g_cmdbufferToDescriptorSets.end()) {\n'
+                    trace_vk_src += '                g_cmdbufferToDescriptorSets.erase(dsIt);\n'
+                    trace_vk_src += '            }\n'
+                    trace_vk_src += '            auto asIt = g_cmdBufferToAS.find(pCommandBuffers[i]);\n'
+                    trace_vk_src += '            if (asIt != g_cmdBufferToAS.end()) {\n'
+                    trace_vk_src += '                g_cmdBufferToAS.erase(asIt);\n'
+                    trace_vk_src += '            }\n'
+                    trace_vk_src += '        }\n'
+                    trace_vk_src += '    }\n'
+                    trace_vk_src += '#endif\n'
+                elif proto.name == 'vkCmdBindDescriptorSets':
+                    trace_vk_src += '#if defined(USE_PAGEGUARD_SPEEDUP) && !defined(PAGEGUARD_ADD_PAGEGUARD_ON_REAL_MAPPED_MEMORY)\n'
+                    trace_vk_src += '    if (!UseMappedExternalHostMemoryExtension()) {\n'
+                    trace_vk_src += '        for (uint32_t i = 0; i < descriptorSetCount; i++) {\n'
+                    trace_vk_src += '            g_cmdbufferToDescriptorSets[commandBuffer].push_back(pDescriptorSets[i]);\n'
+                    trace_vk_src += '        }\n'
+                    trace_vk_src += '    }\n'
+                    trace_vk_src += '#endif\n'
+                elif proto.name == 'vkDestroyImageView':
+                    trace_vk_src += '#if defined(USE_PAGEGUARD_SPEEDUP) && !defined(PAGEGUARD_ADD_PAGEGUARD_ON_REAL_MAPPED_MEMORY)\n'
+                    trace_vk_src += '    if (!UseMappedExternalHostMemoryExtension()) {\n'
+                    trace_vk_src += '        auto it = g_imageViewToImage.find(imageView);\n'
+                    trace_vk_src += '        if (it != g_imageViewToImage.end()) {\n'
+                    trace_vk_src += '            g_imageViewToImage.erase(it);\n'
+                    trace_vk_src += '        }\n'
+                    trace_vk_src += '    }\n'
+                    trace_vk_src += '#endif\n'
+                elif proto.name == 'vkBindImageMemory2KHR':
+                    trace_vk_src += '#if defined(USE_PAGEGUARD_SPEEDUP) && !defined(PAGEGUARD_ADD_PAGEGUARD_ON_REAL_MAPPED_MEMORY)\n'
+                    trace_vk_src += '    if (!UseMappedExternalHostMemoryExtension()) {\n'
+                    trace_vk_src += '        for (uint32_t i = 0; i < bindInfoCount; i++) {\n'
+                    trace_vk_src += '            DeviceMemory deviceMemory = {device, pBindInfos[i].memory};\n'
+                    trace_vk_src += '            g_imageToDeviceMemory[pBindInfos[i].image] = deviceMemory;\n'
+                    trace_vk_src += '        }\n'
+                    trace_vk_src += '    }\n'
+                    trace_vk_src += '#endif\n'
+                elif proto.name == 'vkBindBufferMemory2KHR':
+                    trace_vk_src += '#if defined(USE_PAGEGUARD_SPEEDUP) && !defined(PAGEGUARD_ADD_PAGEGUARD_ON_REAL_MAPPED_MEMORY)\n'
+                    trace_vk_src += '    if (!UseMappedExternalHostMemoryExtension()) {\n'
+                    trace_vk_src += '        for (uint32_t i = 0; i < bindInfoCount; i++) {\n'
+                    trace_vk_src += '            DeviceMemory deviceMemory = {device, pBindInfos[i].memory};\n'
+                    trace_vk_src += '            g_bufferToDeviceMemory[pBindInfos[i].buffer] = deviceMemory;\n'
+                    trace_vk_src += '        }\n'
+                    trace_vk_src += '    }\n'
+                    trace_vk_src += '#endif\n'
+                elif proto.name == 'vkBindImageMemory':
+                    trace_vk_src += '#if defined(USE_PAGEGUARD_SPEEDUP) && !defined(PAGEGUARD_ADD_PAGEGUARD_ON_REAL_MAPPED_MEMORY)\n'
+                    trace_vk_src += '    if (!UseMappedExternalHostMemoryExtension()) {\n'
+                    trace_vk_src += '        DeviceMemory deviceMemory = {device, memory};\n'
+                    trace_vk_src += '        g_imageToDeviceMemory[image] = deviceMemory;\n'
+                    trace_vk_src += '    }\n'
+                    trace_vk_src += '#endif\n'
+                elif proto.name == 'vkCmdCopyBuffer' or proto.name == 'vkCmdCopyImageToBuffer' or proto.name == 'vkCmdUpdateBuffer' or proto.name == 'vkCmdFillBuffer':
                     trace_vk_src += '#if defined(USE_PAGEGUARD_SPEEDUP) && !defined(PAGEGUARD_ADD_PAGEGUARD_ON_REAL_MAPPED_MEMORY)\n'
                     trace_vk_src += '    if (!UseMappedExternalHostMemoryExtension()) {\n'
                     trace_vk_src += '        g_cmdBufferToBuffers[commandBuffer].push_back(dstBuffer);\n'
+                    trace_vk_src += '    }\n'
+                    trace_vk_src += '#endif\n'
+                elif proto.name == 'vkCmdCopyImage' or proto.name == 'vkCmdBlitImage' or proto.name == 'vkCmdCopyBufferToImage':
+                    trace_vk_src += '#if defined(USE_PAGEGUARD_SPEEDUP) && !defined(PAGEGUARD_ADD_PAGEGUARD_ON_REAL_MAPPED_MEMORY)\n'
+                    trace_vk_src += '    if (!UseMappedExternalHostMemoryExtension()) {\n'
+                    trace_vk_src += '        g_cmdBufferToImages[commandBuffer].push_back(dstImage);\n'
+                    trace_vk_src += '    }\n'
+                    trace_vk_src += '#endif\n'
+                elif proto.name == 'vkCmdCopyAccelerationStructureKHR' or proto.name == 'vkCmdCopyMemoryToAccelerationStructureKHR':
+                    trace_vk_src += '#if defined(USE_PAGEGUARD_SPEEDUP) && !defined(PAGEGUARD_ADD_PAGEGUARD_ON_REAL_MAPPED_MEMORY)\n'
+                    trace_vk_src += '    if (!UseMappedExternalHostMemoryExtension()) {\n'
+                    trace_vk_src += '        g_cmdBufferToAS[commandBuffer].push_back(pInfo->dst);\n'
+                    trace_vk_src += '    }\n'
+                    trace_vk_src += '#endif\n'
+                elif proto.name == 'vkCmdCopyAccelerationStructureToMemoryKHR':
+                    trace_vk_src += '#if defined(USE_PAGEGUARD_SPEEDUP) && !defined(PAGEGUARD_ADD_PAGEGUARD_ON_REAL_MAPPED_MEMORY)\n'
+                    trace_vk_src += '    if (!UseMappedExternalHostMemoryExtension()) {\n'
+                    trace_vk_src += '        //todo\n'
                     trace_vk_src += '    }\n'
                     trace_vk_src += '#endif\n'
                 if in_data_size:
@@ -3608,7 +3779,7 @@ class VkTraceFileOutputGenerator(OutputGenerator):
                 trace_vk_src += '\n'.join(raw_packet_update_list)
                 trace_vk_src += '\n'
                 if proto.name == 'vkGetPhysicalDeviceSurfaceFormats2KHR':
-                    # This is very specific to a particular function, but it's the most staightforward day to handle it
+                    # This is very specific to a particular function, but it's the most staightforward way to handle it
                     trace_vk_src += '    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pSurfaceInfo), sizeof(VkPhysicalDeviceSurfaceInfo2KHR), pSurfaceInfo);\n'
                     trace_vk_src += '    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pSurfaceFormatCount), sizeof(uint32_t), pSurfaceFormatCount);\n'
                     trace_vk_src += '    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pSurfaceFormats), surfaceFormatCount*sizeof(VkSurfaceFormat2KHR), pSurfaceFormats);\n'
@@ -3670,6 +3841,12 @@ class VkTraceFileOutputGenerator(OutputGenerator):
                 for pp_dict in ptr_packet_update_list:
                     if ('DeviceCreateInfo' not in proto.members[pp_dict['index']].type):
                         trace_vk_src += '    %s;\n' % (pp_dict['finalize_txt'])
+                if 'vkGetAccelerationStructureDeviceAddress' in proto.name:
+                    trace_vk_src += '    g_AStoDeviceAddr[pInfo->accelerationStructure] = result;\n'
+                    trace_vk_src += '    g_AStoDeviceAddrRev[result] = pInfo->accelerationStructure;\n'
+                elif 'vkGetBufferDeviceAddress' in proto.name:
+                    trace_vk_src += '    g_BuftoDeviceAddr[pInfo->buffer] = result;\n'
+                    trace_vk_src += '    g_BuftoDeviceAddrRev[result] = pInfo->buffer;\n'
                 trace_vk_src += '    if (!g_trimEnabled) {\n'
                 # All buffers should be finalized by now, and the trace packet can be finished (which sends it over the socket)
                 trace_vk_src += '        FINISH_TRACE_PACKET();\n'
@@ -3709,8 +3886,7 @@ class VkTraceFileOutputGenerator(OutputGenerator):
                     trace_vk_src += '    g_instanceDataMap.erase(key);\n'
                 elif proto.name == "vkDestroyDevice":
                     trace_vk_src += '    g_deviceDataMap.erase(key);\n'
-                    trace_vk_src += '    g_deviceToPhyscialDevice.erase(device);\n'
-
+                    trace_vk_src += '    g_deviceToPhysicalDevice.erase(device);\n'
                 # Return result if needed
                 if 'void' not in resulttype or '*' in resulttype:
                     trace_vk_src += '    return result;\n'
@@ -4548,7 +4724,19 @@ class VkTraceFileOutputGenerator(OutputGenerator):
                                            'pMemoryProperties','pFormatInfo','pSurfaceFormats','pMemoryRequirements','pInfo',
                                            'pSparseMemoryRequirements','pSurfaceCapabilities'] and '2' in p.type.lower())):
                             trace_pkt_hdr += '    if (pPacket->%s != NULL) {\n' % p.name
-                            trace_pkt_hdr += '        vkreplay_process_pnext_structs(pHeader, (void *)pPacket->%s);\n' % p.name
+                            # VkMemoryAllocateInfo parameter of vkAllocateMemory contains a pNext member.
+                            # It might points to a VkMemoryDedicatedAllocateInfo struct:
+                            #   typedef struct VkMemoryDedicatedAllocateInfo {
+                            #       VkStructureType    sType;
+                            #       const void*        pNext;
+                            #       VkImage            image;
+                            #       VkBuffer           buffer;
+                            #   } VkMemoryDedicatedAllocateInfo;
+                            # Both "image" and "buffer" need to be remapped when replaying, not preloading
+                            if "vkAllocateMemory" == proto.name:
+                                trace_pkt_hdr += '        vkreplay_interpret_pnext_pointers(pHeader, (void *)pPacket->%s);\n' % p.name
+                            else:
+                                trace_pkt_hdr += '        vkreplay_process_pnext_structs(pHeader, (void *)pPacket->%s);\n' % p.name
                             if "vkDebugMarkerSetObjectNameEXT" == proto.name:
                                 trace_pkt_hdr += '        VkDebugMarkerObjectNameInfoEXT* nameInfo = (VkDebugMarkerObjectNameInfoEXT*)(pPacket->pNameInfo);\n'
                                 trace_pkt_hdr += '        nameInfo->pObjectName = (const char*)vktrace_trace_packet_interpret_buffer_pointer(pHeader, (intptr_t)pPacket->pNameInfo->pObjectName);\n'

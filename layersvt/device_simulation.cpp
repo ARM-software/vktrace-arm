@@ -460,6 +460,7 @@ typedef std::unordered_map<uint32_t /*VkFormat*/, VkFormatProperties> ArrayOfVkF
 typedef std::vector<VkLayerProperties> ArrayOfVkLayerProperties;
 typedef std::vector<VkExtensionProperties> ArrayOfVkExtensionProperties;
 typedef std::unordered_map<uint32_t, ExtendedFeature> MapOfExtendedFeatures;
+typedef std::unordered_map<uint32_t, ExtendedProperty> MapOfExtendedProperties;
 
 // FormatProperties utilities ////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -512,6 +513,7 @@ class PhysicalDeviceData {
     ArrayOfVkLayerProperties arrayof_layer_properties_;
     ArrayOfVkExtensionProperties arrayof_ext_properties_;
     MapOfExtendedFeatures mapof_extended_features_;
+    MapOfExtendedProperties mapof_extended_properties_;
 
    private:
     PhysicalDeviceData() = delete;
@@ -551,6 +553,7 @@ class JsonLoader {
 
     SchemaId IdentifySchema(const Json::Value &value);
     void GetValue(const Json::Value &parent, const char *name, VkPhysicalDeviceProperties *dest);
+    void GetValue(const Json::Value &parent, const char *name, VkPhysicalDeviceSubgroupProperties *dest);
     void GetValue(const Json::Value &parent, const char *name, VkPhysicalDeviceLimits *dest);
     void GetValue(const Json::Value &parent, const char *name, VkPhysicalDeviceSparseProperties *dest);
     void GetValue(const Json::Value &parent, const char *name, VkPhysicalDeviceFeatures *dest);
@@ -812,6 +815,28 @@ class JsonLoader {
         return static_cast<int>(features->size());
     }
 
+    int GetExtendedProperties(const Json::Value &parent, MapOfExtendedProperties *properties) {
+        const Json::Value value = parent["extended"]["deviceproperties2"];
+        if (value.type() != Json::arrayValue) {
+            return -1;
+        }
+        DebugPrintf("\t\tJsonLoader::GetExtendedProperties(MapOfExtendedProperties)\n");
+        properties->clear();
+        const int count = static_cast<int>(value.size());
+        for (int i = 0; i < count; ++i) {
+            const Json::Value extension_name = value[i]["extension"];
+            VkStructureType stype = ext_property_name_to_stype(extension_name.asString());
+            if (stype != VK_STRUCTURE_TYPE_MAX_ENUM) {
+                if (properties->find(stype) == properties->end()) {
+                    (*properties)[stype].base.sType = stype;
+                    (*properties)[stype].base.pNext = nullptr;
+                }
+                get_extension_property(stype, value[i], (*properties)[stype]);
+            }
+        }
+        return static_cast<int>(properties->size());
+    }
+
     void WarnDeprecated(const Json::Value &parent, const char *name) {
         const Json::Value value = parent[name];
         if (value.type() != Json::nullValue) {
@@ -885,6 +910,7 @@ bool JsonLoader::LoadFile(const char *filename) {
     switch (schema_id) {
         case SchemaId::kDevsim100:
             GetValue(root, "VkPhysicalDeviceProperties", &pdd_.physical_device_properties_);
+            GetValue(root["VkPhysicalDeviceProperties"], "subgroupProperties", &pdd_.mapof_extended_properties_[VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES].physical_device_subgroup_prop);
             GetValue(root, "VkPhysicalDeviceFeatures", &pdd_.physical_device_features_);
             GetValue(root, "VkPhysicalDeviceMemoryProperties", &pdd_.physical_device_memory_properties_);
             GetArray(root, "ArrayOfVkQueueFamilyProperties", &pdd_.arrayof_queue_family_properties_);
@@ -892,6 +918,7 @@ bool JsonLoader::LoadFile(const char *filename) {
             GetArray(root, "ArrayOfVkLayerProperties", &pdd_.arrayof_layer_properties_);
             GetArray(root, "ArrayOfVkExtensionProperties", &pdd_.arrayof_ext_properties_);
             GetExtendedFeatures(root, &pdd_.mapof_extended_features_);
+            GetExtendedProperties(root, &pdd_.mapof_extended_properties_);
             result = true;
             break;
 
@@ -944,6 +971,20 @@ void JsonLoader::GetValue(const Json::Value &parent, const char *name, VkPhysica
     GET_ARRAY(pipelineCacheUUID);  // size == VK_UUID_SIZE
     GET_VALUE(limits);
     GET_VALUE(sparseProperties);
+}
+
+void JsonLoader::GetValue(const Json::Value &parent, const char *name, VkPhysicalDeviceSubgroupProperties *dest) {
+    const Json::Value value = parent[name];
+    if (value.type() != Json::objectValue) {
+        return;
+    }
+    dest->sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES;
+    dest->pNext = NULL;
+    DebugPrintf("\t\tJsonLoader::GetValue(VkPhysicalDeviceSubgroupProperties)\n");
+    GET_VALUE(quadOperationsInAllStages);
+    GET_VALUE(subgroupSize);
+    GET_VALUE(supportedOperations);
+    GET_VALUE(supportedStages);
 }
 
 void JsonLoader::GetValue(const Json::Value &parent, const char *name, VkPhysicalDeviceLimits *dest) {
@@ -1413,12 +1454,17 @@ VKAPI_ATTR void VKAPI_CALL GetPhysicalDeviceProperties(VkPhysicalDevice physical
 
 VKAPI_ATTR void VKAPI_CALL GetPhysicalDeviceProperties2(VkPhysicalDevice physicalDevice,
                                                         VkPhysicalDeviceProperties2KHR *pProperties) {
+    PhysicalDeviceData *pdd = nullptr;
     {
         std::lock_guard<std::mutex> lock(global_lock);
         const auto dt = instance_dispatch_table(physicalDevice);
         dt->GetPhysicalDeviceProperties2(physicalDevice, pProperties);
     }
     GetPhysicalDeviceProperties(physicalDevice, &pProperties->properties);
+    pdd = PhysicalDeviceData::Find(physicalDevice);
+    if (pProperties->pNext && g_run_on_compat_mode && pdd) {
+        ClampExtendedDevProperties(pdd->mapof_extended_properties_, pProperties->pNext);
+    }
 }
 
 VKAPI_ATTR void VKAPI_CALL GetPhysicalDeviceProperties2KHR(VkPhysicalDevice physicalDevice,

@@ -21,8 +21,9 @@
  **************************************************************************/
 #pragma once
 
-#include "vktrace_common.h"
 #include <stdbool.h>
+
+#include "vktrace_common.h"
 
 typedef enum VKTRACE_SETTING_TYPE {
     VKTRACE_SETTING_STRING,
@@ -58,6 +59,7 @@ typedef struct vktrace_SettingGroup {
     const char* pName;
     unsigned int numSettings;
     vktrace_SettingInfo* pSettings;
+    BOOL* pOptionsOverridedByCmd;
 } vktrace_SettingGroup;
 
 typedef struct vkreplayer_settings {
@@ -84,6 +86,9 @@ typedef struct vkreplayer_settings {
     BOOL enablePipelineCache;
     char* pipelineCachePath;
     BOOL forceSyncImgIdx;
+    BOOL disableAsCaptureReplay;
+    BOOL disableBufferCaptureReplay;
+    BOOL forceRayQuery;
     unsigned int perfMeasuringMode;
 } vkreplayer_settings;
 
@@ -116,7 +121,7 @@ void vktrace_SettingGroup_Apply_Overrides(vktrace_SettingGroup* pSettingGroup, v
                                           unsigned int numOverrideGroups);
 
 int vktrace_SettingGroup_init_from_cmdline(vktrace_SettingGroup* pSettingGroup, int argc, char* argv[],
-                                           char** ppOut_remaining_args, bool *pOptionsOverridedByCmd);
+                                           char** ppOut_remaining_args);
 
 void vktrace_SettingGroup_print(const vktrace_SettingGroup* pSettingGroup);
 void vktrace_SettingInfo_print(const vktrace_SettingInfo* pSetting);
