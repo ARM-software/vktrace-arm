@@ -4905,10 +4905,6 @@ VkResult vkReplay::manually_replay_vkGetPhysicalDeviceSurfaceCapabilitiesKHR(
         return VK_ERROR_VALIDATION_FAILED_EXT;
     }
 
-    m_display->resize_window(pPacket->pSurfaceCapabilities->currentExtent.width,
-                             pPacket->pSurfaceCapabilities->currentExtent.height,
-                             VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR);
-
     replayResult = m_vkFuncs.GetPhysicalDeviceSurfaceCapabilitiesKHR(remappedphysicalDevice, remappedSurfaceKHR,
                                                                      pPacket->pSurfaceCapabilities);
 
@@ -5081,7 +5077,7 @@ VkResult vkReplay::manually_replay_vkCreateSwapchainKHR(packet_vkCreateSwapchain
         const_cast<VkSwapchainCreateInfoKHR*>(pPacket->pCreateInfo)->imageExtent.height = std::max(it->second.minImageExtent.height, pPacket->pCreateInfo->imageExtent.height);
         const_cast<VkSwapchainCreateInfoKHR*>(pPacket->pCreateInfo)->imageExtent.height = std::min(it->second.maxImageExtent.height, pPacket->pCreateInfo->imageExtent.height);
     }
-    m_display->resize_window(pPacket->pCreateInfo->imageExtent.width, pPacket->pCreateInfo->imageExtent.height, pPacket->pCreateInfo->preTransform);
+    m_display->resize_window(pPacket->pCreateInfo->imageExtent.width, pPacket->pCreateInfo->imageExtent.height, pPacket->pCreateInfo->preTransform, it->second);
 
     // Convert queueFamilyIndices
     if (pPacket->pCreateInfo && pPacket->pCreateInfo->pQueueFamilyIndices) {

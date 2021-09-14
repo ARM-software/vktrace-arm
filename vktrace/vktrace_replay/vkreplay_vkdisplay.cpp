@@ -92,7 +92,7 @@ int GetDisplayImplementation(const char *displayServer, vktrace_replay::ReplayDi
 #if defined(PLATFORM_LINUX) && defined(ANDROID)
 #include <jni.h>
 
-vkDisplayAndroid::vkDisplayAndroid(struct android_app *app) : m_windowWidth(0), m_windowHeight(0), m_currentRot(VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR) {
+vkDisplayAndroid::vkDisplayAndroid(struct android_app *app) : m_windowWidth(0), m_windowHeight(0), m_currentRot(VK_SURFACE_TRANSFORM_FLAG_BITS_MAX_ENUM_KHR) {
     memset(&m_surface, 0, sizeof(VkIcdSurfaceAndroid));
     m_window = app->window;
     m_surface.window = app->window;
@@ -111,17 +111,25 @@ int vkDisplayAndroid::init(const unsigned int gpu_idx) {
 
 int vkDisplayAndroid::create_window(const unsigned int width, const unsigned int height) { return 0; }
 
-void vkDisplayAndroid::resize_window(const unsigned int width, const unsigned int height, VkSurfaceTransformFlagBitsKHR rot) {
+void vkDisplayAndroid::resize_window(const unsigned int width, const unsigned int height, VkSurfaceTransformFlagBitsKHR rot, const VkSurfaceCapabilitiesKHR& surf_caps) {
     if (width != m_windowWidth || height != m_windowHeight || rot != m_currentRot) {
         m_windowWidth = width;
         m_windowHeight = height;
+        m_currentRot = rot;
         // For Android, we adjust the screen orientation based on requested width and height.
         int32_t pixel_width = ANativeWindow_getWidth(m_window);
         int32_t pixel_height = ANativeWindow_getHeight(m_window);
 
         // We don't change the current orientation if width == height or if the requested orientation matches the current
         // orientation.
-        if (((width != height) && ((width < height) != (pixel_width < pixel_height))) || m_currentRot != rot) {
+        if (surf_caps.currentTransform == VK_SURFACE_TRANSFORM_ROTATE_90_BIT_KHR || surf_caps.currentTransform == VK_SURFACE_TRANSFORM_ROTATE_270_BIT_KHR) {
+            int32_t temp;
+            temp = pixel_width;
+            pixel_width = pixel_height;
+            pixel_height = temp;
+        }
+
+        if ((width != height) && ((width < height) != (pixel_width < pixel_height))) {
             JavaVM *jni_vm = nullptr;
             jobject jni_activity = nullptr;
             JNIEnv *env = nullptr;
@@ -135,15 +143,13 @@ void vkDisplayAndroid::resize_window(const unsigned int width, const unsigned in
                 jclass object_class = env->GetObjectClass(jni_activity);
                 jmethodID set_orientation = env->GetMethodID(object_class, "setRequestedOrientation", "(I)V");
 
-                if (width > height || rot == VK_SURFACE_TRANSFORM_ROTATE_90_BIT_KHR) {
+                if (width > height) {
                     const int SCREEN_ORIENTATION_LANDSCAPE = 0;
                     env->CallVoidMethod(jni_activity, set_orientation, SCREEN_ORIENTATION_LANDSCAPE);
                 } else {
                     const int SCREEN_ORIENTATION_PORTRAIT = 1;
                     env->CallVoidMethod(jni_activity, set_orientation, SCREEN_ORIENTATION_PORTRAIT);
                 }
-
-                m_currentRot = VK_SURFACE_TRANSFORM_ROTATE_90_BIT_KHR;
 
                 jni_vm->DetachCurrentThread();
             }
@@ -274,7 +280,7 @@ int vkDisplayWin32::create_window(const unsigned int width, const unsigned int h
     return 0;
 }
 
-void vkDisplayWin32::resize_window(const unsigned int width, const unsigned int height, VkSurfaceTransformFlagBitsKHR rot) {
+void vkDisplayWin32::resize_window(const unsigned int width, const unsigned int height, VkSurfaceTransformFlagBitsKHR rot, const VkSurfaceCapabilitiesKHR& surf_caps) {
     if (width != m_windowWidth || height != m_windowHeight) {
         m_windowWidth = width;
         m_windowHeight = height;
@@ -328,7 +334,7 @@ int vkDisplay::init(const unsigned int gpu_idx) {
 
 int vkDisplay::create_window(const unsigned int width, const unsigned int height) { return 0; }
 
-void vkDisplay::resize_window(const unsigned int width, const unsigned int height, VkSurfaceTransformFlagBitsKHR rot) {
+void vkDisplay::resize_window(const unsigned int width, const unsigned int height, VkSurfaceTransformFlagBitsKHR rot, const VkSurfaceCapabilitiesKHR& surf_caps) {
     if (width != m_windowWidth || height != m_windowHeight) {
         m_windowWidth = width;
         m_windowHeight = height;
