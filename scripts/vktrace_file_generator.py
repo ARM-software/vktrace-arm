@@ -1198,6 +1198,11 @@ class VkTraceFileOutputGenerator(OutputGenerator):
             create_view = True if True in [create_txt in cmdname for create_txt in ['CreateBufferView', 'CreateImageView']] else False
             params = cmd_member_dict[vk_cmdname]
             replay_gen_source += '        case VKTRACE_TPI_VK_vk%s: { \n' % cmdname
+            if cmdname in ['CreateDebugUtilsMessengerEXT', 'DestroyDebugUtilsMessengerEXT']:
+                replay_gen_source += '            break;       // Now we just ignore this function\n'
+                replay_gen_source += '                         // TODO: add a debug callback in vkreplayer\n'
+                replay_gen_source += '        }\n'
+                continue
             replay_gen_source += '            packet_vk%s* pPacket = (packet_vk%s*)(packet->pBody);\n' % (cmdname, cmdname)
             if resulttype is not None and resulttype.text == 'VkResult':
                 replay_gen_source += '            if (callFailedDuringTrace(pPacket->result, packet->packet_id)) {\n'
@@ -2132,6 +2137,8 @@ class VkTraceFileOutputGenerator(OutputGenerator):
                                                   'finalize_txt': ''},
                            'VkApplicationInfo': {'add_txt': 'add_VkApplicationInfo_to_packet(pHeader, (VkApplicationInfo**)&(pPacket->pApplicationInfo), pApplicationInfo)',
                                                  'finalize_txt': ''},
+                           'VkDebugUtilsLabelEXT': {'add_txt': 'add_VkDebugUtilsLabelEXT_to_packet(pHeader, (VkDebugUtilsLabelEXT**)&(pPacket->pLabelInfo), pLabelInfo)',
+                                                 'finalize_txt': ''},
                            'VkPhysicalDevice': {'add_txt': 'vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pGpus), *pGpuCount*sizeof(VkPhysicalDevice), pGpus)',
                                                 'finalize_txt': 'default'},
                            'VkImageCreateInfo': {'add_txt': 'vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pCreateInfo), sizeof(VkImageCreateInfo), pCreateInfo);\n'
@@ -2390,6 +2397,7 @@ class VkTraceFileOutputGenerator(OutputGenerator):
             trim_instructions.append("            trim::remove_CommandBuffer_calls(pCommandBuffers[i]);")
             trim_instructions.append("            trim::ClearImageTransitions(pCommandBuffers[i]);")
             trim_instructions.append("            trim::ClearBufferTransitions(pCommandBuffers[i]);")
+            trim_instructions.append("            g_queryCmdStatus.erase(pCommandBuffers[i]);")
             trim_instructions.append('        }')
             trim_instructions.append('        if (g_trimIsInTrim) {')
             trim_instructions.append('            trim::write_packet(pHeader);')
@@ -2960,6 +2968,7 @@ class VkTraceFileOutputGenerator(OutputGenerator):
             trim_instructions.append("            for (uint32_t i = 0; i < pCreateInfo->queryCount; i++) {")
             trim_instructions.append("                info.ObjectInfo.QueryPool.pResultsAvailable[i] = false;")
             trim_instructions.append("            }")
+            trim_instructions.append("            g_queryPoolStatus[*pQueryPool] = false;")
             trim_instructions.append("        }")
             trim_instructions.append("        if (pAllocator != NULL) {")
             trim_instructions.append("            info.ObjectInfo.QueryPool.pAllocator = pAllocator;")
@@ -2979,6 +2988,7 @@ class VkTraceFileOutputGenerator(OutputGenerator):
             trim_instructions.append("        }")
             trim_instructions.append("        trim::add_CommandBuffer_call(commandBuffer, trim::copy_packet(pHeader));")
             trim_instructions.append('        if (g_trimIsInTrim) {')
+            trim_instructions.append('            g_queryCmdStatus[commandBuffer][queryPool] = QueryCmd_Reset;')
             trim_instructions.append('            trim::mark_QueryPool_reference(queryPool);')
             trim_instructions.append('            trim::write_packet(pHeader);')
             trim_instructions.append('        } else {')
@@ -2987,6 +2997,7 @@ class VkTraceFileOutputGenerator(OutputGenerator):
         elif 'vkCmdBeginQuery' == proto.name:
             trim_instructions.append("        trim::add_CommandBuffer_call(commandBuffer, trim::copy_packet(pHeader));")
             trim_instructions.append('        if (g_trimIsInTrim) {')
+            trim_instructions.append('            g_queryCmdStatus[commandBuffer][queryPool] = QueryCmd_Begin; ')
             trim_instructions.append('            trim::mark_QueryPool_reference(queryPool);')
             trim_instructions.append('            trim::write_packet(pHeader);')
             trim_instructions.append('        } else {')
@@ -3016,6 +3027,7 @@ class VkTraceFileOutputGenerator(OutputGenerator):
             trim_instructions.append('        }')
         elif 'vkDestroyQueryPool' == proto.name:
             trim_instructions.append("        trim::remove_QueryPool_object(queryPool);")
+            trim_instructions.append("        g_queryPoolStatus.erase(queryPool);")
             trim_instructions.append('        if (g_trimIsInTrim) {')
             trim_instructions.append('            trim::mark_QueryPool_reference(queryPool);')
             trim_instructions.append('            trim::write_packet(pHeader);')
@@ -3236,25 +3248,6 @@ class VkTraceFileOutputGenerator(OutputGenerator):
                     dump_gen_source += '            memcpy((void *)pLocalCIs, (void *)(pPacket->pCreateInfos), sizeof(VkComputePipelineCreateInfo) * pPacket->createInfoCount);\n'
                     dump_gen_source += '            for (uint32_t i = 0; i < pPacket->createInfoCount; i++) {\n'
                     dump_gen_source += '                vkreplay_process_pnext_structs(pPacket->header, (void *)&pLocalCIs[i]);\n'
-                    dump_gen_source += '                if (pLocalCIs[i].stage.pName) {\n'
-                    dump_gen_source += '                    pLocalCIs[i].stage.pName =\n'
-                    dump_gen_source += '                        (const char *)(vktrace_trace_packet_interpret_buffer_pointer(pPacket->header, (intptr_t)pLocalCIs[i].stage.pName));\n'
-                    dump_gen_source += '                }\n'
-                    dump_gen_source += '                if (pLocalCIs[i].stage.pSpecializationInfo) {\n'
-                    dump_gen_source += '                    pLocalCIs[i].stage.pSpecializationInfo = \n'
-                    dump_gen_source += '                        (const VkSpecializationInfo  *)(vktrace_trace_packet_interpret_buffer_pointer(\n'
-                    dump_gen_source += '                            pPacket->header, (intptr_t)pLocalCIs[i].stage.pSpecializationInfo));\n'
-                    dump_gen_source += '                    if (pLocalCIs[i].stage.pSpecializationInfo->mapEntryCount > 0 && pLocalCIs[i].stage.pSpecializationInfo->pMapEntries) {\n'
-                    dump_gen_source += '                        ((VkSpecializationInfo *)(pLocalCIs[i]).stage.pSpecializationInfo)->pMapEntries =\n'
-                    dump_gen_source += '                            (const VkSpecializationMapEntry *)(vktrace_trace_packet_interpret_buffer_pointer(\n'
-                    dump_gen_source += '                                pPacket->header, (intptr_t)pLocalCIs[i].stage.pSpecializationInfo->pMapEntries));\n'
-                    dump_gen_source += '                    }\n'
-                    dump_gen_source += '                    if (pLocalCIs[i].stage.pSpecializationInfo->dataSize > 0 && pLocalCIs[i].stage.pSpecializationInfo->pData) {\n'
-                    dump_gen_source += '                        ((VkSpecializationInfo *)(pLocalCIs[i]).stage.pSpecializationInfo)->pData =\n'
-                    dump_gen_source += '                            (const void *)(vktrace_trace_packet_interpret_buffer_pointer(\n'
-                    dump_gen_source += '                                pPacket->header, (intptr_t)pLocalCIs[i].stage.pSpecializationInfo->pData));\n'
-                    dump_gen_source += '                    }\n'
-                    dump_gen_source += '                }\n'
                     dump_gen_source += '            }\n'
                     dump_gen_source += '            pPacket->pCreateInfos = pLocalCIs;\n'
                 elif cmdname == 'CreateGraphicsPipelines':
@@ -3591,6 +3584,19 @@ class VkTraceFileOutputGenerator(OutputGenerator):
                 ptr_packet_update_list = self.GetPacketPtrParamList(proto.members)
                 # End of function declaration portion, begin function body
                 trace_vk_src += ' {\n'
+                if 'vkCreateDebugReportCallback' in proto.name:
+                    trace_vk_src += '    // TODO: Add support for __HOOKED_%s: Only call driver without tracing for now.\n' % proto.name
+                    table_txt = 'mid(%s)->instTable' % proto.members[0].name
+                    paramstext = '%s' % proto.members[0].name
+                    for param in proto.members[1:]:
+                        if param.name != '':
+                            paramstext += ', %s' % param.name
+                    c_call = proto.name[2:] + '(' + paramstext + ')'
+                    trace_vk_src += '    if (%s.%s == nullptr)\n' % (table_txt, proto.name[2:])
+                    trace_vk_src += '        return VK_SUCCESS;\n'
+                    trace_vk_src += '    return %s.%s;\n' % (table_txt, c_call)
+                    trace_vk_src += '}\n'
+                    continue
                 if 'vkSetDebugUtilsObjectName' in proto.name or 'vkCmdBeginDebugUtilsLabel' in proto.name or 'vkCmdEndDebugUtilsLabel' in proto.name:
                     trace_vk_src += '    // TODO: Add support for __HOOKED_%s: Only call driver without tracing for now.\n' % proto.name
                     table_txt = 'mdd(%s)->devTable' % proto.members[0].name
@@ -3630,6 +3636,8 @@ class VkTraceFileOutputGenerator(OutputGenerator):
                     trace_vk_src += '        byteCount += get_struct_chain_size(&pSurfaceFormats[i]);\n'
                     trace_vk_src += '    }\n'
                     trace_vk_src += '    CREATE_TRACE_PACKET(vkGetPhysicalDeviceSurfaceFormats2KHR, get_struct_chain_size((void*)pSurfaceInfo) + sizeof(uint32_t) + byteCount);\n'
+                elif proto.name == 'vkQueueBeginDebugUtilsLabelEXT':
+                    trace_vk_src += '    CREATE_TRACE_PACKET(%s, %s);\n' % (proto.name, ' + '.join(packet_size) + ' + get_struct_chain_size((void*)pLabelInfo)')
                 else:
                     if (0 == len(packet_size)):
                         trace_vk_src += '    CREATE_TRACE_PACKET(%s, 0);\n' % (proto.name)
@@ -3867,6 +3875,25 @@ class VkTraceFileOutputGenerator(OutputGenerator):
                     else:
                         trace_vk_src += '            trim::write_packet(pHeader);\n'
                     trace_vk_src += '        } else {\n'
+                    if 'vkGetBufferDeviceAddress' in proto.name:
+                        trace_vk_src += '            extern std::unordered_map<VkDeviceAddress, VkBuffer> g_deviceAddressToBuffer;\n'
+                        trace_vk_src += '            g_deviceAddressToBuffer[result] = pInfo->buffer;\n'
+                        trace_vk_src += '            trim::ObjectInfo* pBufInfo = trim::get_Buffer_objectInfo(pInfo->buffer);\n'
+                        trace_vk_src += '            if (pBufInfo != nullptr) {\n'
+                        trace_vk_src += '                pBufInfo->ObjectInfo.Buffer.pGetBufferDeviceAddressPacket = trim::copy_packet(pHeader);\n'
+                        trace_vk_src += '            } else {\n'
+                        trace_vk_src += '               vktrace_LogError("get_Buffer_objectInfo failed");\n'
+                        trace_vk_src += '            }\n'
+                    if 'vkGetBufferOpaqueCaptureAddress' in proto.name:
+                        trace_vk_src += '            trim::ObjectInfo* pBufInfo = trim::get_Buffer_objectInfo(pInfo->buffer);\n'
+                        trace_vk_src += '            if (pBufInfo != nullptr) {\n'
+                        trace_vk_src += '                pBufInfo->ObjectInfo.Buffer.pGetBufferOpaqueCaptureAddress = trim::copy_packet(pHeader);\n'
+                        trace_vk_src += '            }\n'
+                    if proto.name == 'vkGetAccelerationStructureDeviceAddressKHR':
+                        trace_vk_src += '            trim::ObjectInfo* pAsInfo = trim::get_AccelerationStructure_objectInfo(pInfo->accelerationStructure);\n'
+                        trace_vk_src += '            if (pAsInfo != nullptr) {\n'
+                        trace_vk_src += '                pAsInfo->ObjectInfo.AccelerationStructure.pGetAccelerationStructureDeviceAddressPacket = trim::copy_packet(pHeader);\n'
+                        trace_vk_src += '            }\n'
                     trace_vk_src += '            vktrace_delete_trace_packet(&pHeader);\n'
                     trace_vk_src += '        }\n'
                 trace_vk_src += '    }\n'
@@ -4166,7 +4193,9 @@ class VkTraceFileOutputGenerator(OutputGenerator):
                                                                                  '}'
                                                                                ]},
                              'CreateGraphicsPipelines' : {'param': 'pCreateInfos', 'txt': create_gfx_pipe},
-                             'CreateComputePipeline' : {'param': 'pCreateInfo', 'txt': ['interpret_VkPipelineShaderStageCreateInfo(pHeader, (VkPipelineShaderStageCreateInfo*)(&pPacket->pCreateInfo->cs));']},
+                             'CreateComputePipelines' : {'param': 'pCreateInfos', 'txt': ['for (unsigned int i = 0; i < pPacket->createInfoCount; ++i) {\n',
+                                                                                          '    interpret_VkPipelineShaderStageCreateInfo(pHeader, (VkPipelineShaderStageCreateInfo*)(&pPacket->pCreateInfos[i].stage));\n',
+                                                                                          '}']},
                              'CreateFramebuffer' : {'param': 'pCreateInfo', 'txt': ['VkImageView** ppAV = (VkImageView**)&(pPacket->pCreateInfo->pAttachments);\n',
                                                                                     '*ppAV = (VkImageView*)vktrace_trace_packet_interpret_buffer_pointer(pHeader, (intptr_t)(pPacket->pCreateInfo->pAttachments));']},
                              'CmdBeginRenderPass' : {'param': 'pRenderPassBegin', 'txt': ['VkClearValue** ppCV = (VkClearValue**)&(pPacket->pRenderPassBegin->pClearValues);\n',
@@ -4566,6 +4595,8 @@ class VkTraceFileOutputGenerator(OutputGenerator):
                             trace_pkt_hdr += '    }\n'
                         elif 'AccelerationStructureBuildGeometryInfoKHR' in p.type:
                             trace_pkt_hdr += '    pPacket->%s = interpret_VkAccelerationStructureBuildGeometryInfoKHR(pHeader, (intptr_t)pPacket->%s, false);\n' % (p.name, p.name)
+                        elif 'DebugUtilsLabelEXT' in p.type:
+                            trace_pkt_hdr += '    pPacket->%s = interpret_VkDebugUtilsLabelEXT(pHeader, (intptr_t)pPacket->%s);\n' % (p.name, p.name)
                         else:
                             cast = p.cdecl[4:].rsplit(' ', 1)[0].rstrip()
                             trace_pkt_hdr += '    pPacket->%s = (%s)vktrace_trace_packet_interpret_buffer_pointer(pHeader, (intptr_t)pPacket->%s);\n' % (p.name, cast, p.name)

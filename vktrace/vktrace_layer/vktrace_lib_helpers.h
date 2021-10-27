@@ -462,7 +462,7 @@ static void add_VkComputePipelineCreateInfos_to_trace_packet(vktrace_trace_packe
 
         for (i = 0; i < count; i++) {
             // shader stage
-            add_VkPipelineShaderStageCreateInfo_to_trace_packet(pHeader, (VkPipelineShaderStageCreateInfo *)&pPacket->stage,
+            add_VkPipelineShaderStageCreateInfo_to_trace_packet(pHeader, (VkPipelineShaderStageCreateInfo *)&pPacket[i].stage,
                                                                 &pParam[i].stage);
         }
     }

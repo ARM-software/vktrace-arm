@@ -46,10 +46,11 @@
 #include "screenshot_parsing.h"
 #include "vktrace_vk_packet_id.h"
 #include "vkreplay_vkreplay.h"
+#include "vkreplay_hw_feature_verify.h"
 #include "decompressor.h"
 #include <json/json.h>
 
-vkreplayer_settings replaySettings = {NULL, 1, 0, UINT_MAX, true, false, NULL, NULL, NULL, NULL, NULL, TRUE, TRUE, FALSE, FALSE, FALSE, FALSE, FALSE, 90, FALSE, FALSE, NULL, FALSE, FALSE, FALSE, 0};
+vkreplayer_settings replaySettings = {NULL, 1, 0, UINT_MAX, true, false, NULL, NULL, NULL, NULL, NULL, TRUE, TRUE, FALSE, FALSE, FALSE, FALSE, FALSE, 90, FALSE, FALSE, NULL, FALSE, FALSE, FALSE, FALSE, UINT_MAX, NULL, 0};
 extern vkReplay* g_replay;
 static decompressor* g_decompressor = nullptr;
 
@@ -273,6 +274,20 @@ vktrace_SettingInfo g_settings_info[] = {
      {&replaySettings.forceRayQuery},
      TRUE,
      "Force to replay this trace file as a ray-query one."},
+    {"tsf",
+     "TriggerScriptOnFrame",
+     VKTRACE_SETTING_UINT,
+     {&replaySettings.triggerScript},
+     {&replaySettings.triggerScript},
+     TRUE,
+     "Trigger script on a specific frame."},
+    {"tsp",
+     "scriptPath",
+     VKTRACE_SETTING_STRING,
+     {&replaySettings.pScriptPath},
+     {&replaySettings.pScriptPath},
+     TRUE,
+     "Trigger script path."},
     {"pmm",
      "perfMeasuringMode",
      VKTRACE_SETTING_UINT,
@@ -284,6 +299,21 @@ vktrace_SettingInfo g_settings_info[] = {
 
 vktrace_SettingGroup g_replaySettingGroup = {"vkreplay", sizeof(g_settings_info) / sizeof(g_settings_info[0]), &g_settings_info[0], nullptr};
 
+HW_FEATURE_VERIFY_CODE_BLOCK_BEGIN
+static void vkreplay_setting_group_merge(vktrace_SettingGroup *target_group, const vktrace_SettingGroup *source_group) {
+    assert(nullptr != target_group);
+    assert(nullptr != source_group);
+    const unsigned int &target_group_settings_byte_size = sizeof(vktrace_SettingInfo) * target_group->numSettings;
+    const unsigned int &source_group_settings_byte_size = sizeof(vktrace_SettingInfo) * source_group->numSettings;
+    vktrace_SettingInfo *merged_infos = (vktrace_SettingInfo*)malloc(target_group_settings_byte_size + source_group_settings_byte_size);
+    uint8_t *address = (uint8_t*)merged_infos;
+    memcpy(address, target_group->pSettings, target_group_settings_byte_size);
+    address += target_group_settings_byte_size;
+    memcpy(address, source_group->pSettings, source_group_settings_byte_size);
+    target_group->pSettings = merged_infos;
+    target_group->numSettings += source_group->numSettings;
+}
+HW_FEATURE_VERIFY_CODE_BLOCK_END
 
 static vktrace_replay::vktrace_trace_packet_replay_library* g_replayer_interface = NULL;
 
@@ -310,6 +340,18 @@ uint64_t getStartFrame()
 uint64_t getEndFrame()
 {
     return replaySettings.loopEndFrame;
+}
+
+void triggerScript() {
+    char command[512] = {0};
+    memset(command, 0, sizeof(command));
+    #if defined(PLATFORM_LINUX) && !defined(ANDROID)
+        sprintf(command, "/bin/sh %s", g_pReplaySettings->pScriptPath);
+    #else
+        sprintf(command, "/system/bin/sh %s", g_pReplaySettings->pScriptPath);
+    #endif
+    int result = system(command);
+    vktrace_LogAlways("Script %s run result: %d", command, result);
 }
 
 unsigned int replay(vktrace_trace_packet_replay_library* replayer, vktrace_trace_packet_header* packet)
@@ -354,6 +396,9 @@ int main_loop(vktrace_replay::ReplayDisplay display, Sequencer& seq, vktrace_tra
     }
     uint64_t start_time = vktrace_get_time();
     const char* screenshot_list = replaySettings.screenshotList;
+    if (g_pReplaySettings->triggerScript == 0 && g_pReplaySettings->pScriptPath != NULL) {
+        triggerScript();
+    }
 
     while (replaySettings.numLoops > 0) {
         if (replaySettings.numLoops > 1 && replaySettings.screenshotList != NULL) {
@@ -402,6 +447,9 @@ int main_loop(vktrace_replay::ReplayDisplay display, Sequencer& seq, vktrace_tra
                     }
                     // frame control logic
                     unsigned int frameNumber = g_replayer_interface->GetFrameNumber();
+                    if (g_pReplaySettings->triggerScript != UINT_MAX && g_pReplaySettings->pScriptPath != NULL && (frameNumber + 1) == g_pReplaySettings->triggerScript) {
+                        triggerScript();
+                    }
 
                     // Only set the loop start location and start_time in the first loop when loopStartFrame is not 0
                     if (frameNumber == start_frame && start_frame > 0 && replaySettings.numLoops == totalLoops) {
@@ -602,15 +650,15 @@ static bool preloadPortabilityTablePackets() {
             return false;
         }
         vktrace_trace_packet_header* pPacket = vktrace_read_trace_packet(traceFile);
+        if (!pPacket) {
+            return false;
+        }
         if (pPacket->tracer_id == VKTRACE_TID_VULKAN_COMPRESSED) {
             int ret = decompress_packet(g_decompressor, pPacket);
             if (ret != 0) {
                 vktrace_LogError("Decompress packet error.");
                 break;
             }
-        }
-        if (!pPacket) {
-            return false;
         }
         pPacket = interpret_trace_packet_vk(pPacket);
         portabilityTablePackets[i] = (uintptr_t)pPacket;
@@ -729,6 +777,9 @@ int vkreplay_main(int argc, char** argv, vktrace_replay::ReplayDisplayImp* pDisp
     vktrace_LogSetLevel(VKTRACE_LOG_ERROR);
 
     // apply settings from cmd-line args
+    HW_FEATURE_VERIFY_CODE_BLOCK_BEGIN
+    vkreplay_setting_group_merge(&g_replaySettingGroup, vktrace_replay::HWFeatureVerify::instance().setting_group());
+    HW_FEATURE_VERIFY_CODE_BLOCK_END
     std::vector<BOOL> optionsOverridedByCmd(g_replaySettingGroup.numSettings, false);
     g_replaySettingGroup.pOptionsOverridedByCmd = optionsOverridedByCmd.data();
     if (vktrace_SettingGroup_init_from_cmdline(&g_replaySettingGroup, argc, argv, &replaySettings.pTraceFilePath) != 0) {
@@ -747,6 +798,12 @@ int vkreplay_main(int argc, char** argv, vktrace_replay::ReplayDisplayImp* pDisp
         vktrace_LogError("Bad preload memory Percentage");
         return -1;
     }
+    HW_FEATURE_VERIFY_CODE_BLOCK_BEGIN
+    if (!vktrace_replay::HWFeatureVerify::instance().CheckParam()) {
+        vktrace_LogError("Bad HW Feature param");
+        return -1;
+    }
+    HW_FEATURE_VERIFY_CODE_BLOCK_END
 
     // merge settings so that new settings will get written into the settings file
     vktrace_SettingGroup_merge(&g_replaySettingGroup, &pAllSettings, &numAllSettings);
@@ -894,7 +951,7 @@ int vkreplay_main(int argc, char** argv, vktrace_replay::ReplayDisplayImp* pDisp
 
     extern bool g_hasAsApi;
     g_hasAsApi = (fileHeader.bit_flags & VKTRACE_USE_ACCELERATION_STRUCTURE_API_BIT) ? true : false;
-    if (fileHeader.trace_file_version == VKTRACE_TRACE_FILE_VERSION_10 || replaySettings.forceRayQuery == TRUE) {
+    if (fileHeader.trace_file_version == VKTRACE_TRACE_FILE_VERSION_10) {
         g_hasAsApi = true;
     }
 
@@ -984,6 +1041,9 @@ int vkreplay_main(int argc, char** argv, vktrace_replay::ReplayDisplayImp* pDisp
     // read the meta data json string
     if (pFileHeader->trace_file_version > VKTRACE_TRACE_FILE_VERSION_9 && pFileHeader->meta_data_offset > 0) {
         readMetaData(pFileHeader);
+    }
+    if (replaySettings.forceRayQuery == TRUE) {
+        g_hasAsApi = true;
     }
 
     // read portability table if it exists

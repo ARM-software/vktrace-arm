@@ -633,13 +633,13 @@ int getVertexIndexStride(VkIndexType type) {
     int stride = 0;
     switch(type) {
     case VK_INDEX_TYPE_UINT8_EXT:
-        stride = 8;
+        stride = 1;
         break;
     case VK_INDEX_TYPE_UINT16:
-        stride = 16;
+        stride = 2;
         break;
     case VK_INDEX_TYPE_UINT32:
-        stride = 32;
+        stride = 4;
         break;
     default:
         assert(VK_INDEX_TYPE_NONE_KHR == type);
@@ -677,6 +677,8 @@ void add_VkAccelerationStructureBuildGeometryInfoKHR_to_packet(vktrace_trace_pac
             vktrace_add_pnext_structs_to_trace_packet(pHeader, (void*)&(*ppStruct)->pGeometries[i], (void*)&pInStruct->pGeometries[i]);
             VkAccelerationStructureGeometryDataKHR *pDst = (VkAccelerationStructureGeometryDataKHR*)&((*ppStruct)->pGeometries[i].geometry);
             VkAccelerationStructureGeometryDataKHR *pSrc = (VkAccelerationStructureGeometryDataKHR*)&((pInStruct)->pGeometries[i].geometry);
+            // The size of instance data is usually not too large. So we record instance data of vkBuildAccelerationStructuresKHR into
+            // the package, no matter pSrc->instances.data.hostAddress is a real system memory address or mapped from a VkBuffer
             if (pInStruct->pGeometries[i].geometryType == VK_GEOMETRY_TYPE_INSTANCES_KHR && pBuildRangeInfos != NULL && hostAddr) {
                 vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pDst->instances.data.hostAddress), sizeof(VkAccelerationStructureInstanceKHR) * pBuildRangeInfos[i].primitiveCount, pSrc->instances.data.hostAddress);
                 vktrace_finalize_buffer_address(pHeader, (void**)&(pDst->instances.data.hostAddress));
@@ -684,7 +686,7 @@ void add_VkAccelerationStructureBuildGeometryInfoKHR_to_packet(vktrace_trace_pac
             else if (pInStruct->pGeometries[i].geometryType == VK_GEOMETRY_TYPE_TRIANGLES_KHR && pBuildRangeInfos != NULL && hostAddr) {
                 if (geometryDataBit[i] & AS_GEOMETRY_TRIANGLES_VERTEXDATA_BIT) {
                     int vbOffset = pBuildRangeInfos[i].primitiveOffset + pSrc->triangles.vertexStride * pBuildRangeInfos[i].firstVertex;
-                    int vbUsedSize = pSrc->triangles.vertexStride * pBuildRangeInfos[i].primitiveCount * 3;
+                    int vbUsedSize = pSrc->triangles.vertexStride * pSrc->triangles.maxVertex;
                     vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pDst->triangles.vertexData.hostAddress), vbUsedSize, ((char*)pSrc->triangles.vertexData.hostAddress) + vbOffset);
                     vktrace_finalize_buffer_address(pHeader, (void**)&(pDst->triangles.vertexData.hostAddress));
                 }
@@ -727,6 +729,17 @@ void add_VkAccelerationStructureBuildGeometryInfoKHR_to_packet(vktrace_trace_pac
     if (addSelf) {
         vktrace_finalize_buffer_address(pHeader, (void**)ppStruct);
     }
+}
+
+void add_VkDebugUtilsLabelEXT_to_packet(vktrace_trace_packet_header* pHeader, VkDebugUtilsLabelEXT** ppStruct,
+                                        const VkDebugUtilsLabelEXT* pInStruct) {
+    vktrace_add_buffer_to_trace_packet(pHeader, (void**)ppStruct, sizeof(VkDebugUtilsLabelEXT), pInStruct);
+    vktrace_add_pnext_structs_to_trace_packet(pHeader, (void**)ppStruct, (void*)pInStruct);
+    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&((*ppStruct)->pLabelName),
+                                       (pInStruct->pLabelName != NULL) ? strlen(pInStruct->pLabelName) + 1 : 0,
+                                       pInStruct->pLabelName);
+    vktrace_finalize_buffer_address(pHeader, (void**)&((*ppStruct)->pLabelName));
+    vktrace_finalize_buffer_address(pHeader, (void**)ppStruct);
 }
 
 void add_VkInstanceCreateInfo_to_packet(vktrace_trace_packet_header* pHeader, VkInstanceCreateInfo** ppStruct,
@@ -819,8 +832,12 @@ VkAccelerationStructureBuildGeometryInfoKHR* interpret_VkAccelerationStructureBu
         if (pVkASBuildGeometryInfoKHR->geometryCount > 0 && pVkASBuildGeometryInfoKHR->pGeometries) {
             for (i = 0; i < pVkASBuildGeometryInfoKHR->geometryCount; i++) {
                 VkAccelerationStructureGeometryKHR *pTmp = (VkAccelerationStructureGeometryKHR *)&pVkASBuildGeometryInfoKHR->pGeometries[i];
+                // Host instance data are stored in the package, so it can be interpreted here.
                 if (pTmp->geometryType == VK_GEOMETRY_TYPE_INSTANCES_KHR && hostAddress)
                     pTmp->geometry.instances.data.hostAddress = vktrace_trace_packet_interpret_buffer_pointer(pHeader, (intptr_t)pTmp->geometry.instances.data.hostAddress);
+                // Host triangle or AABB data might be a real system memory address, or mapped from a VkBuffer, it cannot be decided here. So we leave it to replay functions.
+                // Here is a flaw: we might get an offset instead of the correct address when vktracedump. Need to be solved in the future.
+                // TODO: find a way to output correct value when vktracedump
             }
         }
         if (pVkASBuildGeometryInfoKHR->geometryCount > 0 && pVkASBuildGeometryInfoKHR->ppGeometries) {
@@ -831,6 +848,15 @@ VkAccelerationStructureBuildGeometryInfoKHR* interpret_VkAccelerationStructureBu
         }
     }
     return pVkASBuildGeometryInfoKHR;
+}
+
+VkDebugUtilsLabelEXT* interpret_VkDebugUtilsLabelEXT(vktrace_trace_packet_header* pHeader, intptr_t ptr_variable) {
+    VkDebugUtilsLabelEXT* pVkDebugUtilsLabelEXT =
+        (VkDebugUtilsLabelEXT*)vktrace_trace_packet_interpret_buffer_pointer(pHeader, (intptr_t)ptr_variable);
+    if (pVkDebugUtilsLabelEXT != NULL) {
+        pVkDebugUtilsLabelEXT->pLabelName = (const char*)vktrace_trace_packet_interpret_buffer_pointer(pHeader, (intptr_t)pVkDebugUtilsLabelEXT->pLabelName);
+    }
+    return pVkDebugUtilsLabelEXT;
 }
 
 VkInstanceCreateInfo* interpret_VkInstanceCreateInfo(vktrace_trace_packet_header* pHeader, intptr_t ptr_variable) {

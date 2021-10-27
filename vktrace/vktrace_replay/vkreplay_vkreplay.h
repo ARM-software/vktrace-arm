@@ -474,6 +474,7 @@ class vkReplay {
     std::unordered_map<VkDeviceMemory, AHardwareBuffer*> traceDeviceMemoryToAHWBuf;
 
     std::unordered_set<VkDeviceMemory> traceSkippedDeviceMemories;
+    std::vector<VkImage> hardwarebufferImage;
 
     // Map VkSurfaceKHR to VkSurfaceCapabilitiesKHR
     std::unordered_map<VkSurfaceKHR, VkSurfaceCapabilitiesKHR> replaySurfaceCapabilities;
@@ -496,9 +497,11 @@ class vkReplay {
     std::unordered_map<VkBuffer, VkDeviceMemory> traceBufferToReplayMemory;
     std::unordered_map<VkAccelerationStructureKHR, void*> replayASToCopyAddress;
     std::unordered_map<void*, traceMemoryMapInfo> traceAddressToTraceMemoryMapInfo;
-    std::unordered_map<VkBuffer, VkAccelerationStructureBuildSizesInfoKHR> replayBufferToASBuildSizes;
+    std::unordered_map<VkBuffer, VkDeviceSize> replayBufferToASBuildSizes;
     std::unordered_map<VkAccelerationStructureKHR, VkAccelerationStructureBuildSizesInfoKHR> replayASToASBuildSizes;
-    std::unordered_map<VkDeviceSize, VkAccelerationStructureBuildSizesInfoKHR> traceSizeToReplayASBuildSizes;
+    std::unordered_map<VkDeviceSize, VkAccelerationStructureBuildSizesInfoKHR> traceASSizeToReplayASBuildSizes;
+    std::unordered_map<VkDeviceSize, VkAccelerationStructureBuildSizesInfoKHR> traceUpdateSizeToReplayASBuildSizes;
+    std::unordered_map<VkDeviceSize, VkAccelerationStructureBuildSizesInfoKHR> traceBuildSizeToReplayASBuildSizes;
     std::unordered_map<VkDeviceSize, VkDeviceSize> traceScratchSizeToReplayScratchSize;
     std::unordered_map<VkDeviceMemory, void*> replayMemoryToMapAddress;
     std::unordered_map<VkDevice, deviceFeatureSupport> replayDeviceToFeatureSupport;
