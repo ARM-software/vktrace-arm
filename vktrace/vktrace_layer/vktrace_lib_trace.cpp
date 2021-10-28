@@ -103,10 +103,6 @@ std::unordered_map<VkAccelerationStructureKHR, VkBuffer> g_AStoBuffer;
 #endif
 std::unordered_map<void*, memoryMapParam> g_memoryMapInfo;
 std::unordered_map<VkDevice, deviceFeatureSupport> g_deviceToFeatureSupport;
-std::unordered_map<VkDeviceAddress, VkBuffer> g_deviceAddressToBuffer;
-std::vector<VkBuffer> g_bufferInCmdBuildAS;
-std::vector<VkCommandBuffer> g_commandBufferInCmdBuildAS;
-extern std::map<uint64_t, cmdBuildASPacketInfo> g_cmdBuildASPacket;
 
 // declared as extern in vktrace_lib_helpers.h
 VKTRACE_CRITICAL_SECTION g_memInfoLock;
@@ -300,9 +296,6 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkAllocateMemory(VkDevic
         if (ret) {
             vktrace_LogError("AM: Lock the hardware buffer failed !");
         } else {
-            if (ahwbuf_desc.width > ahwbuf_desc.stride) {
-                vktrace_LogError("NOTE: AHardwareBuffer_lock function is abnormal(stride = %u, width = %u)!", ahwbuf_desc.stride, ahwbuf_desc.width);
-            }
             uint32_t stride = (ahwbuf_desc.width > ahwbuf_desc.stride) ? ahwbuf_desc.width : ahwbuf_desc.stride;
             import_buf_size = stride * ahwbuf_desc.height * getAHardwareBufBPP(ahwbuf_desc.format);
             additional_size = sizeof(AHardwareBuffer_Desc) + import_buf_size;
@@ -446,11 +439,6 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkAllocateMemory(VkDevic
         info.ObjectInfo.DeviceMemory.memoryTypeIndex = pAllocateInfo->memoryTypeIndex;
         info.ObjectInfo.DeviceMemory.propertyFlags = trim::LookUpMemoryProperties(device, pAllocateInfo->memoryTypeIndex);
         info.ObjectInfo.DeviceMemory.size = pAllocateInfo->allocationSize;
-        VkMemoryDedicatedAllocateInfo *dedicatedAllocateInfo = (VkMemoryDedicatedAllocateInfo*)find_ext_struct((const vulkan_struct_header*)pAllocateInfo->pNext, VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO);
-        if (dedicatedAllocateInfo != nullptr) {
-            info.ObjectInfo.DeviceMemory.boundToBuffer = dedicatedAllocateInfo->buffer;
-            info.ObjectInfo.DeviceMemory.boundToImage = dedicatedAllocateInfo->image;
-        }
         if (pAllocator != NULL) {
             info.ObjectInfo.DeviceMemory.pAllocator = pAllocator;
             trim::add_Allocator(pAllocator);
@@ -494,12 +482,12 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkMapMemory(VkDevice dev
     vktrace_set_packet_entrypoint_end_time(pHeader);
     entry = find_mem_info_entry(memory);
     memoryMapParam param = {0};
+    if (result == VK_SUCCESS) {
+        param.memory = memory; param.offset = offset; param.size = size;
+    }
     // For vktrace usage, clamp the memory size to the total size less offset if VK_WHOLE_SIZE is specified.
     if (size == VK_WHOLE_SIZE) {
         size = entry->totalSize - offset;
-    }
-    if (result == VK_SUCCESS) {
-        param.memory = memory; param.offset = offset; param.size = size;
     }
 #if defined(USE_PAGEGUARD_SPEEDUP)
     // Pageguard handling will change real mapped memory pointer to a pointer
@@ -639,21 +627,6 @@ VKTRACER_EXPORT VKAPI_ATTR void VKAPI_CALL __HOOKED_vkFreeMemory(VkDevice device
     trim::TraceLock<std::mutex> lock(g_mutex_trace);
     vktrace_trace_packet_header* pHeader;
     packet_vkFreeMemory* pPacket = NULL;
-    bool bFind = false;
-    if (g_trimEnabled && !g_trimIsInTrim) {
-        for (auto& e : g_bufferToDeviceMemory) {
-            if (e.second.memory == memory) {
-                auto it0 = std::find(g_bufferInCmdBuildAS.begin(), g_bufferInCmdBuildAS.end(), e.first);
-                if (it0 != g_bufferInCmdBuildAS.end()) {
-                    bFind = true;
-                    break;
-                }
-            }
-        }
-    }
-    if (bFind) {
-        return ;
-    }
 #if defined(USE_PAGEGUARD_SPEEDUP)
     // There are some apps call vkFreeMemory without call vkUnmapMemory on
     // same memory object. in that situation, capture/playback run into error.
@@ -1077,11 +1050,6 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkBeginCommandBuffer(VkC
         trim::clear_binding_Pipelines_from_CommandBuffer(commandBuffer);
 
         if (g_trimIsInTrim) {
-            auto queryCmd = g_queryCmdStatus.find(commandBuffer);
-            if (queryCmd != g_queryCmdStatus.end()) {
-                queryCmd->second.clear();
-            }
-
             if (pBeginInfo->pInheritanceInfo) {
                 trim::mark_Framebuffer_reference(pBeginInfo->pInheritanceInfo->framebuffer);
             }
@@ -1558,7 +1526,7 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkBuildAccelerationStruc
             else if (pInfos[i].pGeometries[j].geometryType == VK_GEOMETRY_TYPE_TRIANGLES_KHR) {
                 if (pInfos[i].pGeometries[j].geometry.triangles.vertexData.hostAddress != NULL && !isMapMemoryAddress(pInfos[i].pGeometries[j].geometry.triangles.vertexData.hostAddress)) {
                     //int vbOffset = ppBuildRangeInfos[i][j].primitiveOffset + pInfos[i].pGeometries[j].geometry.triangles.vertexStride * ppBuildRangeInfos[i][j].firstVertex;
-                    int vbUsedSize = pInfos[i].pGeometries[j].geometry.triangles.vertexStride * pInfos[i].pGeometries[j].geometry.triangles.maxVertex;
+                    int vbUsedSize = pInfos[i].pGeometries[j].geometry.triangles.vertexStride * ppBuildRangeInfos[i][j].primitiveCount * 3;
                     //int vbTotalSize = vbOffset + vbUsedSize;
                     pInfosSize += vbUsedSize;
                     hostAddressBit[i][j] = hostAddressBit[i][j] | AS_GEOMETRY_TRIANGLES_VERTEXDATA_BIT;
@@ -1723,108 +1691,6 @@ VKTRACER_EXPORT VKAPI_ATTR void VKAPI_CALL __HOOKED_vkCmdBuildAccelerationStruct
         if (g_trimIsInTrim) {
             trim::write_packet(pHeader);
         } else {
-            bool bASLiving = true;
-            for (uint32_t i = 0; i < infoCount; i++) {
-                if (pInfos[i].mode == VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR) {
-                    trim::ObjectInfo* pDstInfo = trim::get_AccelerationStructure_objectInfo(pInfos[i].dstAccelerationStructure);
-                    if (pDstInfo == nullptr) {
-                       bASLiving = false;
-                       break;
-                    }
-                    trim::mark_AccelerationStructure_reference(pInfos[i].dstAccelerationStructure);
-                } else if (pInfos[i].mode == VK_BUILD_ACCELERATION_STRUCTURE_MODE_UPDATE_KHR) {
-                    trim::ObjectInfo* pSrcInfo = trim::get_AccelerationStructure_objectInfo(pInfos[i].srcAccelerationStructure);
-                    trim::ObjectInfo* pDstInfo = trim::get_AccelerationStructure_objectInfo(pInfos[i].dstAccelerationStructure);
-                    if (pSrcInfo == nullptr || pDstInfo == nullptr) {
-                       bASLiving = false;
-                       break;
-                    }
-                    trim::mark_AccelerationStructure_reference(pInfos[i].srcAccelerationStructure);
-                    trim::mark_AccelerationStructure_reference(pInfos[i].dstAccelerationStructure);
-                }
-            }
-            if (bASLiving) {
-                auto it = std::find(g_commandBufferInCmdBuildAS.begin(), g_commandBufferInCmdBuildAS.end(), commandBuffer);
-                if (it == g_commandBufferInCmdBuildAS.end()) {
-                    g_commandBufferInCmdBuildAS.push_back(commandBuffer);
-                }
-                trim::ObjectInfo* pCBInfo = trim::get_CommandBuffer_objectInfo(commandBuffer);
-                if (pCBInfo == nullptr) {
-                    vktrace_LogError("Can't find the command buffer object.");
-                } else {
-                    cmdBuildASPacketInfo packetInfo = {pCBInfo->ObjectInfo.CommandBuffer.commandPool, trim::copy_packet(pHeader)};
-                    g_cmdBuildASPacket[pHeader->global_packet_index] = packetInfo;
-                }
-                for (uint32_t i = 0; i < infoCount; ++i) {
-                    for (uint32_t j = 0; j < pInfos[i].geometryCount; ++j) {
-                        switch (pInfos[i].pGeometries[j].geometryType) {
-                            case VK_GEOMETRY_TYPE_TRIANGLES_KHR:
-                            if (pInfos[i].pGeometries[j].geometry.triangles.vertexData.deviceAddress != 0) {
-                                auto it = g_deviceAddressToBuffer.find(pInfos[i].pGeometries[j].geometry.triangles.vertexData.deviceAddress);
-                                if (it == g_deviceAddressToBuffer.end()) {
-                                    vktrace_LogError("vertexData device address can't find.");
-                                } else {
-                                    auto it0 = std::find(g_bufferInCmdBuildAS.begin(), g_bufferInCmdBuildAS.end(),it->second);
-                                    if (it0 == g_bufferInCmdBuildAS.end()) {
-                                        g_bufferInCmdBuildAS.push_back(it->second);
-                                    }
-                                }
-                            }
-                            if (pInfos[i].pGeometries[j].geometry.triangles.indexData.deviceAddress != 0) {
-                                auto it = g_deviceAddressToBuffer.find(pInfos[i].pGeometries[j].geometry.triangles.indexData.deviceAddress);
-                                if (it == g_deviceAddressToBuffer.end()) {
-                                    vktrace_LogError("indexData device address can't find.");
-                                } else {
-                                    auto it0 = std::find(g_bufferInCmdBuildAS.begin(), g_bufferInCmdBuildAS.end(),it->second);
-                                    if (it0 == g_bufferInCmdBuildAS.end()) {
-                                        g_bufferInCmdBuildAS.push_back(it->second);
-                                    }
-                                }
-                            }
-                            if (pInfos[i].pGeometries[j].geometry.triangles.transformData.deviceAddress != 0) {
-                                auto it = g_deviceAddressToBuffer.find(pInfos[i].pGeometries[j].geometry.triangles.transformData.deviceAddress);
-                                if (it == g_deviceAddressToBuffer.end()) {
-                                    vktrace_LogError("transformData device address can't find.");
-                                } else {
-                                    auto it0 = std::find(g_bufferInCmdBuildAS.begin(), g_bufferInCmdBuildAS.end(),it->second);
-                                    if (it0 == g_bufferInCmdBuildAS.end()) {
-                                        g_bufferInCmdBuildAS.push_back(it->second);
-                                    }
-                                }
-                            }
-                            break;
-                            case VK_GEOMETRY_TYPE_AABBS_KHR:
-                            if (pInfos[i].pGeometries[j].geometry.aabbs.data.deviceAddress != 0) {
-                                auto it = g_deviceAddressToBuffer.find(pInfos[i].pGeometries[j].geometry.aabbs.data.deviceAddress);
-                                if (it == g_deviceAddressToBuffer.end()) {
-                                    vktrace_LogError("aabbsData device address can't find.");
-                                } else {
-                                    auto it0 = std::find(g_bufferInCmdBuildAS.begin(), g_bufferInCmdBuildAS.end(),it->second);
-                                    if (it0 == g_bufferInCmdBuildAS.end()) {
-                                        g_bufferInCmdBuildAS.push_back(it->second);
-                                    }
-                                }
-                            }
-                            break;
-                            case VK_GEOMETRY_TYPE_INSTANCES_KHR:
-                            if (pInfos[i].pGeometries[j].geometry.instances.data.deviceAddress != 0) {
-                                auto it = g_deviceAddressToBuffer.find(pInfos[i].pGeometries[j].geometry.instances.data.deviceAddress);
-                                if (it == g_deviceAddressToBuffer.end()) {
-                                    vktrace_LogError("instancesData device address can't find.");
-                                } else {
-                                    auto it0 = std::find(g_bufferInCmdBuildAS.begin(), g_bufferInCmdBuildAS.end(),it->second);
-                                    if (it0 == g_bufferInCmdBuildAS.end()) {
-                                        g_bufferInCmdBuildAS.push_back(it->second);
-                                    }
-                                }
-                            }
-                            break;
-                            default:
-                                vktrace_LogError("Can't support the geometry type.");
-                        }
-                    }
-                }
-            }
             vktrace_delete_trace_packet(&pHeader);
         }
     }
@@ -2681,8 +2547,7 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkGetQueryPoolResults(Vk
         FINISH_TRACE_PACKET();
     } else {
         vktrace_finalize_trace_packet(pHeader);
-        auto it = g_queryPoolStatus.find(queryPool);
-        if (g_trimIsInTrim && it != g_queryPoolStatus.end() && it->second) {
+        if (g_trimIsInTrim) {
             trim::mark_QueryPool_reference(queryPool);
             trim::write_packet(pHeader);
         } else {
@@ -3469,14 +3334,6 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkQueueSubmit(VkQueue qu
                             assert(trim::get_CommandBuffer_objectInfo(pSubmits[s].pCommandBuffers[i])->vkObject != (uint64_t)it->first);
                         }
                         trim::mark_CommandBuffer_reference(pSubmits[s].pCommandBuffers[i]);
-                        auto queryCmd = g_queryCmdStatus.find(pSubmits[s].pCommandBuffers[i]);
-                        if (queryCmd != g_queryCmdStatus.end()) {
-                            for (auto it = queryCmd->second.begin(); it != queryCmd->second.end(); it++) {
-                                if (g_queryPoolStatus.find(it->first) != g_queryPoolStatus.end()) {
-                                    g_queryPoolStatus[it->first] = (it->second == QueryCmd_Begin) ? true : false;
-                                }
-                            }
-                        }
                     }
                 }
             }
@@ -4235,7 +4092,7 @@ VKTRACER_EXPORT VKAPI_ATTR void VKAPI_CALL __HOOKED_vkCmdBeginRenderPass(VkComma
             trim::ObjectInfo* pFramebuffer = trim::get_Framebuffer_objectInfo(pRenderPassBegin->framebuffer);
             trim::ObjectInfo* pRenderPass = trim::get_RenderPass_objectInfo(pRenderPassBegin->renderPass);
             if (pRenderPass != nullptr && pFramebuffer != nullptr) {
-                assert(pRenderPass->ObjectInfo.RenderPass.attachmentCount <= pFramebuffer->ObjectInfo.Framebuffer.attachmentCount);
+                assert(pRenderPass->ObjectInfo.RenderPass.attachmentCount == pFramebuffer->ObjectInfo.Framebuffer.attachmentCount);
                 uint32_t minAttachmentCount = std::min<uint32_t>(pRenderPass->ObjectInfo.RenderPass.attachmentCount,
                                                                  pFramebuffer->ObjectInfo.Framebuffer.attachmentCount);
                 for (uint32_t i = 0; i < minAttachmentCount; i++) {
@@ -4299,7 +4156,7 @@ VKTRACER_EXPORT VKAPI_ATTR void VKAPI_CALL __HOOKED_vkCmdBeginRenderPass2KHR(
             trim::ObjectInfo* pFramebuffer = trim::get_Framebuffer_objectInfo(pRenderPassBegin->framebuffer);
             trim::ObjectInfo* pRenderPass = trim::get_RenderPass_objectInfo(pRenderPassBegin->renderPass);
             if (pRenderPass != nullptr && pFramebuffer != nullptr) {
-                assert(pRenderPass->ObjectInfo.RenderPass.attachmentCount <= pFramebuffer->ObjectInfo.Framebuffer.attachmentCount);
+                assert(pRenderPass->ObjectInfo.RenderPass.attachmentCount == pFramebuffer->ObjectInfo.Framebuffer.attachmentCount);
                 uint32_t minAttachmentCount = std::min<uint32_t>(pRenderPass->ObjectInfo.RenderPass.attachmentCount,
                                                                  pFramebuffer->ObjectInfo.Framebuffer.attachmentCount);
                 for (uint32_t i = 0; i < minAttachmentCount; i++) {
@@ -4596,16 +4453,6 @@ VKTRACER_EXPORT VKAPI_ATTR void VKAPI_CALL __HOOKED_vkDestroyBuffer(VkDevice dev
     trim::TraceLock<std::mutex> lock(g_mutex_trace);
     vktrace_trace_packet_header* pHeader;
     packet_vkDestroyBuffer* pPacket = NULL;
-    bool bFind = false;
-    if (g_trimEnabled && !g_trimIsInTrim) {
-        auto it = std::find(g_bufferInCmdBuildAS.begin(), g_bufferInCmdBuildAS.end(), buffer);
-        if (it != g_bufferInCmdBuildAS.end()) {
-            bFind = true;
-        }
-    }
-    if (bFind) {
-        return ;
-    }
     CREATE_TRACE_PACKET(vkDestroyBuffer, sizeof(VkAllocationCallbacks));
     mdd(device)->devTable.DestroyBuffer(device, buffer, pAllocator);
     vktrace_set_packet_entrypoint_end_time(pHeader);

@@ -62,7 +62,6 @@ set(SRC_LIST
     vkreplay_vkdisplay.cpp
     vkreplay_preload.cpp
     vkreplay_pipelinecache.cpp
-    vkreplay_hw_feature_verify.cpp
     ${GENERATED_FILES_DIR}/vkreplay_vk_replay_gen.cpp
     vkreplay_factory.h
     vkreplay_seq.h

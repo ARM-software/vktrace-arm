@@ -577,14 +577,11 @@ StateTracker &StateTracker::operator=(const StateTracker &other) {
         COPY_PACKET(obj->second.ObjectInfo.Buffer.pBindBufferMemoryPacket);
         COPY_PACKET(obj->second.ObjectInfo.Buffer.pMapMemoryPacket);
         COPY_PACKET(obj->second.ObjectInfo.Buffer.pUnmapMemoryPacket);
-        COPY_PACKET(obj->second.ObjectInfo.Buffer.pGetBufferDeviceAddressPacket);
-        COPY_PACKET(obj->second.ObjectInfo.Buffer.pGetBufferOpaqueCaptureAddress);
     }
 
     createdAccelerationStructures = other.createdAccelerationStructures;
     for (auto obj = createdAccelerationStructures.begin(); obj != createdAccelerationStructures.end(); obj++) {
         COPY_PACKET(obj->second.ObjectInfo.AccelerationStructure.pCreatePacket);
-        COPY_PACKET(obj->second.ObjectInfo.AccelerationStructure.pGetAccelerationStructureDeviceAddressPacket);
     }
 
     buildAccelerationStructures = other.buildAccelerationStructures;
@@ -1572,8 +1569,6 @@ void StateTracker::remove_Buffer(const VkBuffer var) {
         vktrace_delete_trace_packet(&pInfo->ObjectInfo.Buffer.pBindBufferMemoryPacket);
         vktrace_delete_trace_packet(&pInfo->ObjectInfo.Buffer.pMapMemoryPacket);
         vktrace_delete_trace_packet(&pInfo->ObjectInfo.Buffer.pUnmapMemoryPacket);
-        vktrace_delete_trace_packet(&pInfo->ObjectInfo.Buffer.pGetBufferDeviceAddressPacket);
-        vktrace_delete_trace_packet(&pInfo->ObjectInfo.Buffer.pGetBufferOpaqueCaptureAddress);
     }
     createdBuffers.erase(var);
 }
@@ -1832,7 +1827,6 @@ void StateTracker::remove_AccelerationStructure(const VkAccelerationStructureKHR
     ObjectInfo *pInfo = get_AccelerationStructure(var);
     if (pInfo != nullptr) {
         vktrace_delete_trace_packet(&pInfo->ObjectInfo.AccelerationStructure.pCreatePacket);
-        vktrace_delete_trace_packet(&pInfo->ObjectInfo.AccelerationStructure.pGetAccelerationStructureDeviceAddressPacket);
     }
     createdAccelerationStructures.erase(var);
 }

@@ -142,8 +142,6 @@ typedef struct _Trim_ObjectInfo {
             vktrace_trace_packet_header *pMapMemoryPacket;
             vktrace_trace_packet_header *pUnmapMemoryPacket;
             vktrace_trace_packet_header *pPersistentlyMapMemoryPacket;
-            VkBuffer boundToBuffer;
-            VkImage boundToImage;
         } DeviceMemory;
         struct _Image {  // VkImage
             vktrace_trace_packet_header *pCreatePacket;
@@ -182,8 +180,6 @@ typedef struct _Trim_ObjectInfo {
             vktrace_trace_packet_header *pBindBufferMemoryPacket;
             vktrace_trace_packet_header *pMapMemoryPacket;
             vktrace_trace_packet_header *pUnmapMemoryPacket;
-            vktrace_trace_packet_header *pGetBufferDeviceAddressPacket;
-            vktrace_trace_packet_header *pGetBufferOpaqueCaptureAddress;
             uint32_t queueFamilyIndex;
             VkAccessFlags accessFlags;
             VkDeviceMemory memory;
@@ -281,7 +277,6 @@ typedef struct _Trim_ObjectInfo {
         struct _AccelerationStructure {  // VkAccelerationStructureKHR
             vktrace_trace_packet_header *pCreatePacket;
             const VkAllocationCallbacks *pAllocator;
-            vktrace_trace_packet_header *pGetAccelerationStructureDeviceAddressPacket;
         } AccelerationStructure;
         struct _Semaphore {  // VkSemaphore
             vktrace_trace_packet_header *pCreatePacket;

@@ -55,22 +55,10 @@ extern bool g_trimAlreadyFinished;
 extern bool g_TraceLockEnabled;
 extern std::unordered_map<VkDevice, VkPhysicalDevice> g_deviceToPhysicalDevice;
 
-enum QueryCmd {
-    QueryCmd_Reset = 0,
-    QueryCmd_Begin = 1
-};
-extern std::unordered_map<VkCommandBuffer, std::unordered_map<VkQueryPool, QueryCmd>> g_queryCmdStatus;
-extern std::unordered_map<VkQueryPool, bool> g_queryPoolStatus; // true - query active; false - query reset
-
 typedef struct _DeviceMemory {
     VkDevice device;
     VkDeviceMemory memory;
 } DeviceMemory;
-
-typedef struct _cmdBuildASPacketInfo {
-    VkCommandPool commandPool;
-    vktrace_trace_packet_header* pHeader;
-} cmdBuildASPacketInfo;
 
 // This mutex is used to protect API calls sequence
 // during trace

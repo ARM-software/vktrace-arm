@@ -89,8 +89,6 @@ typedef struct vkreplayer_settings {
     BOOL disableAsCaptureReplay;
     BOOL disableBufferCaptureReplay;
     BOOL forceRayQuery;
-    unsigned int triggerScript;
-    char* pScriptPath;
     unsigned int perfMeasuringMode;
 } vkreplayer_settings;
 

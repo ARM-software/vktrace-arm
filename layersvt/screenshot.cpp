@@ -1969,9 +1969,6 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateSemaphore(VkDevice device, const VkSemaphor
     if (g_frameNumber == 0 && g_ruiFrameNumber != 0 && screenshotFrames.find(g_ruiFrameNumber) != screenshotFrames.end()) {
         saveUIFrame(g_ruiFrameNumber);
     }
-    if (g_frameNumber == 0 && g_ruiFrameNumber != 0 && screenshotFrames.empty() && isInScreenShotFrameRange(g_ruiFrameNumber, &screenShotFrameRange, nullptr)) {
-        saveUIFrame(g_ruiFrameNumber);
-    }
     return result;
 }
 

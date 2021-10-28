@@ -164,8 +164,6 @@ void* vktrace_trace_packet_interpret_buffer_pointer(vktrace_trace_packet_header*
 // Adding to packets TODO: Move to codegen
 void add_VkApplicationInfo_to_packet(vktrace_trace_packet_header* pHeader, VkApplicationInfo** ppStruct,
                                      const VkApplicationInfo* pInStruct);
-void add_VkDebugUtilsLabelEXT_to_packet(vktrace_trace_packet_header* pHeader, VkDebugUtilsLabelEXT** ppStruct,
-                                        const VkDebugUtilsLabelEXT* pInStruct);
 void add_VkAccelerationStructureBuildGeometryInfoKHR_to_packet(vktrace_trace_packet_header* pHeader, VkAccelerationStructureBuildGeometryInfoKHR** ppStruct, VkAccelerationStructureBuildGeometryInfoKHR* pInStruct, bool addSelf, const VkAccelerationStructureBuildRangeInfoKHR* pBuildRangeInfos, bool hostAddr, char* geometryDataBit);
 void add_VkInstanceCreateInfo_to_packet(vktrace_trace_packet_header* pHeader, VkInstanceCreateInfo** ppStruct,
                                         VkInstanceCreateInfo* pInStruct);
@@ -175,7 +173,6 @@ void add_VkDeviceCreateInfo_to_packet(vktrace_trace_packet_header* pHeader, VkDe
 BOOL vktrace_append_portabilitytable(uint16_t packet_id);
 // Interpreting packets TODO: Move to codegen
 VkAccelerationStructureBuildGeometryInfoKHR* interpret_VkAccelerationStructureBuildGeometryInfoKHR(vktrace_trace_packet_header* pHeader, intptr_t ptr_variable, bool hostAddress);
-VkDebugUtilsLabelEXT* interpret_VkDebugUtilsLabelEXT(vktrace_trace_packet_header* pHeader, intptr_t ptr_variable);
 VkInstanceCreateInfo* interpret_VkInstanceCreateInfo(vktrace_trace_packet_header* pHeader, intptr_t ptr_variable);
 VkDeviceCreateInfo* interpret_VkDeviceCreateInfo(vktrace_trace_packet_header* pHeader, intptr_t ptr_variable);
 void interpret_VkPipelineShaderStageCreateInfo(vktrace_trace_packet_header* pHeader, VkPipelineShaderStageCreateInfo* pShader);
