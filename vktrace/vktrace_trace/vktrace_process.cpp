@@ -383,14 +383,29 @@ VKTRACE_THREAD_ROUTINE_RETURN_TYPE Process_RunRecordTraceThread(LPVOID _threadIn
             if ((file_header.trace_file_version > VKTRACE_TRACE_FILE_VERSION_10)
                 && (pHeader->packet_id == VKTRACE_TPI_VK_vkCreateDevice)) {
                 vktrace_trace_packet_header *pCreateDeviceHeader = static_cast<vktrace_trace_packet_header *>(malloc((size_t)pHeader->size));
-                if (pCreateDeviceHeader != nullptr) {
-                    memcpy(pCreateDeviceHeader, pHeader, (size_t)pHeader->size);
-                    pCreateDeviceHeader->pBody = (uintptr_t)(((char*)pCreateDeviceHeader) + sizeof(vktrace_trace_packet_header));
+                if (pCreateDeviceHeader == nullptr) {
+                    vktrace_LogError("DeviceHeader memory malloc failed.");
                 }
-                packet_vkCreateDevice* pPacket = (packet_vkCreateDevice*)pCreateDeviceHeader->pBody;
-                pPacket->pDevice = (VkDevice*)vktrace_trace_packet_interpret_buffer_pointer(pCreateDeviceHeader, (intptr_t)pPacket->pDevice);
-                deviceToFeatures[*pPacket->pDevice] = vktrace_get_trace_packet_tag(pCreateDeviceHeader);
-                delete pCreateDeviceHeader;
+                memcpy(pCreateDeviceHeader, pHeader, (size_t)pHeader->size);
+                pCreateDeviceHeader->pBody = (uintptr_t)(((char*)pCreateDeviceHeader) + sizeof(vktrace_trace_packet_header));
+                VkDevice* pDevice = nullptr;
+                if (file_header.ptrsize == sizeof(void*)) {
+                    packet_vkCreateDevice* pPacket = (packet_vkCreateDevice*)pCreateDeviceHeader->pBody;
+                    pDevice = (VkDevice*)vktrace_trace_packet_interpret_buffer_pointer(pCreateDeviceHeader, (intptr_t)pPacket->pDevice);
+                } else {
+                    uint32_t devicePos = file_header.ptrsize * 4;
+                    intptr_t offset = 0;
+                    if (file_header.ptrsize == 4) {
+                        uint32_t* device = (uint32_t*)(pCreateDeviceHeader->pBody + devicePos);
+                        offset = (intptr_t)(*device);
+                    } else if (file_header.ptrsize == 8){
+                        uint64_t* device = (uint64_t*)(pCreateDeviceHeader->pBody + devicePos);
+                        offset = (intptr_t)(*device);
+                    }
+                    pDevice = (VkDevice*)vktrace_trace_packet_interpret_buffer_pointer(pCreateDeviceHeader, offset);
+                }
+                deviceToFeatures[*pDevice] = vktrace_get_trace_packet_tag(pCreateDeviceHeader);
+                free(pCreateDeviceHeader);
             }
 
             if (pInfo->pTraceFile != NULL) {

@@ -49,7 +49,7 @@
 #include "decompressor.h"
 #include <json/json.h>
 
-vkreplayer_settings replaySettings = {NULL, 1, 0, UINT_MAX, true, false, NULL, NULL, NULL, NULL, NULL, TRUE, TRUE, FALSE, FALSE, FALSE, FALSE, FALSE, 90, FALSE, FALSE, NULL, FALSE, FALSE, FALSE, 0};
+vkreplayer_settings replaySettings = {NULL, 1, 0, UINT_MAX, true, false, NULL, NULL, NULL, NULL, NULL, TRUE, TRUE, FALSE, FALSE, FALSE, FALSE, FALSE, 90, FALSE, FALSE, NULL, FALSE, FALSE, FALSE, FALSE, UINT_MAX, NULL, 0};
 extern vkReplay* g_replay;
 static decompressor* g_decompressor = nullptr;
 
@@ -273,6 +273,20 @@ vktrace_SettingInfo g_settings_info[] = {
      {&replaySettings.forceRayQuery},
      TRUE,
      "Force to replay this trace file as a ray-query one."},
+    {"tsf",
+     "TriggerScriptOnFrame",
+     VKTRACE_SETTING_UINT,
+     {&replaySettings.triggerScript},
+     {&replaySettings.triggerScript},
+     TRUE,
+     "Trigger script on a specific frame."},
+    {"tsp",
+     "scriptPath",
+     VKTRACE_SETTING_STRING,
+     {&replaySettings.pScriptPath},
+     {&replaySettings.pScriptPath},
+     TRUE,
+     "Trigger script path."},
     {"pmm",
      "perfMeasuringMode",
      VKTRACE_SETTING_UINT,
@@ -310,6 +324,18 @@ uint64_t getStartFrame()
 uint64_t getEndFrame()
 {
     return replaySettings.loopEndFrame;
+}
+
+void triggerScript() {
+    char command[512] = {0};
+    memset(command, 0, sizeof(command));
+    #if defined(PLATFORM_LINUX) && !defined(ANDROID)
+        sprintf(command, "/bin/sh %s", g_pReplaySettings->pScriptPath);
+    #else
+        sprintf(command, "/system/bin/sh %s", g_pReplaySettings->pScriptPath);
+    #endif
+    int result = system(command);
+    vktrace_LogAlways("Script %s run result: %d", command, result);
 }
 
 unsigned int replay(vktrace_trace_packet_replay_library* replayer, vktrace_trace_packet_header* packet)
@@ -354,6 +380,9 @@ int main_loop(vktrace_replay::ReplayDisplay display, Sequencer& seq, vktrace_tra
     }
     uint64_t start_time = vktrace_get_time();
     const char* screenshot_list = replaySettings.screenshotList;
+    if (g_pReplaySettings->triggerScript == 0 && g_pReplaySettings->pScriptPath != NULL) {
+        triggerScript();
+    }
 
     while (replaySettings.numLoops > 0) {
         if (replaySettings.numLoops > 1 && replaySettings.screenshotList != NULL) {
@@ -402,6 +431,9 @@ int main_loop(vktrace_replay::ReplayDisplay display, Sequencer& seq, vktrace_tra
                     }
                     // frame control logic
                     unsigned int frameNumber = g_replayer_interface->GetFrameNumber();
+                    if (g_pReplaySettings->triggerScript != UINT_MAX && g_pReplaySettings->pScriptPath != NULL && (frameNumber + 1) == g_pReplaySettings->triggerScript) {
+                        triggerScript();
+                    }
 
                     // Only set the loop start location and start_time in the first loop when loopStartFrame is not 0
                     if (frameNumber == start_frame && start_frame > 0 && replaySettings.numLoops == totalLoops) {
@@ -602,15 +634,15 @@ static bool preloadPortabilityTablePackets() {
             return false;
         }
         vktrace_trace_packet_header* pPacket = vktrace_read_trace_packet(traceFile);
+        if (!pPacket) {
+            return false;
+        }
         if (pPacket->tracer_id == VKTRACE_TID_VULKAN_COMPRESSED) {
             int ret = decompress_packet(g_decompressor, pPacket);
             if (ret != 0) {
                 vktrace_LogError("Decompress packet error.");
                 break;
             }
-        }
-        if (!pPacket) {
-            return false;
         }
         pPacket = interpret_trace_packet_vk(pPacket);
         portabilityTablePackets[i] = (uintptr_t)pPacket;
@@ -894,7 +926,7 @@ int vkreplay_main(int argc, char** argv, vktrace_replay::ReplayDisplayImp* pDisp
 
     extern bool g_hasAsApi;
     g_hasAsApi = (fileHeader.bit_flags & VKTRACE_USE_ACCELERATION_STRUCTURE_API_BIT) ? true : false;
-    if (fileHeader.trace_file_version == VKTRACE_TRACE_FILE_VERSION_10 || replaySettings.forceRayQuery == TRUE) {
+    if (fileHeader.trace_file_version == VKTRACE_TRACE_FILE_VERSION_10) {
         g_hasAsApi = true;
     }
 
@@ -984,6 +1016,9 @@ int vkreplay_main(int argc, char** argv, vktrace_replay::ReplayDisplayImp* pDisp
     // read the meta data json string
     if (pFileHeader->trace_file_version > VKTRACE_TRACE_FILE_VERSION_9 && pFileHeader->meta_data_offset > 0) {
         readMetaData(pFileHeader);
+    }
+    if (replaySettings.forceRayQuery == TRUE) {
+        g_hasAsApi = true;
     }
 
     // read portability table if it exists

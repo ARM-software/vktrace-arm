@@ -28,7 +28,7 @@
 // declared as extern in header
 vkreplayer_settings g_vkReplaySettings;
 
-static vkreplayer_settings s_defaultVkReplaySettings = {NULL, 1, 0, UINT_MAX, true, false, NULL, NULL, NULL, NULL, NULL, TRUE, TRUE, FALSE, FALSE, FALSE, FALSE, FALSE, 90, FALSE, FALSE, NULL, FALSE, FALSE, FALSE, FALSE, 0};
+static vkreplayer_settings s_defaultVkReplaySettings = {NULL, 1, 0, UINT_MAX, true, false, NULL, NULL, NULL, NULL, NULL, TRUE, TRUE, FALSE, FALSE, FALSE, FALSE, FALSE, 90, FALSE, FALSE, NULL, FALSE, FALSE, FALSE, FALSE, UINT_MAX, NULL, 0};
 
 vktrace_SettingInfo g_vk_settings_info[] = {
     {"o",
@@ -202,6 +202,20 @@ vktrace_SettingInfo g_vk_settings_info[] = {
      {&s_defaultVkReplaySettings.forceRayQuery},
      TRUE,
      "Force to replay this trace file as a ray-query one."},
+    {"tsf",
+     "TriggerScriptOnFrame",
+     VKTRACE_SETTING_UINT,
+     {&g_vkReplaySettings.triggerScript},
+     {&s_defaultVkReplaySettings.triggerScript},
+     TRUE,
+     "Trigger script on a specific frame."},
+    {"tsp",
+     "scriptPath",
+     VKTRACE_SETTING_STRING,
+     {&g_vkReplaySettings.pScriptPath},
+     {&s_defaultVkReplaySettings.pScriptPath},
+     TRUE,
+     "Trigger script path."},
     {"pmm",
      "perfMeasuringMode",
      VKTRACE_SETTING_UINT,
