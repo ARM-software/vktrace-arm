@@ -476,6 +476,9 @@ vktrace_trace_packet_header* preload_get_next_packet()
     }
 
     vktrace_trace_packet_header* pHeader = (vktrace_trace_packet_header*)cur_chunk->current_address;
+    if (pHeader->size == 0) {
+        vktrace_LogError("This is a wrong packetage !");
+    }
     cur_chunk->current_address += pHeader->size;
 
     if (cur_chunk->current_address >= boundary_addr) {

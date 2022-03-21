@@ -244,42 +244,74 @@ void StateTracker::clear() {
     m_inTrim_calls.clear();
 
     for (auto renderPassIter = m_renderPassVersions.begin(); renderPassIter != m_renderPassVersions.end(); ++renderPassIter) {
-        std::vector<VkRenderPassCreateInfo *> versions = renderPassIter->second;
+        std::vector<VkApplicationInfo *> versions = renderPassIter->second;
 
         for (uint32_t i = 0; i < versions.size(); i++) {
-            VkRenderPassCreateInfo *pCreateInfo = versions[i];
-
-            for (uint32_t subpass = 0; subpass < pCreateInfo->subpassCount; subpass++) {
-                if (pCreateInfo->pSubpasses[subpass].inputAttachmentCount > 0 &&
-                    pCreateInfo->pSubpasses[subpass].pInputAttachments != nullptr) {
-                    VKTRACE_DELETE(const_cast<VkAttachmentReference *>(pCreateInfo->pSubpasses[subpass].pInputAttachments));
-                }
-
-                if (pCreateInfo->pSubpasses[subpass].colorAttachmentCount > 0) {
-                    if (pCreateInfo->pSubpasses[subpass].pColorAttachments != nullptr) {
-                        VKTRACE_DELETE(const_cast<VkAttachmentReference *>(pCreateInfo->pSubpasses[subpass].pColorAttachments));
+            if (versions[i]->sType == VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO) {
+                VkRenderPassCreateInfo *pCreateInfo = (VkRenderPassCreateInfo*)(versions[i]);
+                for (uint32_t subpass = 0; subpass < pCreateInfo->subpassCount; subpass++) {
+                    if (pCreateInfo->pSubpasses[subpass].inputAttachmentCount > 0 &&
+                        pCreateInfo->pSubpasses[subpass].pInputAttachments != nullptr) {
+                        VKTRACE_DELETE(const_cast<VkAttachmentReference *>(pCreateInfo->pSubpasses[subpass].pInputAttachments));
                     }
 
-                    if (pCreateInfo->pSubpasses[subpass].pResolveAttachments != nullptr) {
-                        VKTRACE_DELETE(const_cast<VkAttachmentReference *>(pCreateInfo->pSubpasses[subpass].pResolveAttachments));
+                    if (pCreateInfo->pSubpasses[subpass].colorAttachmentCount > 0) {
+                        if (pCreateInfo->pSubpasses[subpass].pColorAttachments != nullptr) {
+                            VKTRACE_DELETE(const_cast<VkAttachmentReference *>(pCreateInfo->pSubpasses[subpass].pColorAttachments));
+                        }
+
+                        if (pCreateInfo->pSubpasses[subpass].pResolveAttachments != nullptr) {
+                            VKTRACE_DELETE(const_cast<VkAttachmentReference *>(pCreateInfo->pSubpasses[subpass].pResolveAttachments));
+                        }
+                    }
+
+                    if (pCreateInfo->pSubpasses[subpass].pDepthStencilAttachment != nullptr) {
+                        VKTRACE_DELETE(const_cast<VkAttachmentReference *>(pCreateInfo->pSubpasses[subpass].pDepthStencilAttachment));
+                    }
+
+                    if (pCreateInfo->pSubpasses[subpass].preserveAttachmentCount > 0 &&
+                        pCreateInfo->pSubpasses[subpass].pPreserveAttachments != nullptr) {
+                        VKTRACE_DELETE(const_cast<uint32_t *>(pCreateInfo->pSubpasses[subpass].pPreserveAttachments));
                     }
                 }
-
-                if (pCreateInfo->pSubpasses[subpass].pDepthStencilAttachment != nullptr) {
-                    VKTRACE_DELETE(const_cast<VkAttachmentReference *>(pCreateInfo->pSubpasses[subpass].pDepthStencilAttachment));
+                if (pCreateInfo->pAttachments != nullptr) {
+                    VKTRACE_DELETE(const_cast<VkAttachmentDescription *>(pCreateInfo->pAttachments));
                 }
 
-                if (pCreateInfo->pSubpasses[subpass].preserveAttachmentCount > 0 &&
-                    pCreateInfo->pSubpasses[subpass].pPreserveAttachments != nullptr) {
-                    VKTRACE_DELETE(const_cast<uint32_t *>(pCreateInfo->pSubpasses[subpass].pPreserveAttachments));
+                VKTRACE_DELETE(pCreateInfo);
+            } else if (versions[i]->sType == VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO_2) {
+                VkRenderPassCreateInfo2 *pCreateInfo = (VkRenderPassCreateInfo2*)(versions[i]);
+                for (uint32_t subpass = 0; subpass < pCreateInfo->subpassCount; subpass++) {
+                    if (pCreateInfo->pSubpasses[subpass].inputAttachmentCount > 0 &&
+                        pCreateInfo->pSubpasses[subpass].pInputAttachments != nullptr) {
+                        VKTRACE_DELETE(const_cast<VkAttachmentReference2 *>(pCreateInfo->pSubpasses[subpass].pInputAttachments));
+                    }
+
+                    if (pCreateInfo->pSubpasses[subpass].colorAttachmentCount > 0) {
+                        if (pCreateInfo->pSubpasses[subpass].pColorAttachments != nullptr) {
+                            VKTRACE_DELETE(const_cast<VkAttachmentReference2 *>(pCreateInfo->pSubpasses[subpass].pColorAttachments));
+                        }
+
+                        if (pCreateInfo->pSubpasses[subpass].pResolveAttachments != nullptr) {
+                            VKTRACE_DELETE(const_cast<VkAttachmentReference2 *>(pCreateInfo->pSubpasses[subpass].pResolveAttachments));
+                        }
+                    }
+
+                    if (pCreateInfo->pSubpasses[subpass].pDepthStencilAttachment != nullptr) {
+                        VKTRACE_DELETE(const_cast<VkAttachmentReference2 *>(pCreateInfo->pSubpasses[subpass].pDepthStencilAttachment));
+                    }
+
+                    if (pCreateInfo->pSubpasses[subpass].preserveAttachmentCount > 0 &&
+                        pCreateInfo->pSubpasses[subpass].pPreserveAttachments != nullptr) {
+                        VKTRACE_DELETE(const_cast<uint32_t *>(pCreateInfo->pSubpasses[subpass].pPreserveAttachments));
+                    }
                 }
-            }
+                if (pCreateInfo->pAttachments != nullptr) {
+                    VKTRACE_DELETE(const_cast<VkAttachmentDescription2 *>(pCreateInfo->pAttachments));
+                }
 
-            if (pCreateInfo->pAttachments != nullptr) {
-                VKTRACE_DELETE(const_cast<VkAttachmentDescription *>(pCreateInfo->pAttachments));
+                VKTRACE_DELETE(pCreateInfo);
             }
-
-            VKTRACE_DELETE(pCreateInfo);
         }
         versions.clear();
     }
@@ -287,88 +319,172 @@ void StateTracker::clear() {
 }
 
 //-------------------------------------------------------------------------
-void StateTracker::copy_VkRenderPassCreateInfo(VkRenderPassCreateInfo *pDst, const VkRenderPassCreateInfo &src) {
+void StateTracker::copy_VkRenderPassCreateInfo(VkApplicationInfo *pDst, VkApplicationInfo * pSrc) {
     if (pDst != nullptr) {
-        *pDst = src;
+        if (pSrc->sType == VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO) {
+            VkRenderPassCreateInfo* dst = (VkRenderPassCreateInfo*)pDst;
+            VkRenderPassCreateInfo src = *(VkRenderPassCreateInfo*)pSrc;
+            *dst = src;
+            VkSubpassDescription *pSubPasses =
+                static_cast<VkSubpassDescription *>(VKTRACE_NEW_ARRAY(VkSubpassDescription, src.subpassCount));
+            if (pSubPasses != nullptr) {
+                for (uint32_t i = 0; i < src.subpassCount; i++) {
+                    pSubPasses[i] = src.pSubpasses[i];
 
-        VkSubpassDescription *pSubPasses =
-            static_cast<VkSubpassDescription *>(VKTRACE_NEW_ARRAY(VkSubpassDescription, src.subpassCount));
-        if (pSubPasses != nullptr) {
-            for (uint32_t i = 0; i < src.subpassCount; i++) {
-                pSubPasses[i] = src.pSubpasses[i];
-
-                if (src.pSubpasses[i].inputAttachmentCount > 0) {
-                    VkAttachmentReference *pInputAttachments = static_cast<VkAttachmentReference *>(
-                        VKTRACE_NEW_ARRAY(VkAttachmentReference, src.pSubpasses[i].inputAttachmentCount));
-                    if (pInputAttachments != nullptr) {
-                        for (uint32_t j = 0; j < src.pSubpasses[i].inputAttachmentCount; j++) {
-                            pInputAttachments[j] = src.pSubpasses[i].pInputAttachments[j];
-                        }
-                    }
-                    pSubPasses[i].pInputAttachments = pInputAttachments;
-                }
-
-                if (src.pSubpasses[i].colorAttachmentCount > 0) {
-                    VkAttachmentReference *pColorAttachments = static_cast<VkAttachmentReference *>(
-                        VKTRACE_NEW_ARRAY(VkAttachmentReference, src.pSubpasses[i].colorAttachmentCount));
-                    if (pColorAttachments != nullptr) {
-                        for (uint32_t j = 0; j < src.pSubpasses[i].colorAttachmentCount; j++) {
-                            pColorAttachments[j] = src.pSubpasses[i].pColorAttachments[j];
-                        }
-                    }
-                    pSubPasses[i].pColorAttachments = pColorAttachments;
-
-                    if (src.pSubpasses[i].pResolveAttachments != nullptr) {
-                        VkAttachmentReference *pResolveAttachments = static_cast<VkAttachmentReference *>(
-                            VKTRACE_NEW_ARRAY(VkAttachmentReference, src.pSubpasses[i].colorAttachmentCount));
-                        if (pResolveAttachments != nullptr) {
-                            for (uint32_t j = 0; j < src.pSubpasses[i].colorAttachmentCount; j++) {
-                                pResolveAttachments[j] = src.pSubpasses[i].pResolveAttachments[j];
+                    if (src.pSubpasses[i].inputAttachmentCount > 0) {
+                        VkAttachmentReference *pInputAttachments = static_cast<VkAttachmentReference *>(
+                            VKTRACE_NEW_ARRAY(VkAttachmentReference, src.pSubpasses[i].inputAttachmentCount));
+                        if (pInputAttachments != nullptr) {
+                            for (uint32_t j = 0; j < src.pSubpasses[i].inputAttachmentCount; j++) {
+                                pInputAttachments[j] = src.pSubpasses[i].pInputAttachments[j];
                             }
                         }
-                        pSubPasses[i].pResolveAttachments = pResolveAttachments;
+                        pSubPasses[i].pInputAttachments = pInputAttachments;
                     }
-                }
 
-                if (src.pSubpasses[i].pDepthStencilAttachment != nullptr) {
-                    VkAttachmentReference *pDepthStencilAttachment =
-                        static_cast<VkAttachmentReference *>(VKTRACE_NEW(VkAttachmentReference));
-                    if (pDepthStencilAttachment != nullptr) {
-                        *pDepthStencilAttachment = *src.pSubpasses[i].pDepthStencilAttachment;
-                    }
-                    pSubPasses[i].pDepthStencilAttachment = pDepthStencilAttachment;
-                }
+                    if (src.pSubpasses[i].colorAttachmentCount > 0) {
+                        VkAttachmentReference *pColorAttachments = static_cast<VkAttachmentReference *>(
+                            VKTRACE_NEW_ARRAY(VkAttachmentReference, src.pSubpasses[i].colorAttachmentCount));
+                        if (pColorAttachments != nullptr) {
+                            for (uint32_t j = 0; j < src.pSubpasses[i].colorAttachmentCount; j++) {
+                                pColorAttachments[j] = src.pSubpasses[i].pColorAttachments[j];
+                            }
+                        }
+                        pSubPasses[i].pColorAttachments = pColorAttachments;
 
-                if (src.pSubpasses[i].preserveAttachmentCount > 0) {
-                    uint32_t *pPreserveAttachments =
-                        static_cast<uint32_t *>(VKTRACE_NEW_ARRAY(uint32_t, src.pSubpasses[i].preserveAttachmentCount));
-                    if (pPreserveAttachments != nullptr) {
-                        for (uint32_t j = 0; j < src.pSubpasses[i].preserveAttachmentCount; j++) {
-                            pPreserveAttachments[j] = src.pSubpasses[i].pPreserveAttachments[j];
+                        if (src.pSubpasses[i].pResolveAttachments != nullptr) {
+                            VkAttachmentReference *pResolveAttachments = static_cast<VkAttachmentReference *>(
+                                VKTRACE_NEW_ARRAY(VkAttachmentReference, src.pSubpasses[i].colorAttachmentCount));
+                            if (pResolveAttachments != nullptr) {
+                                for (uint32_t j = 0; j < src.pSubpasses[i].colorAttachmentCount; j++) {
+                                    pResolveAttachments[j] = src.pSubpasses[i].pResolveAttachments[j];
+                                }
+                            }
+                            pSubPasses[i].pResolveAttachments = pResolveAttachments;
                         }
                     }
-                    pSubPasses[i].pPreserveAttachments = pPreserveAttachments;
+
+                    if (src.pSubpasses[i].pDepthStencilAttachment != nullptr) {
+                        VkAttachmentReference *pDepthStencilAttachment =
+                            static_cast<VkAttachmentReference *>(VKTRACE_NEW(VkAttachmentReference));
+                        if (pDepthStencilAttachment != nullptr) {
+                            *pDepthStencilAttachment = *src.pSubpasses[i].pDepthStencilAttachment;
+                        }
+                        pSubPasses[i].pDepthStencilAttachment = pDepthStencilAttachment;
+                    }
+
+                    if (src.pSubpasses[i].preserveAttachmentCount > 0) {
+                        uint32_t *pPreserveAttachments =
+                            static_cast<uint32_t *>(VKTRACE_NEW_ARRAY(uint32_t, src.pSubpasses[i].preserveAttachmentCount));
+                        if (pPreserveAttachments != nullptr) {
+                            for (uint32_t j = 0; j < src.pSubpasses[i].preserveAttachmentCount; j++) {
+                                pPreserveAttachments[j] = src.pSubpasses[i].pPreserveAttachments[j];
+                            }
+                        }
+                        pSubPasses[i].pPreserveAttachments = pPreserveAttachments;
+                    }
                 }
             }
-        }
 
-        pDst->pSubpasses = pSubPasses;
+            dst->pSubpasses = pSubPasses;
 
-        VkAttachmentDescription *pAttachments =
-            static_cast<VkAttachmentDescription *>(VKTRACE_NEW_ARRAY(VkAttachmentDescription, src.attachmentCount));
-        if (pAttachments != nullptr) {
-            for (uint32_t i = 0; i < src.attachmentCount; i++) {
-                pAttachments[i] = src.pAttachments[i];
+            VkAttachmentDescription *pAttachments =
+                static_cast<VkAttachmentDescription *>(VKTRACE_NEW_ARRAY(VkAttachmentDescription, src.attachmentCount));
+            if (pAttachments != nullptr) {
+                for (uint32_t i = 0; i < src.attachmentCount; i++) {
+                    pAttachments[i] = src.pAttachments[i];
+                }
             }
+            dst->pAttachments = pAttachments;
+        } else if (pSrc->sType == VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO_2) {
+            VkRenderPassCreateInfo2* dst = (VkRenderPassCreateInfo2*)pDst;
+            VkRenderPassCreateInfo2 src = *(VkRenderPassCreateInfo2*)pSrc;
+            *dst = src;
+            VkSubpassDescription2 *pSubPasses =
+                static_cast<VkSubpassDescription2 *>(VKTRACE_NEW_ARRAY(VkSubpassDescription2, src.subpassCount));
+            if (pSubPasses != nullptr) {
+                for (uint32_t i = 0; i < src.subpassCount; i++) {
+                    pSubPasses[i] = src.pSubpasses[i];
+
+                    if (src.pSubpasses[i].inputAttachmentCount > 0) {
+                        VkAttachmentReference2 *pInputAttachments = static_cast<VkAttachmentReference2 *>(
+                            VKTRACE_NEW_ARRAY(VkAttachmentReference2, src.pSubpasses[i].inputAttachmentCount));
+                        if (pInputAttachments != nullptr) {
+                            for (uint32_t j = 0; j < src.pSubpasses[i].inputAttachmentCount; j++) {
+                                pInputAttachments[j] = src.pSubpasses[i].pInputAttachments[j];
+                            }
+                        }
+                        pSubPasses[i].pInputAttachments = pInputAttachments;
+                    }
+
+                    if (src.pSubpasses[i].colorAttachmentCount > 0) {
+                        VkAttachmentReference2 *pColorAttachments = static_cast<VkAttachmentReference2 *>(
+                            VKTRACE_NEW_ARRAY(VkAttachmentReference2, src.pSubpasses[i].colorAttachmentCount));
+                        if (pColorAttachments != nullptr) {
+                            for (uint32_t j = 0; j < src.pSubpasses[i].colorAttachmentCount; j++) {
+                                pColorAttachments[j] = src.pSubpasses[i].pColorAttachments[j];
+                            }
+                        }
+                        pSubPasses[i].pColorAttachments = pColorAttachments;
+
+                        if (src.pSubpasses[i].pResolveAttachments != nullptr) {
+                            VkAttachmentReference2 *pResolveAttachments = static_cast<VkAttachmentReference2 *>(
+                                VKTRACE_NEW_ARRAY(VkAttachmentReference2, src.pSubpasses[i].colorAttachmentCount));
+                            if (pResolveAttachments != nullptr) {
+                                for (uint32_t j = 0; j < src.pSubpasses[i].colorAttachmentCount; j++) {
+                                    pResolveAttachments[j] = src.pSubpasses[i].pResolveAttachments[j];
+                                }
+                            }
+                            pSubPasses[i].pResolveAttachments = pResolveAttachments;
+                        }
+                    }
+
+                    if (src.pSubpasses[i].pDepthStencilAttachment != nullptr) {
+                        VkAttachmentReference2 *pDepthStencilAttachment =
+                            static_cast<VkAttachmentReference2 *>(VKTRACE_NEW(VkAttachmentReference2));
+                        if (pDepthStencilAttachment != nullptr) {
+                            *pDepthStencilAttachment = *src.pSubpasses[i].pDepthStencilAttachment;
+                        }
+                        pSubPasses[i].pDepthStencilAttachment = pDepthStencilAttachment;
+                    }
+
+                    if (src.pSubpasses[i].preserveAttachmentCount > 0) {
+                        uint32_t *pPreserveAttachments =
+                            static_cast<uint32_t *>(VKTRACE_NEW_ARRAY(uint32_t, src.pSubpasses[i].preserveAttachmentCount));
+                        if (pPreserveAttachments != nullptr) {
+                            for (uint32_t j = 0; j < src.pSubpasses[i].preserveAttachmentCount; j++) {
+                                pPreserveAttachments[j] = src.pSubpasses[i].pPreserveAttachments[j];
+                            }
+                        }
+                        pSubPasses[i].pPreserveAttachments = pPreserveAttachments;
+                    }
+                }
+            }
+
+            dst->pSubpasses = pSubPasses;
+
+            VkAttachmentDescription2 *pAttachments =
+                static_cast<VkAttachmentDescription2 *>(VKTRACE_NEW_ARRAY(VkAttachmentDescription2, src.attachmentCount));
+            if (pAttachments != nullptr) {
+                for (uint32_t i = 0; i < src.attachmentCount; i++) {
+                    pAttachments[i] = src.pAttachments[i];
+                }
+            }
+            dst->pAttachments = pAttachments;
         }
-        pDst->pAttachments = pAttachments;
     }
 }
 
-void StateTracker::add_RenderPassCreateInfo(VkRenderPass renderPass, const VkRenderPassCreateInfo *pCreateInfo) {
-    VkRenderPassCreateInfo *pCopyCreateInfo = static_cast<VkRenderPassCreateInfo *>(VKTRACE_NEW(VkRenderPassCreateInfo));
-    copy_VkRenderPassCreateInfo(pCopyCreateInfo, *pCreateInfo);
-    m_renderPassVersions[renderPass].push_back(pCopyCreateInfo);
+void StateTracker::add_RenderPassCreateInfo(VkRenderPass renderPass, const VkApplicationInfo *pCreateInfo) {
+    if (pCreateInfo->sType == VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO) {
+        VkApplicationInfo *pCopyCreateInfo = (VkApplicationInfo *)(VKTRACE_NEW(VkRenderPassCreateInfo));
+        copy_VkRenderPassCreateInfo(pCopyCreateInfo, const_cast<VkApplicationInfo*>(pCreateInfo));
+        m_renderPassVersions[renderPass].push_back(pCopyCreateInfo);
+    } else if (pCreateInfo->sType == VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO_2) {
+        VkApplicationInfo *pCopyCreateInfo = (VkApplicationInfo *)(VKTRACE_NEW(VkRenderPassCreateInfo2));
+        copy_VkRenderPassCreateInfo(pCopyCreateInfo, const_cast<VkApplicationInfo*>(pCreateInfo));
+        m_renderPassVersions[renderPass].push_back(pCopyCreateInfo);
+    }
 }
 
 //-------------------------------------------------------------------------
@@ -377,7 +493,7 @@ uint32_t StateTracker::get_RenderPassVersion(VkRenderPass renderPass) {
 }
 
 //-------------------------------------------------------------------------
-VkRenderPassCreateInfo *StateTracker::get_RenderPassCreateInfo(VkRenderPass renderPass, uint32_t version) {
+VkApplicationInfo *StateTracker::get_RenderPassCreateInfo(VkRenderPass renderPass, uint32_t version) {
     return m_renderPassVersions[renderPass][version];
 }
 
@@ -391,9 +507,14 @@ StateTracker &StateTracker::operator=(const StateTracker &other) {
     m_renderPassVersions = other.m_renderPassVersions;
     for (auto iter = m_renderPassVersions.begin(); iter != m_renderPassVersions.end(); ++iter) {
         for (uint32_t i = 0; i < iter->second.size(); i++) {
-            VkRenderPassCreateInfo *pCreateInfoVersion = iter->second[i];
-            VkRenderPassCreateInfo *pCopiedCreateInfo = static_cast<VkRenderPassCreateInfo *>(VKTRACE_NEW(VkRenderPassCreateInfo));
-            copy_VkRenderPassCreateInfo(pCopiedCreateInfo, *pCreateInfoVersion);
+            VkApplicationInfo *pCreateInfoVersion = iter->second[i];
+            VkApplicationInfo *pCopiedCreateInfo = nullptr;
+            if (pCreateInfoVersion->sType == VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO) {
+                pCopiedCreateInfo = (VkApplicationInfo *)(VKTRACE_NEW(VkRenderPassCreateInfo));
+            } else if (pCreateInfoVersion->sType == VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO_2) {
+                pCopiedCreateInfo = (VkApplicationInfo *)(VKTRACE_NEW(VkRenderPassCreateInfo2));
+            }
+            copy_VkRenderPassCreateInfo(pCopiedCreateInfo, pCreateInfoVersion);
             iter->second[i] = pCopiedCreateInfo;
         }
     }

@@ -75,7 +75,7 @@ class vktraceviewer_vk_QController : public vktraceviewer_QController {
     vktraceviewer_vk_QFileModel* m_pTraceFileModel;
     vktraceviewer_vk_QGroupFramesProxyModel m_groupByFramesProxy;
     vktraceviewer_QGroupThreadsProxyModel m_groupByThreadsProxy;
-
+    vktrace_trace_packet_header* slimPacket(vktrace_trace_packet_header* pPacket);
     void setStateWidgetsEnabled(bool bEnabled);
     void updateCallTreeBasedOnSettings();
     void deleteStateDumps() const;

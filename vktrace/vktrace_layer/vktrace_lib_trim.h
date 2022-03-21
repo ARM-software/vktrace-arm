@@ -174,7 +174,7 @@ void write_packet(vktrace_trace_packet_header *pHeader);
 void add_destroy_device_object_packets(VkDevice device);
 void write_destroy_packets();
 
-void add_RenderPassCreateInfo(VkRenderPass renderPass, const VkRenderPassCreateInfo *pCreateInfo);
+void add_RenderPassCreateInfo(VkRenderPass renderPass, const VkApplicationInfo *pCreateInfo);
 uint32_t get_RenderPassVersion(VkRenderPass renderPass);
 
 //-----------------------

@@ -40,8 +40,7 @@ class vktraceviewer_QTraceFileModel : public QAbstractItemModel {
     virtual QString get_packet_string(const vktrace_trace_packet_header* pHeader) const {
         switch (pHeader->packet_id) {
             case VKTRACE_TPI_MESSAGE: {
-                vktrace_trace_packet_message* pPacket = (vktrace_trace_packet_message*)pHeader->pBody;
-                return QString(pPacket->message);
+                return QString("This is a message packet");
             }
             case VKTRACE_TPI_MARKER_CHECKPOINT:
             case VKTRACE_TPI_MARKER_API_BOUNDARY:
@@ -49,6 +48,7 @@ class vktraceviewer_QTraceFileModel : public QAbstractItemModel {
             case VKTRACE_TPI_MARKER_API_GROUP_END:
             case VKTRACE_TPI_MARKER_TERMINATE_PROCESS:
             case VKTRACE_TPI_PORTABILITY_TABLE:
+            case VKTRACE_TPI_META_DATA:
             default: { return QString("%1").arg(pHeader->packet_id); }
         }
     }

@@ -30,6 +30,7 @@
 extern std::vector<uintptr_t> portabilityTablePackets;
 extern FileLike* traceFile;
 extern vkreplayer_settings replaySettings;
+extern bool timer_started;
 
 namespace vktrace_replay {
     bool timerStarted();
