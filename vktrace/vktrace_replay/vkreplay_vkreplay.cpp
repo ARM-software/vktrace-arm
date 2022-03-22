@@ -25,7 +25,6 @@
  * Author: David Pinedo <david@lunarg.com>
  */
 
-
 #include <algorithm>
 
 #include "vulkan/vulkan.h"
