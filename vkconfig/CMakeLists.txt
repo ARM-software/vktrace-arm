@@ -6,10 +6,7 @@ set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_INCLUDE_CURRENT_DIR ON)
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
-
-if (NOT ARCH_ARM)
-    find_package(Qt5 COMPONENTS Core Gui Widgets OPTIONAL_COMPONENTS WebEngineWidgets QUIET)
-endif()
+find_package(Qt5 COMPONENTS Core Gui Widgets OPTIONAL_COMPONENTS WebEngineWidgets QUIET)
 
 if(NOT Qt5_FOUND)
     message("WARNING: vkconfig will be excluded because Qt5 was not found.")

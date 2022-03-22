@@ -148,9 +148,6 @@ class vkReplay {
     bool premap_CmdDrawIndexed(vktrace_trace_packet_header* pHeader);
 
     void post_interpret(vktrace_trace_packet_header* pHeader);
-    vkReplayObjMapper* get_ReplayObjMapper() { return &m_objMapper; };
-    std::unordered_map<VkDevice, VkPhysicalDevice> get_ReplayPhysicalDevices () { return replayPhysicalDevices; };
-    VkLayerInstanceDispatchTable* get_VkLayerInstanceDispatchTable() { return &m_vkFuncs; };
 
    private:
     void init_funcs(void* handle);
@@ -361,7 +358,6 @@ class vkReplay {
     void manually_replay_vkDestroyAccelerationStructureKHR(packet_vkDestroyAccelerationStructureKHR *pPacket);
     VkResult manually_replay_vkCopyAccelerationStructureToMemoryKHR(packet_vkCopyAccelerationStructureToMemoryKHR *pPacket);
     VkResult manually_replay_vkCopyMemoryToAccelerationStructureKHR(packet_vkCopyMemoryToAccelerationStructureKHR *pPacket);
-    VkResult manually_replay_vkCreateRayTracingPipelinesKHR(packet_vkCreateRayTracingPipelinesKHR *pPacket);
     void manually_replay_vkCmdCopyBufferRemap(packet_vkCmdCopyBuffer *pPacket);
     void process_screenshot_list(const char* list) {
         std::string spec(list), word;
@@ -527,7 +523,7 @@ class vkReplay {
 
     void remapHandlesInDescriptorSetWithTemplateData(VkDescriptorUpdateTemplateKHR remappedDescriptorUpdateTemplate, char* pData);
     bool findImageFromOtherSwapchain(VkSwapchainKHR swapchain);
-    void checkDeviceExtendFeatures(const VkBaseOutStructure *pNext, VkPhysicalDevice physicalDevice);
+
     vktrace_replay::PipelineCacheAccessor::Ptr    m_pipelinecache_accessor;
 
     std::unordered_map<VkQueryPool, VkQueryType>  m_querypool_type;

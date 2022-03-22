@@ -92,10 +92,6 @@ typedef struct vkreplayer_settings {
     unsigned int triggerScript;
     char* pScriptPath;
     unsigned int perfMeasuringMode;
-    BOOL printCurrentGPI;
-    BOOL enableSyncValidation;
-    BOOL overrideCreateDeviceFeatures;
-    unsigned int swapChainMinImageCount;
 } vkreplayer_settings;
 
 int vktrace_SettingGroup_init(vktrace_SettingGroup* pSettingGroup, FILE* pSettingsFile, int argc, char* argv[],

@@ -685,7 +685,7 @@ class ApiDumpInstance {
     }
 
     inline ~ApiDumpInstance() {
-        if (dump_settings && !first_func_call_on_frame) settings().closeFrameOutput();
+        if (!first_func_call_on_frame) settings().closeFrameOutput();
 
         if (dump_settings != NULL) delete dump_settings;
     }

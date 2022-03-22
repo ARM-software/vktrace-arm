@@ -29,7 +29,6 @@ vktraceviewer_QGenerateTraceDialog::vktraceviewer_QGenerateTraceDialog(QWidget *
     : QDialog(parent), m_pGenerateTraceProcess(NULL) {
     setMinimumWidth(500);
     setWindowTitle("Generate Trace File");
-    this->setDisabled(true);
     m_pGridLayout = new QGridLayout(this);
     m_pGridLayout->setObjectName("m_pGridLayout");
     m_pGridLayout->setHorizontalSpacing(2);

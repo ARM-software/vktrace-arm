@@ -49,6 +49,7 @@
 #include "decompressor.h"
 #include <json/json.h>
 
+vkreplayer_settings replaySettings = {NULL, 1, 0, UINT_MAX, true, false, NULL, NULL, NULL, NULL, NULL, TRUE, TRUE, FALSE, FALSE, FALSE, FALSE, FALSE, 90, FALSE, FALSE, NULL, FALSE, FALSE, FALSE, FALSE, UINT_MAX, NULL, 0};
 extern vkReplay* g_replay;
 static decompressor* g_decompressor = nullptr;
 
@@ -292,37 +293,7 @@ vktrace_SettingInfo g_settings_info[] = {
      {&replaySettings.perfMeasuringMode},
      {&replaySettings.perfMeasuringMode},
      TRUE,
-     "Set the performance measuring mode, 0 - off, 1 - on."},
-#if defined(_DEBUG)
-    {"pcgpi",
-     "printCurrentGPI",
-     VKTRACE_SETTING_BOOL,
-     {&replaySettings.printCurrentGPI},
-     {&replaySettings.printCurrentGPI},
-     TRUE,
-     "Print current GPI that is about to be replayed."},
-#endif
-    {"esv",
-     "enableSyncValidation",
-     VKTRACE_SETTING_BOOL,
-     {&replaySettings.enableSyncValidation},
-     {&replaySettings.enableSyncValidation},
-     TRUE,
-     "Enable the synchronization validation feature of the validation layer."},
-    {"ocdf",
-     "overrideCreateDeviceFeatures",
-     VKTRACE_SETTING_BOOL,
-     {&replaySettings.overrideCreateDeviceFeatures},
-     {&replaySettings.overrideCreateDeviceFeatures},
-     TRUE,
-     "If some features in vkCreateDevice in trace file don't support by replaying device, disable them."},
-    {"scic",
-     "swapChainMinImageCount",
-     VKTRACE_SETTING_UINT,
-     {&replaySettings.swapChainMinImageCount},
-     {&replaySettings.swapChainMinImageCount},
-     FALSE,
-     "Change the swapchain min image count."}
+     "Set the performance measuring mode, 0 - off, 1 - on."}
 };
 
 vktrace_SettingGroup g_replaySettingGroup = {"vkreplay", sizeof(g_settings_info) / sizeof(g_settings_info[0]), &g_settings_info[0], nullptr};
@@ -337,6 +308,23 @@ void TerminateHandler(int) {
 }
 
 namespace vktrace_replay {
+
+static bool timer_started = false;
+
+bool timerStarted()
+{
+    return timer_started;
+}
+
+uint64_t getStartFrame()
+{
+    return replaySettings.loopStartFrame == UINT_MAX ? 0 : replaySettings.loopStartFrame;
+}
+
+uint64_t getEndFrame()
+{
+    return replaySettings.loopEndFrame;
+}
 
 void triggerScript() {
     char command[512] = {0};
@@ -408,12 +396,6 @@ int main_loop(vktrace_replay::ReplayDisplay display, Sequencer& seq, vktrace_tra
         while (trace_running) {
             packet = seq.get_next_packet();
             if (!packet) break;
-
-            if (replaySettings.printCurrentGPI)
-            {
-                vktrace_LogDebug("Replaying GPI %lu", packet->global_packet_index);
-            }
-
             switch (packet->packet_id) {
                 case VKTRACE_TPI_MESSAGE:
 #if defined(ANDROID) || !defined(ARM_ARCH)

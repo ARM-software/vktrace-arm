@@ -48,8 +48,6 @@ include_directories(
     ${SRC_DIR}/vktrace_common
     ${SRC_DIR}/vktrace_replay
     ${SRC_DIR}/vktrace_viewer
-    ${VULKAN_TOOLS_SOURCE_DIR}/layersvt
-    ${JSONCPP_INCLUDE_DIR}
     ${CMAKE_CURRENT_BINARY_DIR}
     ${Vulkan-ValidationLayers_INCLUDE_DIR}
     ${CMAKE_BINARY_DIR}
@@ -76,9 +74,6 @@ set(SRC_LIST
     vktraceviewer_vk_qgroupframesproxymodel.cpp
     ${SRC_DIR}/vktrace_replay/vkreplay_preload.cpp
     ${SRC_DIR}/vktrace_replay/vkreplay_seq.cpp
-    ${VULKAN_TOOLS_SOURCE_DIR}/layersvt/screenshot_parsing.cpp
-    ${SRC_DIR}/vktrace_replay/vkreplay_pipelinecache.cpp
-    ${SRC_DIR}/vktrace_replay/vkreplay_factory.h
     ${SRC_DIR}/vktrace_replay/vkreplay_factory.cpp
     ${SRC_DIR}/vktrace_replay/vkreplay.cpp
     ${SRC_DIR}/vktrace_replay/vkreplay_settings.cpp

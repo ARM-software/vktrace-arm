@@ -21,7 +21,7 @@
 
 #include "vktraceviewer_qtracefileloader.h"
 #include "vktraceviewer_controller_factory.h"
-#include "decompressor.h"
+
 extern "C" {
 #include "vktrace_trace_packet_utils.h"
 }
@@ -43,21 +43,6 @@ void vktraceviewer_QTraceFileLoader::loadTraceFile(const QString& filename) {
         emit OutputMessage(VKTRACE_LOG_ERROR, "Unable to open file.");
     } else {
         m_traceFileInfo.filename = vktrace_allocate_and_copy(filename.toStdString().c_str());
-#if defined(USE_STATIC_CONTROLLER_LIBRARY)
-        m_pController = vtvCreateQController();
-#else
-        if (!load_controllers(&m_traceFileInfo)) {
-            emit OutputMessage(VKTRACE_LOG_ERROR, "Failed to load necessary debug controllers.");
-            bOpened = false;
-        }
-#endif
-        if (bOpened) {
-            connect(m_pController, SIGNAL(OutputMessage(VktraceLogLevel, const QString&)), this,
-                        SIGNAL(OutputMessage(VktraceLogLevel, const QString&)));
-            connect(m_pController, SIGNAL(OutputMessage(VktraceLogLevel, uint64_t, const QString&)), this,
-                        SIGNAL(OutputMessage(VktraceLogLevel, uint64_t, const QString&)));
-        }
-
         if (populate_trace_file_info(&m_traceFileInfo) == FALSE) {
             emit OutputMessage(VKTRACE_LOG_ERROR, "Unable to populate trace file info from file.");
             bOpened = false;
@@ -72,12 +57,70 @@ void vktraceviewer_QTraceFileLoader::loadTraceFile(const QString& filename) {
                                        .arg(VKTRACE_TRACE_FILE_VERSION_MINIMUM_COMPATIBLE));
                 bOpened = false;
             }
-        }
+
 #if defined(USE_STATIC_CONTROLLER_LIBRARY)
-        vtvDeleteQController(&m_pController);
+            m_pController = vtvCreateQController();
+            if (bOpened)
 #else
-        m_controllerFactory.Unload(&m_pController);
+            if (!load_controllers(&m_traceFileInfo)) {
+                emit OutputMessage(VKTRACE_LOG_ERROR, "Failed to load necessary debug controllers.");
+                bOpened = false;
+            } else if (bOpened)
 #endif
+            {
+                connect(m_pController, SIGNAL(OutputMessage(VktraceLogLevel, const QString&)), this,
+                        SIGNAL(OutputMessage(VktraceLogLevel, const QString&)));
+                connect(m_pController, SIGNAL(OutputMessage(VktraceLogLevel, uint64_t, const QString&)), this,
+                        SIGNAL(OutputMessage(VktraceLogLevel, uint64_t, const QString&)));
+
+                // interpret the trace file packets
+                for (uint64_t i = 0; i < m_traceFileInfo.packetCount; i++) {
+                    vktraceviewer_trace_file_packet_offsets* pOffsets = &m_traceFileInfo.pPacketOffsets[i];
+                    switch (pOffsets->pHeader->packet_id) {
+                        case VKTRACE_TPI_MESSAGE:
+                            m_traceFileInfo.pPacketOffsets[i].pHeader =
+                                vktrace_interpret_body_as_trace_packet_message(pOffsets->pHeader)->pHeader;
+                            break;
+                        case VKTRACE_TPI_MARKER_CHECKPOINT:
+                            break;
+                        case VKTRACE_TPI_MARKER_API_BOUNDARY:
+                            break;
+                        case VKTRACE_TPI_MARKER_API_GROUP_BEGIN:
+                            break;
+                        case VKTRACE_TPI_MARKER_API_GROUP_END:
+                            break;
+                        case VKTRACE_TPI_MARKER_TERMINATE_PROCESS:
+                            break;
+                        case VKTRACE_TPI_PORTABILITY_TABLE:
+                            break;
+                        // TODO processing code for all the above cases
+                        default: {
+                            vktrace_trace_packet_header* pHeader = m_pController->InterpretTracePacket(pOffsets->pHeader);
+                            if (pHeader == NULL) {
+                                bOpened = false;
+                                emit OutputMessage(VKTRACE_LOG_ERROR,
+                                                   QString("Unrecognized packet type: %1").arg(pOffsets->pHeader->packet_id));
+                                m_traceFileInfo.pPacketOffsets[i].pHeader = NULL;
+                                break;
+                            }
+                            m_traceFileInfo.pPacketOffsets[i].pHeader = pHeader;
+                        }
+                    }
+
+                    // break from loop if there is an error
+                    if (bOpened == false) {
+                        break;
+                    }
+                }
+
+#if defined(USE_STATIC_CONTROLLER_LIBRARY)
+                vtvDeleteQController(&m_pController);
+#else
+                m_controllerFactory.Unload(&m_pController);
+#endif
+            }
+        }
+
         // TODO: We don't really want to close the trace file yet.
         // I think we want to keep it open so that we can dynamically read from it.
         // BUT we definitely don't want it to get locked open, so we need a smart
@@ -174,10 +217,7 @@ bool vktraceviewer_QTraceFileLoader::populate_trace_file_info(vktraceviewer_trac
     if (seekResult != 0) {
         emit OutputMessage(VKTRACE_LOG_WARNING, "Failed to seek to the first packet offset in the trace file.");
     }
-    decompressor* pDecompressor = nullptr;
-    if (header.trace_file_version > VKTRACE_TRACE_FILE_VERSION_8 && header.compress_type != VKTRACE_COMPRESS_TYPE_NONE) {
-        pDecompressor = create_decompressor((VKTRACE_COMPRESS_TYPE)header.compress_type);
-    }
+
     // "Walk" through each packet based on the packet size (which is the first 64-bits of the packet header)
     uint64_t fileOffset = pTraceFileInfo->pHeader->first_packet_offset;
     uint64_t packetSize = 0;
@@ -245,49 +285,13 @@ bool vktraceviewer_QTraceFileLoader::populate_trace_file_info(vktraceviewer_trac
             pTraceFileInfo->pPacketOffsets[packetIndex].pHeader->pBody =
                 (uintptr_t)pTraceFileInfo->pPacketOffsets[packetIndex].pHeader + sizeof(vktrace_trace_packet_header);
 
-            if (pDecompressor != nullptr && pTraceFileInfo->pPacketOffsets[packetIndex].pHeader->tracer_id == VKTRACE_TID_VULKAN_COMPRESSED) {
-                int res = decompress_packet(pDecompressor, pTraceFileInfo->pPacketOffsets[packetIndex].pHeader);
-                if (res < 0) {
-                    emit OutputMessage(VKTRACE_LOG_ERROR, "Packet decompress failed.");
-                    return false;
-                }
-            }
-
-            switch (pTraceFileInfo->pPacketOffsets[packetIndex].pHeader->packet_id) {
-                case VKTRACE_TPI_MESSAGE:
-                    break;
-                case VKTRACE_TPI_MARKER_CHECKPOINT:
-                    break;
-                case VKTRACE_TPI_MARKER_API_BOUNDARY:
-                    break;
-                case VKTRACE_TPI_MARKER_API_GROUP_BEGIN:
-                    break;
-                case VKTRACE_TPI_MARKER_API_GROUP_END:
-                    break;
-                case VKTRACE_TPI_MARKER_TERMINATE_PROCESS:
-                    break;
-                case VKTRACE_TPI_PORTABILITY_TABLE:
-                case VKTRACE_TPI_META_DATA:
-                    break;
-                // TODO processing code for all the above cases
-                default: {
-                    vktrace_trace_packet_header* pHeader = m_pController->InterpretTracePacket(pTraceFileInfo->pPacketOffsets[packetIndex].pHeader);
-                    pTraceFileInfo->pPacketOffsets[packetIndex].pHeader = pHeader;
-                    break;
-                }
-
-            }
-
             // now seek to what should be the next packet
             fileOffset += packetSize;
             packetIndex++;
         }
-        if (pDecompressor != nullptr) {
-             delete pDecompressor;
-        }
+
         // If the last packet is the portability table, remove it
-        if (pTraceFileInfo->pPacketOffsets[pTraceFileInfo->packetCount - 1].pHeader->packet_id == VKTRACE_TPI_PORTABILITY_TABLE ||
-            pTraceFileInfo->pPacketOffsets[pTraceFileInfo->packetCount - 1].pHeader->packet_id == VKTRACE_TPI_META_DATA) {
+        if (pTraceFileInfo->pPacketOffsets[pTraceFileInfo->packetCount - 1].pHeader->packet_id == VKTRACE_TPI_PORTABILITY_TABLE) {
             vktrace_free(pTraceFileInfo->pPacketOffsets[pTraceFileInfo->packetCount - 1].pHeader);
             pTraceFileInfo->packetCount--;
         }

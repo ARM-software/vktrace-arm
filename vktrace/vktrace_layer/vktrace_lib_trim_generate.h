@@ -150,9 +150,6 @@ vktrace_trace_packet_header *vkDestroyDescriptorPool(bool makeCall, VkDevice dev
 vktrace_trace_packet_header *vkCreateRenderPass(bool makeCall, VkDevice device, const VkRenderPassCreateInfo *pCreateInfo,
                                                 const VkAllocationCallbacks *pAllocator, VkRenderPass *pRenderPass);
 
-vktrace_trace_packet_header *vkCreateRenderPass2(bool makeCall, VkDevice device, const VkRenderPassCreateInfo2 *pCreateInfo,
-                                                const VkAllocationCallbacks *pAllocator, VkRenderPass *pRenderPass);
-
 vktrace_trace_packet_header *vkCreateGraphicsPipelines(bool makeCall, VkDevice device, VkPipelineCache pipelineCache,
                                                        uint32_t createInfoCount, const VkGraphicsPipelineCreateInfo *pCreateInfos,
                                                        const VkAllocationCallbacks *pAllocator, VkPipeline *pPipelines);

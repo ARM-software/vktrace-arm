@@ -36,19 +36,6 @@
 #include "vktrace_memory.h"
 #include "vktrace_tracelog.h"
 
-#undef Bool  // Xlib defines this, will not be compatible with QT
-#undef None
-#undef Status
-#undef CursorShape
-#undef Unsorted
-#undef KeyPress
-#undef KeyRelease
-#undef Type
-#undef FocusIn
-#undef FocusOut
-#undef FontChange
-#undef Expose
-
 #if !defined(VKTRACE_VERSION)
 #error VKTRACE_VERSION not defined!
 #endif

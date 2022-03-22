@@ -558,9 +558,7 @@ endif()
 
 add_definitions(-DVK_ENABLE_BETA_EXTENSIONS)
 
-if (NOT ARCH_ARM)
-    option(BUILD_VKTRACEVIEWER "Build VkTraceViewer" ON)
-endif()
+option(BUILD_VKTRACEVIEWER "Build VkTraceViewer" ON)
 
 set(SRC_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
 
@@ -631,9 +629,6 @@ if(NOT EXISTS ${GENERATED_FILES_DIR}/vkreplay_vk_objmapper.h)
 endif()
 if(NOT EXISTS ${GENERATED_FILES_DIR}/vkreplay_vk_func_ptrs.h)
     execute_process(COMMAND ${PYTHON_EXECUTABLE} -B ${VULKANTOOLS_SCRIPTS_DIR}/vt_genvk.py -registry ${VulkanRegistry_DIR}/vk.xml -scripts ${VulkanRegistry_DIR} -o ${GENERATED_FILES_DIR} vkreplay_vk_func_ptrs.h)
-endif()
-if(NOT EXISTS ${GENERATED_FILES_DIR}/vk_struct_member.h)
-    execute_process(COMMAND ${PYTHON_EXECUTABLE} -B ${VULKANTOOLS_SCRIPTS_DIR}/vt_genvk.py -registry ${VulkanRegistry_DIR}/vk.xml -scripts ${VulkanRegistry_DIR} -o ${GENERATED_FILES_DIR} vk_struct_member.h)
 endif()
 
 # Command and target to build vktrace generated files from Makefile or VisualStudio.

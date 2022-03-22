@@ -355,8 +355,8 @@ class StateTracker {
     void add_CommandBuffer_call(VkCommandBuffer commandBuffer, vktrace_trace_packet_header *pHeader);
     void remove_CommandBuffer_calls(VkCommandBuffer commandBuffer);
 
-    void add_RenderPassCreateInfo(VkRenderPass renderPass, const VkApplicationInfo *pCreateInfo);
-    VkApplicationInfo *get_RenderPassCreateInfo(VkRenderPass renderPass, uint32_t version);
+    void add_RenderPassCreateInfo(VkRenderPass renderPass, const VkRenderPassCreateInfo *pCreateInfo);
+    VkRenderPassCreateInfo *get_RenderPassCreateInfo(VkRenderPass renderPass, uint32_t version);
     uint32_t get_RenderPassVersion(VkRenderPass renderPass);
 
 #if TRIM_USE_ORDERED_IMAGE_CREATION
@@ -461,7 +461,7 @@ class StateTracker {
     void remove_AccelerationStructure(const VkAccelerationStructureKHR var);
     void remove_BuildAccelerationStructure(vktrace_trace_packet_header* pBuildAS);
 
-    static void copy_VkRenderPassCreateInfo(VkApplicationInfo *pDst, VkApplicationInfo *psrc);
+    static void copy_VkRenderPassCreateInfo(VkRenderPassCreateInfo *pDst, const VkRenderPassCreateInfo &src);
 
     static void copy_VkShaderModuleCreateInfo(VkShaderModuleCreateInfo *pDst, const VkShaderModuleCreateInfo &src);
 
@@ -479,7 +479,7 @@ class StateTracker {
 
     // Map to keep track of older RenderPass versions so that we can recreate
     // pipelines.
-    std::unordered_map<VkRenderPass, std::vector<VkApplicationInfo *>> m_renderPassVersions;
+    std::unordered_map<VkRenderPass, std::vector<VkRenderPassCreateInfo *>> m_renderPassVersions;
 
     // List of all packets used to create or delete images.
     // We need to recreate them in the same order to ensure they will have the

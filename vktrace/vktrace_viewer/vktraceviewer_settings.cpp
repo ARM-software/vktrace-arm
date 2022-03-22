@@ -99,8 +99,8 @@ bool vktraceviewer_initialize_settings(int argc, char* argv[]) {
     s_default_settings.trace_file_to_open = NULL;
     s_default_settings.window_position_left = 0;
     s_default_settings.window_position_top = 0;
-    s_default_settings.window_size_width = 2048;
-    s_default_settings.window_size_height = 1080;
+    s_default_settings.window_size_width = 1024;
+    s_default_settings.window_size_height = 768;
 
     s_default_settings.gentrace_application = NULL;
     s_default_settings.gentrace_arguments = NULL;
@@ -116,7 +116,10 @@ bool vktraceviewer_initialize_settings(int argc, char* argv[]) {
     g_settings = s_default_settings;
 
     QString settingsFilePath = vktraceviewer_get_settings_file_path();
-    FILE* pFile = nullptr;
+    FILE* pFile = fopen(settingsFilePath.toStdString().c_str(), "r");
+    if (pFile == NULL) {
+        vktrace_LogWarning("Unable to open settings file: '%s'.", settingsFilePath.toStdString().c_str());
+    }
 
     // Secondly set options based on settings file
     if (pFile != NULL) {

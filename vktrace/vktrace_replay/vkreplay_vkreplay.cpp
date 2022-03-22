@@ -38,7 +38,6 @@
 #include "vktrace_vk_packet_id.h"
 #include "vktrace_trace_packet_utils.h"
 #include "vkreplay_vk_objmapper.h"
-#include "vk_struct_member.h"
 
 #if defined(_WIN32) || defined(_WIN64)
 #define strcasecmp _stricmp  // Used for argument parsing
@@ -129,62 +128,8 @@ static uint32_t getAHardwareBufBPP(uint32_t fmt) {
 vkReplay* g_replay = nullptr;
 int g_ruiFrames = 0;
 bool g_hasAsApi = false;
-bool timer_started = false;
 std::unordered_map<VkDevice, deviceFeatureSupport> g_TraceDeviceToDeviceFeatures;
 std::unordered_map<VkSwapchainKHR, uint32_t> g_TraceScToScImageCount;
-vkreplayer_settings replaySettings = {
-                                        .pTraceFilePath = NULL,
-                                        .numLoops = 1,
-                                        .loopStartFrame = 0,
-                                        .loopEndFrame = UINT_MAX,
-                                        .compatibilityMode = true,
-                                        .exitOnAnyError = false,
-                                        .screenshotList = NULL,
-                                        .screenshotColorFormat = NULL,
-                                        .screenshotPrefix = NULL,
-                                        .verbosity = NULL,
-                                        .displayServer = NULL,
-                                        .preloadTraceFile = TRUE,
-                                        .enablePortabilityTable = TRUE,
-                                        .vsyncOff = FALSE,
-                                        .headless = FALSE,
-                                        .selfManageMemAllocation = FALSE,
-                                        .forceSingleWindow = FALSE,
-                                        .forceDisableAF = FALSE,
-                                        .memoryPercentage = 90,
-                                        .premapping = FALSE,
-                                        .enablePipelineCache = FALSE,
-                                        .pipelineCachePath = NULL,
-                                        .forceSyncImgIdx = FALSE,
-                                        .disableAsCaptureReplay = FALSE,
-                                        .disableBufferCaptureReplay = FALSE,
-                                        .forceRayQuery = FALSE,
-                                        .triggerScript = UINT_MAX,
-                                        .pScriptPath = NULL,
-                                        .perfMeasuringMode = 0,
-                                        .printCurrentGPI = FALSE,
-                                        .enableSyncValidation = FALSE,
-                                        .overrideCreateDeviceFeatures = FALSE,
-                                        .swapChainMinImageCount = 1,
-                                     };
-
-namespace vktrace_replay {
-bool timerStarted()
-{
-    return timer_started;
-}
-
-uint64_t getStartFrame()
-{
-    return g_pReplaySettings->loopStartFrame == UINT_MAX ? 0 : g_pReplaySettings->loopStartFrame;
-}
-
-uint64_t getEndFrame()
-{
-    return g_pReplaySettings->loopEndFrame;
-}
-}
-
 vkReplay::vkReplay(vkreplayer_settings *pReplaySettings, vktrace_trace_file_header *pFileHeader,
                    vktrace_replay::ReplayDisplayImp *display)
     : m_objMapper(pReplaySettings->premapping)
@@ -742,16 +687,6 @@ VkResult vkReplay::manually_replay_vkCreateInstance(packet_vkCreateInstance *pPa
             pTemp = (void**)&(((VkApplicationInfo*)(*pTemp))->pNext);
         }
     }
-    if (g_pReplaySettings->enableSyncValidation) {
-        VkValidationFeatureEnableEXT enables[] = {VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT};
-        VkValidationFeaturesEXT features = {};
-        features.sType = VK_STRUCTURE_TYPE_VALIDATION_FEATURES_EXT;
-        features.pNext = pCreateInfo->pNext;
-        features.enabledValidationFeatureCount = 1;
-        features.pEnabledValidationFeatures = enables;
-
-        pCreateInfo->pNext = &features;
-    }
     replayResult = vkCreateInstance(pPacket->pCreateInfo, NULL, &inst);
 
     if (replayResult == VK_SUCCESS) {
@@ -928,125 +863,6 @@ bool vkReplay::findImageFromOtherSwapchain(VkSwapchainKHR swapchain) {
     return find;
 }
 
-#define CHECKDEVICEFEATURES(typeID, featuresType, featureNum)  \
-case typeID: \
-{   \
-    VkBool32 *traceFeatures = (VkBool32*)((char*)pNext + offset);  \
-    VkPhysicalDeviceFeatures2 df2 = {};  \
-    df2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;  \
-    featuresType df = {};  \
-    df.sType = pNext->sType;  \
-    df2.pNext = &df;  \
-    if (m_vkFuncs.GetPhysicalDeviceFeatures2KHR != nullptr)  \
-        m_vkFuncs.GetPhysicalDeviceFeatures2KHR(physicalDevice, &df2);  \
-    else if (m_vkFuncs.GetPhysicalDeviceFeatures2 != nullptr) {  \
-        m_vkFuncs.GetPhysicalDeviceFeatures2(physicalDevice, &df2);  \
-    } else {  \
-        vktrace_LogError("vkGetPhysicalDeviceFeatures2KHR & vkGetPhysicalDeviceFeatures2 function pointer are nullptr");  \
-        return;  \
-    }  \
-    VkBool32 *deviceFeatures = (VkBool32*)((char*)&df + offset);  \
-    if (typeID == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2) { \
-        deviceFeatures = (VkBool32*)((char*)&df2 + offset);  \
-    } \
-    for (uint32_t i = 0; i < featureNum; i++) {  \
-        if (traceFeatures[i] && !deviceFeatures[i]) {  \
-            vktrace_LogError("Device feature (feature Type = %s, feature = %s, value = %d) in trace file does not match the physical replay device (value = %d)", string_VkStructureType(pNext->sType), getString##featuresType(i).c_str(), traceFeatures[i], deviceFeatures[i]);  \
-            if (g_pReplaySettings->overrideCreateDeviceFeatures) { \
-                vktrace_LogAlways("Disable device feature (feature Type = %s, feature = %s, value = %d) according to the user's demand.", string_VkStructureType(pNext->sType), getString##featuresType(i).c_str(), traceFeatures[i]);  \
-                traceFeatures[i] = deviceFeatures[i]; \
-            } \
-        }  \
-    }  \
-}  \
-break;
-
-void vkReplay::checkDeviceExtendFeatures(const VkBaseOutStructure *pNext, VkPhysicalDevice physicalDevice) {
-    int offset = offsetof(VkPhysicalDeviceVulkan11Features, storageBuffer16BitAccess);
-    while(pNext != nullptr) {
-        switch(pNext->sType) {
-            CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, VkPhysicalDeviceFeatures2, 55)
-            CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES, VkPhysicalDeviceVulkan11Features, 12)
-            CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ASTC_DECODE_FEATURES_EXT, VkPhysicalDeviceASTCDecodeFeaturesEXT, 1)
-            CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SCALAR_BLOCK_LAYOUT_FEATURES, VkPhysicalDeviceScalarBlockLayoutFeatures, 1)
-            CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MULTIVIEW_FEATURES, VkPhysicalDeviceMultiviewFeatures, 3)
-            CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES, VkPhysicalDeviceVulkan12Features, 47)
-            CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VARIABLE_POINTERS_FEATURES, VkPhysicalDeviceVariablePointersFeatures, 2)
-            CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_ATOMIC_FLOAT_FEATURES_EXT, VkPhysicalDeviceShaderAtomicFloatFeaturesEXT, 12)
-            CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_ATOMIC_INT64_FEATURES, VkPhysicalDeviceShaderAtomicInt64Features, 2)
-            CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_IMAGE_ATOMIC_INT64_FEATURES_EXT, VkPhysicalDeviceShaderImageAtomicInt64FeaturesEXT, 2)
-            CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_8BIT_STORAGE_FEATURES, VkPhysicalDevice8BitStorageFeatures, 3)
-            CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_16BIT_STORAGE_FEATURES, VkPhysicalDevice16BitStorageFeatures, 4)
-            CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_FLOAT16_INT8_FEATURES, VkPhysicalDeviceShaderFloat16Int8Features, 2)
-            CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_CLOCK_FEATURES_KHR, VkPhysicalDeviceShaderClockFeaturesKHR, 2)
-            CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SAMPLER_YCBCR_CONVERSION_FEATURES, VkPhysicalDeviceSamplerYcbcrConversionFeatures, 1)
-            CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROTECTED_MEMORY_FEATURES, VkPhysicalDeviceProtectedMemoryFeatures, 1)
-            CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BLEND_OPERATION_ADVANCED_FEATURES_EXT, VkPhysicalDeviceBlendOperationAdvancedFeaturesEXT, 1)
-            CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_CONDITIONAL_RENDERING_FEATURES_EXT, VkPhysicalDeviceConditionalRenderingFeaturesEXT, 2)
-            CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_DRAW_PARAMETERS_FEATURES, VkPhysicalDeviceShaderDrawParametersFeatures, 1)
-            CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES, VkPhysicalDeviceDescriptorIndexingFeatures, 20)
-            CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VERTEX_ATTRIBUTE_DIVISOR_FEATURES_EXT, VkPhysicalDeviceVertexAttributeDivisorFeaturesEXT, 2)
-            CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TRANSFORM_FEEDBACK_FEATURES_EXT, VkPhysicalDeviceTransformFeedbackFeaturesEXT, 2)
-            CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_MEMORY_MODEL_FEATURES, VkPhysicalDeviceVulkanMemoryModelFeatures, 3)
-            CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_INLINE_UNIFORM_BLOCK_FEATURES_EXT, VkPhysicalDeviceInlineUniformBlockFeaturesEXT, 2)
-            CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_DENSITY_MAP_2_FEATURES_EXT, VkPhysicalDeviceFragmentDensityMap2FeaturesEXT, 1)
-            CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_UNIFORM_BUFFER_STANDARD_LAYOUT_FEATURES, VkPhysicalDeviceUniformBufferStandardLayoutFeatures, 1)
-            CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DEPTH_CLIP_ENABLE_FEATURES_EXT, VkPhysicalDeviceDepthClipEnableFeaturesEXT, 1)
-            CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES, VkPhysicalDeviceBufferDeviceAddressFeatures, 3)
-            CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGELESS_FRAMEBUFFER_FEATURES, VkPhysicalDeviceImagelessFramebufferFeatures, 1)
-            CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_YCBCR_IMAGE_ARRAYS_FEATURES_EXT, VkPhysicalDeviceYcbcrImageArraysFeaturesEXT, 1)
-            CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_SUBGROUP_EXTENDED_TYPES_FEATURES, VkPhysicalDeviceShaderSubgroupExtendedTypesFeatures, 1)
-            CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_HOST_QUERY_RESET_FEATURES, VkPhysicalDeviceHostQueryResetFeatures, 1)
-            CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES, VkPhysicalDeviceTimelineSemaphoreFeatures, 1)
-            CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_INDEX_TYPE_UINT8_FEATURES_EXT, VkPhysicalDeviceIndexTypeUint8FeaturesEXT, 1)
-            //CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRIMITIVE_TOPOLOGY_LIST_RESTART_FEATURES_EXT, VkPhysicalDevicePrimitiveTopologyListRestartFeaturesEXT, 2)
-            CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SEPARATE_DEPTH_STENCIL_LAYOUTS_FEATURES, VkPhysicalDeviceSeparateDepthStencilLayoutsFeatures, 1)
-            CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PIPELINE_EXECUTABLE_PROPERTIES_FEATURES_KHR, VkPhysicalDevicePipelineExecutablePropertiesFeaturesKHR, 1)
-            CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_DEMOTE_TO_HELPER_INVOCATION_FEATURES_EXT, VkPhysicalDeviceShaderDemoteToHelperInvocationFeaturesEXT, 1)
-            CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TEXEL_BUFFER_ALIGNMENT_FEATURES_EXT, VkPhysicalDeviceTexelBufferAlignmentFeaturesEXT, 1)
-            CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TEXTURE_COMPRESSION_ASTC_HDR_FEATURES_EXT, VkPhysicalDeviceTextureCompressionASTCHDRFeaturesEXT, 1)
-            CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_LINE_RASTERIZATION_FEATURES_EXT, VkPhysicalDeviceLineRasterizationFeaturesEXT, 6)
-            CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_SIZE_CONTROL_FEATURES_EXT, VkPhysicalDeviceSubgroupSizeControlFeaturesEXT, 2)
-            CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR, VkPhysicalDeviceAccelerationStructureFeaturesKHR, 5)
-            CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR, VkPhysicalDeviceRayTracingPipelineFeaturesKHR, 5)
-            CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR, VkPhysicalDeviceRayQueryFeaturesKHR, 1)
-            CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_FEATURES_EXT, VkPhysicalDeviceExtendedDynamicStateFeaturesEXT, 1)
-            //CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_2_FEATURES_EXT, VkPhysicalDeviceExtendedDynamicState2FeaturesEXT, 3)
-            CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DEVICE_MEMORY_REPORT_FEATURES_EXT, VkPhysicalDeviceDeviceMemoryReportFeaturesEXT, 1)
-            //CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_GLOBAL_PRIORITY_QUERY_FEATURES_EXT, VkPhysicalDeviceGlobalPriorityQueryFeaturesEXT, 1)
-            CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PIPELINE_CREATION_CACHE_CONTROL_FEATURES_EXT, VkPhysicalDevicePipelineCreationCacheControlFeaturesEXT, 1)
-            //CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ZERO_INITIALIZE_WORKGROUP_MEMORY_FEATURES_KHR, VkPhysicalDeviceZeroInitializeWorkgroupMemoryFeaturesKHR, 1)
-            //CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_SUBGROUP_UNIFORM_CONTROL_FLOW_FEATURES_KHR, VkPhysicalDeviceShaderSubgroupUniformControlFlowFeaturesKHR, 1)
-            CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGE_ROBUSTNESS_FEATURES_EXT, VkPhysicalDeviceImageRobustnessFeaturesEXT, 1)
-            CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_TERMINATE_INVOCATION_FEATURES_KHR, VkPhysicalDeviceShaderTerminateInvocationFeaturesKHR, 1)
-            CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_CUSTOM_BORDER_COLOR_FEATURES_EXT, VkPhysicalDeviceCustomBorderColorFeaturesEXT, 2)
-            //CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BORDER_COLOR_SWIZZLE_FEATURES_EXT, VkPhysicalDeviceBorderColorSwizzleFeaturesEXT, 2)
-            CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PORTABILITY_SUBSET_FEATURES_KHR, VkPhysicalDevicePortabilitySubsetFeaturesKHR, 15)
-            CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PERFORMANCE_QUERY_FEATURES_KHR, VkPhysicalDevicePerformanceQueryFeaturesKHR, 2)
-            CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_4444_FORMATS_FEATURES_EXT, VkPhysicalDevice4444FormatsFeaturesEXT, 2)
-            //CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_WORKGROUP_MEMORY_EXPLICIT_LAYOUT_FEATURES_KHR, VkPhysicalDeviceWorkgroupMemoryExplicitLayoutFeaturesKHR, 4)
-            //CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES_KHR, VkPhysicalDeviceSynchronization2FeaturesKHR, 1)
-            //CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VERTEX_INPUT_DYNAMIC_STATE_FEATURES_EXT, VkPhysicalDeviceVertexInputDynamicStateFeaturesEXT, 1)
-            CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_SHADING_RATE_FEATURES_KHR, VkPhysicalDeviceFragmentShadingRateFeaturesKHR, 3)
-            //CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_YCBCR_2_PLANE_444_FORMATS_FEATURES_EXT, VkPhysicalDeviceYcbcr2Plane444FormatsFeaturesEXT, 1)
-            //CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_COLOR_WRITE_ENABLE_FEATURES_EXT, VkPhysicalDeviceColorWriteEnableFeaturesEXT, 1)
-            //CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROVOKING_VERTEX_FEATURES_EXT, VkPhysicalDeviceProvokingVertexFeaturesEXT, 2)
-            //CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PAGEABLE_DEVICE_LOCAL_MEMORY_FEATURES_EXT, VkPhysicalDevicePageableDeviceLocalMemoryFeaturesEXT, 1)
-            //CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MULTI_DRAW_FEATURES_EXT, VkPhysicalDeviceMultiDrawFeaturesEXT, 1)
-            //CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_ID_FEATURES_KHR, VkPhysicalDevicePresentIdFeaturesKHR, 1)
-            //CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_WAIT_FEATURES_KHR, VkPhysicalDevicePresentWaitFeaturesKHR, 1)
-            //CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_INTEGER_DOT_PRODUCT_FEATURES_KHR, VkPhysicalDeviceShaderIntegerDotProductFeaturesKHR, 1)
-            //CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RGBA10X6_FORMATS_FEATURES_EXT, VkPhysicalDeviceRGBA10X6FormatsFeaturesEXT, 1)
-            //CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_4_FEATURES_KHR, VkPhysicalDeviceMaintenance4FeaturesKHR, 1)
-            //CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_FEATURES_KHR, VkPhysicalDeviceDynamicRenderingFeaturesKHR, 1)
-            default:
-            vktrace_LogWarning("Device Features id = %u", pNext->sType);
-        }
-        pNext = reinterpret_cast<const VkBaseOutStructure *>(pNext->pNext);
-    }
-
-}
-
 VkResult vkReplay::manually_replay_vkCreateDevice(packet_vkCreateDevice *pPacket) {
     VkResult replayResult = VK_ERROR_VALIDATION_FAILED_EXT;
     VkDevice device;
@@ -1173,18 +989,13 @@ VkResult vkReplay::manually_replay_vkCreateDevice(packet_vkCreateDevice *pPacket
         VkBool32 *deviceFeatures = (VkBool32 *)(&physicalDeviceFeatures);
         uint32_t numOfFeatures = sizeof(VkPhysicalDeviceFeatures) / sizeof(VkBool32);
         for (uint32_t i = 0; i < numOfFeatures; i++) {
-            if (traceFeatures[i] && !deviceFeatures[i]) {
-                vktrace_LogAlways("Device feature (%s = %d) in trace file does not match the physical replay device (%d)", GetPhysDevFeatureString(i), traceFeatures[i], deviceFeatures[i]);
-                if (g_pReplaySettings->overrideCreateDeviceFeatures) {
-                    vktrace_LogAlways("Disable device feature (%s = %d) according to the user's demand.", GetPhysDevFeatureString(i), traceFeatures[i]);
-                    traceFeatures[i] = deviceFeatures[i];
-                }
+            if ((*(traceFeatures + i)) && !(*(deviceFeatures + i))) {
+                vktrace_LogAlways("Device Features (%s = %d) in trace file do not match the physical device (%d)", GetPhysDevFeatureString(i),*(traceFeatures + i),*(deviceFeatures + i));
             }
         }
         changeDeviceFeature(traceFeatures,deviceFeatures,numOfFeatures);
     }
-    const VkBaseOutStructure *pNext = reinterpret_cast<const VkBaseOutStructure *>(pPacket->pCreateInfo->pNext);
-    checkDeviceExtendFeatures(pNext, remappedPhysicalDevice);
+
     replayResult = m_vkFuncs.CreateDevice(remappedPhysicalDevice, pPacket->pCreateInfo, NULL, &device);
     if (ppEnabledLayerNames) {
         // restore the packets CreateInfo struct
@@ -4344,45 +4155,6 @@ void vkReplay::manually_replay_vkDestroyAccelerationStructureKHR(packet_vkDestro
     }
 }
 
-VkResult vkReplay::manually_replay_vkCreateRayTracingPipelinesKHR(packet_vkCreateRayTracingPipelinesKHR *pPacket) {
-    VkResult replayResult = VK_SUCCESS;
-    VkPipeline local_pPipelines;
-    VkDevice remappeddevice = m_objMapper.remap_devices(pPacket->device);
-    if (pPacket->device != VK_NULL_HANDLE && remappeddevice == VK_NULL_HANDLE) {
-        vktrace_LogError("Error detected in CreateRayTracingPipelinesKHR() due to invalid remapped VkDevice.");
-        return VK_ERROR_VALIDATION_FAILED_EXT;
-    }
-    VkDeferredOperationKHR remappeddeferredOperation = m_objMapper.remap_deferredoperationkhrs(pPacket->deferredOperation);
-    if (pPacket->deferredOperation != VK_NULL_HANDLE && remappeddeferredOperation == VK_NULL_HANDLE) {
-        vktrace_LogError("Error detected in CreateRayTracingPipelinesKHR() due to invalid remapped VkDeferredOperationKHR.");
-        return VK_ERROR_VALIDATION_FAILED_EXT;
-    }
-    VkPipelineCache remappedpipelineCache = m_objMapper.remap_pipelinecaches(pPacket->pipelineCache);
-    if (pPacket->pipelineCache != VK_NULL_HANDLE && remappedpipelineCache == VK_NULL_HANDLE) {
-        vktrace_LogError("Error detected in CreateRayTracingPipelinesKHR() due to invalid remapped VkPipelineCache.");
-        return VK_ERROR_VALIDATION_FAILED_EXT;
-    }
-    for (uint32_t i = 0; i < pPacket->createInfoCount; i++) {
-        const_cast<VkRayTracingPipelineCreateInfoKHR*>(pPacket->pCreateInfos)[i].layout = m_objMapper.remap_pipelinelayouts(pPacket->pCreateInfos[i].layout);
-        for(uint32_t j = 0; j < pPacket->pCreateInfos[i].stageCount; j++) {
-            ((VkPipelineShaderStageCreateInfo*)(((VkRayTracingPipelineCreateInfoKHR*)(pPacket->pCreateInfos))[i].pStages))[j].module = m_objMapper.remap_shadermodules(pPacket->pCreateInfos[i].pStages[j].module);
-        }
-        if (pPacket->pCreateInfos[i].pLibraryInfo != nullptr) {
-            for (uint32_t j = 0; j < pPacket->pCreateInfos[i].pLibraryInfo->libraryCount; j++) {
-               ((VkPipeline*)(((VkPipelineLibraryCreateInfoKHR*)(((VkRayTracingPipelineCreateInfoKHR*)(pPacket->pCreateInfos))[i].pLibraryInfo))->pLibraries))[j] =  m_objMapper.remap_pipelines(pPacket->pCreateInfos[i].pLibraryInfo->pLibraries[j]);
-            }
-        }
-    }
-    // No need to remap createInfoCount
-    // No need to remap pAllocator
-    replayResult = m_vkDeviceFuncs.CreateRayTracingPipelinesKHR(remappeddevice, remappeddeferredOperation, remappedpipelineCache, pPacket->createInfoCount, pPacket->pCreateInfos, pPacket->pAllocator, &local_pPipelines);
-    if (replayResult == VK_SUCCESS) {
-        m_objMapper.add_to_pipelines_map(*(pPacket->pPipelines), local_pPipelines);
-        replayRayTracingPipelinesKHRToDevice[local_pPipelines] = remappeddevice;
-    }
-    return replayResult;
-}
-
 BOOL isvkFlushMappedMemoryRangesSpecial(PBYTE pOPTPackageData) {
     BOOL bRet = FALSE;
     PageGuardChangedBlockInfo *pChangedInfoArray = (PageGuardChangedBlockInfo *)pOPTPackageData;
@@ -5675,15 +5447,6 @@ VkResult vkReplay::manually_replay_vkCreateSwapchainKHR(packet_vkCreateSwapchain
             VKTRACE_DELETE(pPresentModes);
         }
     }
-
-    uint32_t maxImageCount = surfCap.maxImageCount;
-    uint32_t old_minImageCount = pPacket->pCreateInfo->minImageCount;
-    uint32_t assigned_minImageCount = replaySettings.swapChainMinImageCount;
-    if(assigned_minImageCount < old_minImageCount || assigned_minImageCount > maxImageCount){
-        assigned_minImageCount = old_minImageCount;
-    }
-    vktrace_LogDebug("Using swapchain min image count %llu now! Valid min image count: (%llu ~ %llu).", assigned_minImageCount, old_minImageCount, maxImageCount);
-    *((uint32_t *)(&pPacket->pCreateInfo->minImageCount)) = assigned_minImageCount;
 
     replayResult = m_vkDeviceFuncs.CreateSwapchainKHR(remappeddevice, pPacket->pCreateInfo, pPacket->pAllocator, &local_pSwapchain);
     if (replayResult == VK_SUCCESS) {

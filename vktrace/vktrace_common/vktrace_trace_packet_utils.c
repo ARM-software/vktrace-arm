@@ -485,7 +485,6 @@ void vktrace_add_pnext_structs_to_trace_packet(vktrace_trace_packet_header* pHea
                     AddPointerWithCountToTracebuffer(VkRenderPassMultiviewCreateInfo, uint32_t, pCorrelationMasks,
                                                      correlationMaskCount);
                     break;
-                    break;
                 case VK_STRUCTURE_TYPE_SUBPASS_DESCRIPTION_DEPTH_STENCIL_RESOLVE:
                     AddPointerToTracebuffer(VkSubpassDescriptionDepthStencilResolve, VkAttachmentReference2, pDepthStencilResolveAttachment);
                     break;
@@ -520,18 +519,10 @@ void vktrace_add_pnext_structs_to_trace_packet(vktrace_trace_packet_header* pHea
                 case VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO_EXT:
                     AddPointerWithCountToTracebuffer(VkDescriptorSetLayoutBindingFlagsCreateInfoEXT, VkDescriptorBindingFlagsEXT,
                                                      pBindingFlags, bindingCount);
-                    break;
                 case VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR:
                     AddPointerWithCountToTracebuffer(VkWriteDescriptorSetAccelerationStructureKHR, VkAccelerationStructureKHR, pAccelerationStructures, accelerationStructureCount);
-                    break;
-                case VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO:
-                    AddPointerWithCountToTracebuffer(VkTimelineSemaphoreSubmitInfo, uint64_t, pWaitSemaphoreValues, waitSemaphoreValueCount);
-                    AddPointerWithCountToTracebuffer(VkTimelineSemaphoreSubmitInfo, uint64_t, pSignalSemaphoreValues, signalSemaphoreValueCount);
-                    break;
-                case VK_STRUCTURE_TYPE_VALIDATION_FEATURES_EXT:
-                    AddPointerWithCountToTracebuffer(VkValidationFeaturesEXT, VkValidationFeatureEnableEXT, pEnabledValidationFeatures, enabledValidationFeatureCount);
-                    AddPointerWithCountToTracebuffer(VkValidationFeaturesEXT, VkValidationFeatureDisableEXT, pDisabledValidationFeatures, disabledValidationFeatureCount);
-                    break;
+                break;
+
                 default:
                     // The cases in this switch statement are only those pnext struct types that have
                     // pointers inside them that need to be added. The pnext list may contain
@@ -737,119 +728,6 @@ void add_VkAccelerationStructureBuildGeometryInfoKHR_to_packet(vktrace_trace_pac
 
     if (addSelf) {
         vktrace_finalize_buffer_address(pHeader, (void**)ppStruct);
-    }
-}
-
-VkRayTracingPipelineCreateInfoKHR* interpret_VkRayTracingPipelineCreateInfoKHR(vktrace_trace_packet_header* pHeader, intptr_t ptr_variable) {
-    VkRayTracingPipelineCreateInfoKHR* pRayTracingPipelineCreateInfoKHR = (VkRayTracingPipelineCreateInfoKHR*)vktrace_trace_packet_interpret_buffer_pointer(pHeader, (intptr_t)ptr_variable);
-    if (pRayTracingPipelineCreateInfoKHR != NULL) {
-        vkreplay_interpret_pnext_pointers(pHeader, (void*)pRayTracingPipelineCreateInfoKHR);
-        uint32_t i = 0;
-        if (pRayTracingPipelineCreateInfoKHR->stageCount > 0) {
-            pRayTracingPipelineCreateInfoKHR->pStages = (const VkPipelineShaderStageCreateInfo*)vktrace_trace_packet_interpret_buffer_pointer(pHeader, (intptr_t)(pRayTracingPipelineCreateInfoKHR->pStages));
-            for(i = 0; i < pRayTracingPipelineCreateInfoKHR->stageCount; i++) {
-                vkreplay_interpret_pnext_pointers(pHeader,(void*)&(pRayTracingPipelineCreateInfoKHR->pStages[i]));
-                ((VkPipelineShaderStageCreateInfo*)(pRayTracingPipelineCreateInfoKHR->pStages))[i].pName = (const char* )vktrace_trace_packet_interpret_buffer_pointer(pHeader, (intptr_t)(pRayTracingPipelineCreateInfoKHR->pStages[i].pName));
-                ((VkPipelineShaderStageCreateInfo*)(pRayTracingPipelineCreateInfoKHR->pStages))[i].pSpecializationInfo = (const VkSpecializationInfo*)vktrace_trace_packet_interpret_buffer_pointer(pHeader, (intptr_t)(pRayTracingPipelineCreateInfoKHR->pStages[i].pSpecializationInfo));
-                if (pRayTracingPipelineCreateInfoKHR->pStages[i].pSpecializationInfo != NULL) {
-                    ((VkSpecializationInfo*)(((VkPipelineShaderStageCreateInfo*)(pRayTracingPipelineCreateInfoKHR->pStages))[i].pSpecializationInfo))->pMapEntries = (const VkSpecializationMapEntry* )vktrace_trace_packet_interpret_buffer_pointer(pHeader, (intptr_t)(pRayTracingPipelineCreateInfoKHR->pStages[i].pSpecializationInfo->pMapEntries));
-                    ((VkSpecializationInfo*)(((VkPipelineShaderStageCreateInfo*)(pRayTracingPipelineCreateInfoKHR->pStages))[i].pSpecializationInfo))->pData = (const void* )vktrace_trace_packet_interpret_buffer_pointer(pHeader, (intptr_t)(pRayTracingPipelineCreateInfoKHR->pStages[i].pSpecializationInfo->pData));
-                }
-            }
-        }
-        if (pRayTracingPipelineCreateInfoKHR->groupCount > 0) {
-            pRayTracingPipelineCreateInfoKHR->pGroups = (const VkRayTracingShaderGroupCreateInfoKHR*)vktrace_trace_packet_interpret_buffer_pointer(pHeader, (intptr_t)(pRayTracingPipelineCreateInfoKHR->pGroups));
-            for(i = 0; i < pRayTracingPipelineCreateInfoKHR->groupCount; i++) {
-                vkreplay_interpret_pnext_pointers(pHeader,(void*)&(pRayTracingPipelineCreateInfoKHR->pGroups[i]));
-            }
-        }
-        if (pRayTracingPipelineCreateInfoKHR->pLibraryInfo != NULL) {
-            pRayTracingPipelineCreateInfoKHR->pLibraryInfo = (const VkPipelineLibraryCreateInfoKHR*)vktrace_trace_packet_interpret_buffer_pointer(pHeader, (intptr_t)(pRayTracingPipelineCreateInfoKHR->pLibraryInfo));
-            vkreplay_interpret_pnext_pointers(pHeader,(void*)&(pRayTracingPipelineCreateInfoKHR->pLibraryInfo));
-            if (pRayTracingPipelineCreateInfoKHR->pLibraryInfo->libraryCount > 0) {
-                ((VkPipelineLibraryCreateInfoKHR*)(pRayTracingPipelineCreateInfoKHR->pLibraryInfo))->pLibraries = (const VkPipeline*)vktrace_trace_packet_interpret_buffer_pointer(pHeader, (intptr_t)(pRayTracingPipelineCreateInfoKHR->pLibraryInfo->pLibraries));
-            }
-        }
-        if (pRayTracingPipelineCreateInfoKHR->pLibraryInterface != NULL) {
-            pRayTracingPipelineCreateInfoKHR->pLibraryInterface = (const VkRayTracingPipelineInterfaceCreateInfoKHR*)vktrace_trace_packet_interpret_buffer_pointer(pHeader, (intptr_t)(pRayTracingPipelineCreateInfoKHR->pLibraryInterface));
-            vkreplay_interpret_pnext_pointers(pHeader,(void*)&(pRayTracingPipelineCreateInfoKHR->pLibraryInterface));
-        }
-        if (pRayTracingPipelineCreateInfoKHR->pDynamicState != NULL) {
-            pRayTracingPipelineCreateInfoKHR->pDynamicState = (const VkPipelineDynamicStateCreateInfo*)vktrace_trace_packet_interpret_buffer_pointer(pHeader, (intptr_t)(pRayTracingPipelineCreateInfoKHR->pDynamicState));
-            vkreplay_interpret_pnext_pointers(pHeader,(void*)&(pRayTracingPipelineCreateInfoKHR->pDynamicState));
-            if (pRayTracingPipelineCreateInfoKHR->pDynamicState->dynamicStateCount > 0) {
-                ((VkPipelineDynamicStateCreateInfo*)(pRayTracingPipelineCreateInfoKHR->pDynamicState))->pDynamicStates = (const VkDynamicState*)vktrace_trace_packet_interpret_buffer_pointer(pHeader, (intptr_t)(pRayTracingPipelineCreateInfoKHR->pDynamicState->pDynamicStates));
-            }
-        }
-    }
-    return pRayTracingPipelineCreateInfoKHR;
-}
-
-void add_VkRayTracingPipelineCreateInfoKHR_to_packet(vktrace_trace_packet_header* pHeader, VkRayTracingPipelineCreateInfoKHR** ppStruct, VkRayTracingPipelineCreateInfoKHR* pInStruct) {
-    vktrace_add_pnext_structs_to_trace_packet(pHeader, (void*)*ppStruct, (void*)pInStruct);
-    uint32_t i = 0;
-    //add pStages
-    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(*ppStruct)->pStages, sizeof(VkPipelineShaderStageCreateInfo) * pInStruct->stageCount, pInStruct->pStages);
-    if ((*ppStruct)->pStages) {
-        for (i = 0; i < pInStruct->stageCount; i++) {
-            vktrace_add_pnext_structs_to_trace_packet(pHeader, (void*)&(*ppStruct)->pStages[i], (void*)&pInStruct->pStages[i]);
-            if (pInStruct->pStages[i].pName != NULL) {
-                vktrace_add_buffer_to_trace_packet(pHeader, (void**)&((*ppStruct)->pStages[i].pName), strlen(pInStruct->pStages[i].pName) , pInStruct->pStages[i].pName);
-                vktrace_finalize_buffer_address(pHeader, (void**)&((*ppStruct)->pStages[i].pName));
-            }
-            if (pInStruct->pStages[i].pSpecializationInfo != NULL) {
-                vktrace_add_buffer_to_trace_packet(pHeader, (void**)&((*ppStruct)->pStages[i].pSpecializationInfo), sizeof(VkSpecializationInfo) , pInStruct->pStages[i].pSpecializationInfo);
-                if (pInStruct->pStages[i].pSpecializationInfo->mapEntryCount > 0) {
-                    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&((*ppStruct)->pStages[i].pSpecializationInfo->pMapEntries), sizeof(VkSpecializationMapEntry) * pInStruct->pStages[i].pSpecializationInfo->mapEntryCount , pInStruct->pStages[i].pSpecializationInfo->pMapEntries);
-                    vktrace_finalize_buffer_address(pHeader, (void**)&((*ppStruct)->pStages[i].pSpecializationInfo->pMapEntries));
-                }
-                if (pInStruct->pStages[i].pSpecializationInfo->dataSize > 0) {
-                    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&((*ppStruct)->pStages[i].pSpecializationInfo->pData), pInStruct->pStages[i].pSpecializationInfo->dataSize , pInStruct->pStages[i].pSpecializationInfo->pData);
-                    vktrace_finalize_buffer_address(pHeader, (void**)&((*ppStruct)->pStages[i].pSpecializationInfo->pData));
-                }
-                vktrace_finalize_buffer_address(pHeader, (void**)&((*ppStruct)->pStages[i].pSpecializationInfo));
-            }
-        }
-        vktrace_finalize_buffer_address(pHeader, (void**)&(*ppStruct)->pStages);
-    }
-    //add pGroups
-    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(*ppStruct)->pGroups, sizeof(VkRayTracingShaderGroupCreateInfoKHR) * pInStruct->groupCount, pInStruct->pGroups);
-    if ((*ppStruct)->pGroups) {
-        for (i = 0; i < pInStruct->groupCount; i++) {
-            vktrace_add_pnext_structs_to_trace_packet(pHeader, (void*)&(*ppStruct)->pGroups[i], (void*)&pInStruct->pGroups[i]);
-            //ignore pInStruct->pGroups[i].pShaderGroupCaptureReplayHandle
-            //if (pInStruct->pGroups[i].pShaderGroupCaptureReplayHandle != NULL) {
-            //    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&((*ppStruct)->pGroups[i].pShaderGroupCaptureReplayHandle), sizeof(uint64_t) , pInStruct->pGroups[i].pShaderGroupCaptureReplayHandle);
-            //    vktrace_finalize_buffer_address(pHeader, (void**)&((*ppStruct)->pGroups[i].pShaderGroupCaptureReplayHandle));
-            //}
-        }
-        vktrace_finalize_buffer_address(pHeader, (void**)&(*ppStruct)->pGroups);
-    }
-    //add pLibraryInfo
-    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(*ppStruct)->pLibraryInfo, sizeof(VkPipelineLibraryCreateInfoKHR), pInStruct->pLibraryInfo);
-    if ((*ppStruct)->pLibraryInfo) {
-        vktrace_add_pnext_structs_to_trace_packet(pHeader, (void*)&(*ppStruct)->pLibraryInfo, (void*)&pInStruct->pLibraryInfo);
-        if (pInStruct->pLibraryInfo->libraryCount > 0) {
-            vktrace_add_buffer_to_trace_packet(pHeader, (void**)&((*ppStruct)->pLibraryInfo->pLibraries), sizeof(VkPipeline) * pInStruct->pLibraryInfo->libraryCount, pInStruct->pLibraryInfo->pLibraries);
-            vktrace_finalize_buffer_address(pHeader, (void**)&(*ppStruct)->pLibraryInfo->pLibraries);
-        }
-        vktrace_finalize_buffer_address(pHeader, (void**)&(*ppStruct)->pLibraryInfo);
-    }
-    //add pLibraryInterface
-    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(*ppStruct)->pLibraryInterface, sizeof(VkRayTracingPipelineInterfaceCreateInfoKHR), pInStruct->pLibraryInterface);
-    if ((*ppStruct)->pLibraryInterface) {
-        vktrace_add_pnext_structs_to_trace_packet(pHeader, (void*)&(*ppStruct)->pLibraryInterface, (void*)&pInStruct->pLibraryInterface);
-        vktrace_finalize_buffer_address(pHeader, (void**)&(*ppStruct)->pLibraryInterface);
-    }
-    //add pDynamicState
-    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(*ppStruct)->pDynamicState, sizeof(VkPipelineDynamicStateCreateInfo), pInStruct->pDynamicState);
-    if ((*ppStruct)->pDynamicState) {
-        vktrace_add_pnext_structs_to_trace_packet(pHeader, (void*)&(*ppStruct)->pDynamicState, (void*)&pInStruct->pDynamicState);
-        if (pInStruct->pDynamicState->dynamicStateCount > 0) {
-            vktrace_add_buffer_to_trace_packet(pHeader, (void**)&((*ppStruct)->pDynamicState->pDynamicStates), sizeof(VkDynamicState) * pInStruct->pDynamicState->dynamicStateCount, pInStruct->pDynamicState->pDynamicStates);
-            vktrace_finalize_buffer_address(pHeader, (void**)&(*ppStruct)->pDynamicState->pDynamicStates);
-        }
-        vktrace_finalize_buffer_address(pHeader, (void**)&(*ppStruct)->pDynamicState);
     }
 }
 
@@ -1171,7 +1049,6 @@ void vkreplay_interpret_pnext_pointers(vktrace_trace_packet_header* pHeader, voi
                 InterpretPointerInPNext(VkRenderPassMultiviewCreateInfo, int32_t, pViewOffsets);
                 InterpretPointerInPNext(VkRenderPassMultiviewCreateInfo, uint32_t, pCorrelationMasks);
                 break;
-                break;
             case VK_STRUCTURE_TYPE_SUBPASS_DESCRIPTION_DEPTH_STENCIL_RESOLVE:
                 InterpretPointerInPNext(VkSubpassDescriptionDepthStencilResolve, VkAttachmentReference2, pDepthStencilResolveAttachment);
                 break;
@@ -1202,14 +1079,6 @@ void vkreplay_interpret_pnext_pointers(vktrace_trace_packet_header* pHeader, voi
                 break;
             case VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR:
                 InterpretPointerInPNext(VkWriteDescriptorSetAccelerationStructureKHR, VkAccelerationStructureKHR, pAccelerationStructures);
-                break;
-            case VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO:
-                InterpretPointerInPNext(VkTimelineSemaphoreSubmitInfo, uint64_t, pWaitSemaphoreValues);
-                InterpretPointerInPNext(VkTimelineSemaphoreSubmitInfo, uint64_t, pSignalSemaphoreValues);
-                break;
-            case VK_STRUCTURE_TYPE_VALIDATION_FEATURES_EXT:
-                InterpretPointerInPNext(VkValidationFeaturesEXT, VkValidationFeatureEnableEXT, pEnabledValidationFeatures);
-                InterpretPointerInPNext(VkValidationFeaturesEXT, VkValidationFeatureDisableEXT, pDisabledValidationFeatures);
                 break;
             default:
                 // The cases in this switch statement are only those pnext struct types that have
