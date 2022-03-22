@@ -4568,17 +4568,23 @@ void recreate_pipelines(StateTracker &stateTracker) {
             VkRenderPass originalRenderPass = obj->second.ObjectInfo.Pipeline.graphicsPipelineCreateInfo.renderPass;
             uint32_t thisRenderPassVersion = obj->second.ObjectInfo.Pipeline.renderPassVersion;
             uint32_t latestVersion = stateTracker.get_RenderPassVersion(originalRenderPass);
-
             trim::ObjectInfo *pRenderPass = stateTracker.get_RenderPass(originalRenderPass);
             if (thisRenderPassVersion < latestVersion || pRenderPass == nullptr) {
                 // Actually recreate the old RenderPass to get a new handle to
                 // supply to the pipeline creation call
-                VkRenderPassCreateInfo *pRPCreateInfo =
+                VkApplicationInfo *pRPCreateInfo =
                     stateTracker.get_RenderPassCreateInfo(originalRenderPass, thisRenderPassVersion);
-                vktrace_trace_packet_header *pCreateRenderPass = trim::generate::vkCreateRenderPass(
-                    true, device, pRPCreateInfo, nullptr, &obj->second.ObjectInfo.Pipeline.graphicsPipelineCreateInfo.renderPass);
-                vktrace_write_trace_packet(pCreateRenderPass, vktrace_trace_get_trace_file());
-                vktrace_delete_trace_packet(&pCreateRenderPass);
+                if (pRPCreateInfo->sType == VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO)  {
+                    vktrace_trace_packet_header *pCreateRenderPass = trim::generate::vkCreateRenderPass(
+                        true, device, (VkRenderPassCreateInfo*)pRPCreateInfo, nullptr, &obj->second.ObjectInfo.Pipeline.graphicsPipelineCreateInfo.renderPass);
+                    vktrace_write_trace_packet(pCreateRenderPass, vktrace_trace_get_trace_file());
+                    vktrace_delete_trace_packet(&pCreateRenderPass);
+                } else if (pRPCreateInfo->sType == VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO_2) {
+                    vktrace_trace_packet_header *pCreateRenderPass = trim::generate::vkCreateRenderPass2(
+                        true, device, (VkRenderPassCreateInfo2*)pRPCreateInfo, nullptr, &obj->second.ObjectInfo.Pipeline.graphicsPipelineCreateInfo.renderPass);
+                    vktrace_write_trace_packet(pCreateRenderPass, vktrace_trace_get_trace_file());
+                    vktrace_delete_trace_packet(&pCreateRenderPass);
+                }
             }
 
             pHeader = trim::generate::vkCreateGraphicsPipelines(
@@ -5532,7 +5538,7 @@ void write_all_referenced_object_calls() {
 //=========================================================================
 // Object tracking
 //=========================================================================
-void add_RenderPassCreateInfo(VkRenderPass renderPass, const VkRenderPassCreateInfo *pCreateInfo) {
+void add_RenderPassCreateInfo(VkRenderPass renderPass, const VkApplicationInfo *pCreateInfo) {
     vktrace_enter_critical_section(&trimStateTrackerLock);
     s_trimGlobalStateTracker.add_RenderPassCreateInfo(renderPass, pCreateInfo);
     vktrace_leave_critical_section(&trimStateTrackerLock);

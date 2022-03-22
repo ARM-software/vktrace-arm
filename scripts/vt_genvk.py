@@ -609,6 +609,34 @@ def makeGenOpts(args):
             alignFuncParam    = 48,
             expandEnumerants = False)
         ]
+    # vulkan structure member generator options for vkreplay_vkreplay.cpp
+    genOpts['vk_struct_member.h'] = [
+        ApiDumpOutputGenerator,
+        ApiDumpGeneratorOptions(
+            conventions       = conventions,
+            input             = VK_STRUCT_MEMBER_CODEGEN,
+            filename          = 'vk_struct_member.h',
+            directory         = directory,
+            apiname           = 'vulkan',
+            profile           = None,
+            versions          = featuresPat,
+            emitversions      = featuresPat,
+            defaultExtensions = 'vulkan',
+            addExtensions     = addExtensionsPat,
+            removeExtensions  = removeExtensionsPat,
+            emitExtensions    = emitExtensionsPat,
+            prefixText        = prefixStrings + vkPrefixStrings,
+            genFuncPointers   = True,
+            protectFile       = protect,
+            protectFeature    = False,
+            protectProto      = None,
+            protectProtoStr   = 'VK_NO_PROTOTYPES',
+            apicall           = 'VKAPI_ATTR ',
+            apientry          = 'VKAPI_CALL ',
+            apientryp         = 'VKAPI_PTR *',
+            alignFuncParam    = 48,
+            expandEnumerants = False)
+        ]
 # Generate a target based on the options in the matching genOpts{} object.
 # This is encapsulated in a function so it can be profiled and/or timed.
 # The args parameter is an parsed argument object containing the following
@@ -742,6 +770,7 @@ if __name__ == '__main__':
     from api_cost_generator import ApiCostGeneratorOptions, ApiCostOutputGenerator, APICOST_CODEGEN
     from systrace_generator import SYSTRACE_CODEGEN
     from emptydriver_generator import EMPTYDRIVER_CODEGEN
+    from vk_struct_member_generator import VK_STRUCT_MEMBER_CODEGEN
 
     # This splits arguments which are space-separated lists
     args.feature = [name for arg in args.feature for name in arg.split()]

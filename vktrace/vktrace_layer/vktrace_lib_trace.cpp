@@ -1871,6 +1871,55 @@ VKTRACER_EXPORT VKAPI_ATTR void VKAPI_CALL __HOOKED_vkDestroyAccelerationStructu
     }
 }
 
+VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkCreateRayTracingPipelinesKHR(
+    VkDevice device,
+    VkDeferredOperationKHR deferredOperation,
+    VkPipelineCache pipelineCache,
+    uint32_t createInfoCount,
+    const VkRayTracingPipelineCreateInfoKHR* pCreateInfos,
+    const VkAllocationCallbacks* pAllocator,
+    VkPipeline* pPipelines) {
+    trim::TraceLock<std::mutex> lock(g_mutex_trace);
+    VkResult result;
+    vktrace_trace_packet_header* pHeader;
+    packet_vkCreateRayTracingPipelinesKHR* pPacket = NULL;
+    size_t additionSize = 0;
+    for (uint32_t i = 0; i < createInfoCount; i++) {
+        additionSize += get_struct_chain_size((void*)&pCreateInfos[i]);
+    }
+    CREATE_TRACE_PACKET(vkCreateRayTracingPipelinesKHR, additionSize + sizeof(VkAllocationCallbacks) + createInfoCount * sizeof(VkPipeline));
+    result = mdd(device)->devTable.CreateRayTracingPipelinesKHR(device, deferredOperation, pipelineCache, createInfoCount, pCreateInfos, pAllocator, pPipelines);
+    vktrace_set_packet_entrypoint_end_time(pHeader);
+    pPacket = interpret_body_as_vkCreateRayTracingPipelinesKHR(pHeader);
+    pPacket->device = device;
+    pPacket->deferredOperation = deferredOperation;
+    pPacket->pipelineCache = pipelineCache;
+    pPacket->createInfoCount = createInfoCount;
+    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pCreateInfos), createInfoCount * sizeof(VkRayTracingPipelineCreateInfoKHR), pCreateInfos);
+    for (uint32_t i = 0; i < createInfoCount; ++i) {
+        VkRayTracingPipelineCreateInfoKHR* temp = (VkRayTracingPipelineCreateInfoKHR* )&(pPacket->pCreateInfos[i]);
+        add_VkRayTracingPipelineCreateInfoKHR_to_packet(pHeader, (VkRayTracingPipelineCreateInfoKHR**)&temp, (VkRayTracingPipelineCreateInfoKHR*)&pCreateInfos[i]);
+    }
+
+    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pAllocator), sizeof(VkAllocationCallbacks), NULL);
+    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pPipelines), createInfoCount * sizeof(VkPipeline), pPipelines);
+    pPacket->result = result;
+    vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pCreateInfos));
+    vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pAllocator));
+    vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pPipelines));
+    if (!g_trimEnabled) {
+        FINISH_TRACE_PACKET();
+    } else {
+        vktrace_finalize_trace_packet(pHeader);
+        if (g_trimIsInTrim) {
+            trim::write_packet(pHeader);
+        } else {
+            vktrace_delete_trace_packet(&pHeader);
+        }
+    }
+    return result;
+}
+
 VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkCreateFramebuffer(VkDevice device,
                                                                             const VkFramebufferCreateInfo* pCreateInfo,
                                                                             const VkAllocationCallbacks* pAllocator,
@@ -2246,7 +2295,7 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkCreateRenderPass(VkDev
     } else {
         vktrace_finalize_trace_packet(pHeader);
         trim::ObjectInfo& info = trim::add_RenderPass_object(*pRenderPass);
-        trim::add_RenderPassCreateInfo(*pRenderPass, pCreateInfo);
+        trim::add_RenderPassCreateInfo(*pRenderPass, (VkApplicationInfo*)pCreateInfo);
         info.belongsToDevice = device;
         info.ObjectInfo.RenderPass.pCreatePacket = trim::copy_packet(pHeader);
         if (pCreateInfo == nullptr || pCreateInfo->attachmentCount == 0) {
@@ -2352,22 +2401,7 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkCreateRenderPass2(VkDe
                                                                             const VkRenderPassCreateInfo2* pCreateInfo,
                                                                             const VkAllocationCallbacks* pAllocator,
                                                                             VkRenderPass* pRenderPass) {
-    trim::TraceLock<std::mutex> lock(g_mutex_trace);
-    VkResult result;
-    vktrace_trace_packet_header* pHeader;
-    packet_vkCreateRenderPass2* pPacket = NULL;
-
-    // begin custom code (get_struct_chain_size)
-    CREATE_TRACE_PACKET(vkCreateRenderPass2, get_struct_chain_size((void*)pCreateInfo) + sizeof(VkAllocationCallbacks) + sizeof(VkRenderPass));
-    // end custom code
-    result = mdd(device)->devTable.CreateRenderPass2(device, pCreateInfo, pAllocator, pRenderPass);
-    vktrace_set_packet_entrypoint_end_time(pHeader);
-    pPacket = interpret_body_as_vkCreateRenderPass2(pHeader);
-
-    post_vkCreateRenderPass2(pPacket->header, device, pCreateInfo, pAllocator, pRenderPass, result);
-
-    FINISH_TRACE_PACKET();  // No trimming support for renderpass2
-    return result;
+    return __HOOKED_vkCreateRenderPass2KHR(device, pCreateInfo, pAllocator, pRenderPass);
 }
 
 VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkCreateRenderPass2KHR(VkDevice device,
@@ -2388,8 +2422,42 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkCreateRenderPass2KHR(V
     pPacket = interpret_body_as_vkCreateRenderPass2KHR(pHeader);
 
     post_vkCreateRenderPass2(pPacket->header, device, pCreateInfo, pAllocator, pRenderPass, result);
+     if (!g_trimEnabled) {
+        // trim not enabled, send packet as usual
+        FINISH_TRACE_PACKET();
+    } else {
+        vktrace_finalize_trace_packet(pHeader);
+        trim::ObjectInfo& info = trim::add_RenderPass_object(*pRenderPass);
+        trim::add_RenderPassCreateInfo(*pRenderPass, (VkApplicationInfo*)(pCreateInfo));
+        info.belongsToDevice = device;
+        info.ObjectInfo.RenderPass.pCreatePacket = trim::copy_packet(pHeader);
+        if (pCreateInfo == nullptr || pCreateInfo->attachmentCount == 0) {
+            info.ObjectInfo.RenderPass.attachmentCount = 0;
+            info.ObjectInfo.RenderPass.pAttachments = nullptr;
+        } else {
+            info.ObjectInfo.RenderPass.attachmentCount = pCreateInfo->attachmentCount;
+            info.ObjectInfo.RenderPass.pAttachments = new trim::ImageTransition[pCreateInfo->attachmentCount];
+            for (uint32_t i = 0; i < pCreateInfo->attachmentCount; i++) {
+                info.ObjectInfo.RenderPass.pAttachments[i].initialLayout = pCreateInfo->pAttachments[i].initialLayout;
+                info.ObjectInfo.RenderPass.pAttachments[i].finalLayout = pCreateInfo->pAttachments[i].finalLayout;
 
-    FINISH_TRACE_PACKET();  // No trimming support for renderpass2
+                // We don't know which object it is at this time, but we'll find out in VkBindDescriptorSets().
+                info.ObjectInfo.RenderPass.pAttachments[i].image = VK_NULL_HANDLE;
+            }
+        }
+        if (pAllocator != NULL) {
+            info.ObjectInfo.RenderPass.pAllocator = pAllocator;
+        }
+
+        if (pAllocator != NULL) {
+            trim::add_Allocator(pAllocator);
+        }
+        if (g_trimIsInTrim) {
+            trim::write_packet(pHeader);
+        } else {
+            vktrace_delete_trace_packet(&pHeader);
+        }
+    }
     return result;
 }
 

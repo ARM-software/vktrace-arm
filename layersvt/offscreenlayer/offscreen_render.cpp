@@ -71,7 +71,6 @@ static loader_platform_thread_mutex sLock;
 static int sLockInitialized = 0;
 static VkSurfaceKHR sHeadlessSurface = VK_NULL_HANDLE;
 static int sFrameNumber = 0;
-static offscreen::swapchain_headless* sHeadlessSwapChain = nullptr;
 
 /******************call vulkan api by headless_surface or headless_swapchain************************/
 VK_LAYER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL  vkGetPhysicalDeviceImageFormatProperties(
@@ -372,6 +371,10 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateAndroidSurfaceKHR(VkInstance instance, cons
     surface_create_info.pNext = nullptr;
     surface_create_info.flags = 0;
     result = vkCreateHeadlessSurface(instance, &surface_create_info, pAllocator, pSurface);
+    if(sHeadlessSurface != VK_NULL_HANDLE)
+    {
+        printf("WARNING/offscreen_render: old sHeadlessSurface will be replaced!\n");
+    }
     sHeadlessSurface = *pSurface;
 #else
     VkLayerInstanceDispatchTable *pTable = instance_dispatch_table(instance);
@@ -389,7 +392,13 @@ VKAPI_ATTR void VKAPI_CALL DestroySurfaceKHR(VkInstance instance, VkSurfaceKHR s
     printf("------------,function = %s,line = %d",__FUNCTION__,__LINE__);
     assert(instance);
 #if OFFSCREEN
-    vkDestroyHeadlessSurfaceKHR(instance, surface, pAllocator);
+    if(surface == sHeadlessSurface)
+    {
+        vkDestroyHeadlessSurfaceKHR(instance, surface, pAllocator);
+        sHeadlessSurface = VK_NULL_HANDLE;
+    }
+    else
+        vkDestroyHeadlessSurfaceKHR(instance, surface, pAllocator);
     return ;
 #else
     VkLayerInstanceDispatchTable *pTable = instance_dispatch_table(instance);
@@ -471,13 +480,9 @@ VKAPI_ATTR VkResult VKAPI_CALL GetDeviceGroupSurfacePresentModesKHR(VkDevice dev
 VKAPI_ATTR VkResult VKAPI_CALL CreateSwapchainKHR(VkDevice device, const VkSwapchainCreateInfoKHR *pCreateInfo,
                                                   const VkAllocationCallbacks *pAllocator, VkSwapchainKHR *pSwapchain)
 {
-    if (sHeadlessSwapChain != nullptr) {
-        return VK_SUCCESS;
-    }
     VkResult result = VK_SUCCESS;
 #if OFFSCREEN
     offscreen::swapchain_headless* pHeadlessSwapChain = new offscreen::swapchain_headless(pAllocator);
-    sHeadlessSwapChain = pHeadlessSwapChain;
     const char *imagecount = android_getenv(imagecount_var);
     uint32_t count = (uint32_t)atoi(imagecount);
     if (count) {
@@ -498,10 +503,8 @@ VKAPI_ATTR void VKAPI_CALL DestroySwapchainKHR(VkDevice device, VkSwapchainKHR s
 {
     printf("------------,function = %s,line = %d",__FUNCTION__,__LINE__);
 #if OFFSCREEN
-    if (sHeadlessSwapChain) {
-        delete sHeadlessSwapChain;
-        sHeadlessSwapChain = nullptr;
-    }
+    offscreen::swapchain_headless* pOffscreenSwapchain = reinterpret_cast<offscreen::swapchain_headless*>(swapchain);
+    delete pOffscreenSwapchain;
 #else
     device_dispatch_table(device)->DestroySwapchainKHR(device, swapchain, pAllocator);
 #endif

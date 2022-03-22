@@ -28,7 +28,41 @@
 // declared as extern in header
 vkreplayer_settings g_vkReplaySettings;
 
-static vkreplayer_settings s_defaultVkReplaySettings = {NULL, 1, 0, UINT_MAX, true, false, NULL, NULL, NULL, NULL, NULL, TRUE, TRUE, FALSE, FALSE, FALSE, FALSE, FALSE, 90, FALSE, FALSE, NULL, FALSE, FALSE, FALSE, FALSE, UINT_MAX, NULL, 0};
+static vkreplayer_settings s_defaultVkReplaySettings = {
+                                                            .pTraceFilePath = NULL,
+                                                            .numLoops = 1,
+                                                            .loopStartFrame = 0,
+                                                            .loopEndFrame = UINT_MAX,
+                                                            .compatibilityMode = true,
+                                                            .exitOnAnyError = false,
+                                                            .screenshotList = NULL,
+                                                            .screenshotColorFormat = NULL,
+                                                            .screenshotPrefix = NULL,
+                                                            .verbosity = NULL,
+                                                            .displayServer = NULL,
+                                                            .preloadTraceFile = TRUE,
+                                                            .enablePortabilityTable = TRUE,
+                                                            .vsyncOff = FALSE,
+                                                            .headless = FALSE,
+                                                            .selfManageMemAllocation = FALSE,
+                                                            .forceSingleWindow = FALSE,
+                                                            .forceDisableAF = FALSE,
+                                                            .memoryPercentage = 90,
+                                                            .premapping = FALSE,
+                                                            .enablePipelineCache = FALSE,
+                                                            .pipelineCachePath = NULL,
+                                                            .forceSyncImgIdx = FALSE,
+                                                            .disableAsCaptureReplay = FALSE,
+                                                            .disableBufferCaptureReplay = FALSE,
+                                                            .forceRayQuery = FALSE,
+                                                            .triggerScript = UINT_MAX,
+                                                            .pScriptPath = NULL,
+                                                            .perfMeasuringMode = 0,
+                                                            .printCurrentGPI = FALSE,
+                                                            .enableSyncValidation = FALSE,
+                                                            .overrideCreateDeviceFeatures = FALSE,
+                                                            .swapChainMinImageCount = 1,
+                                                       };
 
 vktrace_SettingInfo g_vk_settings_info[] = {
     {"o",
@@ -222,7 +256,37 @@ vktrace_SettingInfo g_vk_settings_info[] = {
      {&g_vkReplaySettings.perfMeasuringMode},
      {&s_defaultVkReplaySettings.perfMeasuringMode},
      TRUE,
-     "Set the performance measuring mode, 0 - off, 1 - on."}
+     "Set the performance measuring mode, 0 - off, 1 - on."},
+#if defined(_DEBUG)
+    {"pcgpi",
+     "printCurrentGPI",
+     VKTRACE_SETTING_BOOL,
+     {&g_vkReplaySettings.printCurrentGPI},
+     {&s_defaultVkReplaySettings.printCurrentGPI},
+     TRUE,
+     "Print current GPI that is about to be replayed."},
+#endif
+    {"esv",
+     "enableSyncValidation",
+     VKTRACE_SETTING_BOOL,
+     {&g_vkReplaySettings.enableSyncValidation},
+     {&s_defaultVkReplaySettings.enableSyncValidation},
+     TRUE,
+     "Enable the synchronization validation feature of the validation layer."},
+    {"ocdf",
+     "overrideCreateDeviceFeatures",
+     VKTRACE_SETTING_BOOL,
+     {&g_vkReplaySettings.overrideCreateDeviceFeatures},
+     {&s_defaultVkReplaySettings.overrideCreateDeviceFeatures},
+     TRUE,
+     "If some features in vkCreateDevice in trace file don't support by replaying device, disable them."},
+    {"scic",
+     "swapChainMinImageCount",
+     VKTRACE_SETTING_UINT,
+     {&g_vkReplaySettings.swapChainMinImageCount},
+     {&s_defaultVkReplaySettings.swapChainMinImageCount},
+     FALSE,
+     "Change the swapchain min image count."}
 };
 
 vktrace_SettingGroup g_vkReplaySettingGroup = {"vkreplay_vk", sizeof(g_vk_settings_info) / sizeof(g_vk_settings_info[0]),

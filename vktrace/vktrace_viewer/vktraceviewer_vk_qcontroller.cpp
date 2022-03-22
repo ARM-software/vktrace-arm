@@ -60,13 +60,19 @@ vktraceviewer_vk_QController::vktraceviewer_vk_QController()
 
 vktraceviewer_vk_QController::~vktraceviewer_vk_QController() {}
 
+vktrace_trace_packet_header* vktraceviewer_vk_QController::slimPacket(vktrace_trace_packet_header* pFatPacket) {
+    vktrace_trace_packet_header* pThinPacket = createThinPacket(pFatPacket);
+    vktrace_free(pFatPacket);
+    return pThinPacket;
+}
+
 vktrace_trace_packet_header* vktraceviewer_vk_QController::InterpretTracePacket(vktrace_trace_packet_header* pHeader) {
     // Attempt to interpret the packet as a Vulkan packet
     vktrace_trace_packet_header* pInterpretedHeader = interpret_trace_packet_vk(pHeader);
     if (pInterpretedHeader == NULL) {
         vktrace_LogError("Unrecognized Vulkan packet id: %u.", pHeader->packet_id);
     }
-
+    pInterpretedHeader = slimPacket(pInterpretedHeader);
     return pInterpretedHeader;
 }
 

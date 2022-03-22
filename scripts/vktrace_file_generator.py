@@ -115,6 +115,7 @@ approved_ext = [
                 'VK_EXT_shader_stencil_export',
                 'VK_EXT_shader_viewport_index_layer',
                 'VK_EXT_validation_cache',
+                'VK_EXT_image_compression_control'
                 'VK_AMD_mixed_attachment_samples',
                 'VK_AMD_shader_fragment_mask',
                 'VK_AMD_shader_image_load_store_lod',
@@ -1108,7 +1109,8 @@ class VkTraceFileOutputGenerator(OutputGenerator):
                                  'CmdPushConstants',
                                  'DestroyAccelerationStructureKHR',
                                  'CopyAccelerationStructureToMemoryKHR',
-                                 'CopyMemoryToAccelerationStructureKHR'
+                                 'CopyMemoryToAccelerationStructureKHR',
+                                 'CreateRayTracingPipelinesKHR'
                                  ]
         # Map APIs to functions if body is fully custom
         custom_body_dict = {'CreateInstance': self.GenReplayCreateInstance,
@@ -1374,6 +1376,21 @@ class VkTraceFileOutputGenerator(OutputGenerator):
                     replay_gen_source += '            vkreplay_process_pnext_structs(pPacket->header, (void *)pPacket->pFormatInfo);\n'
                     replay_gen_source += '            for (uint32_t i=0; i<*pPacket->pPropertyCount; i++)\n'
                     replay_gen_source += '                vkreplay_process_pnext_structs(pPacket->header, (void *)(&pPacket->pProperties[i]));\n'
+                elif 'CmdTraceRaysIndirectKHR' == cmdname or 'CmdTraceRaysKHR' == cmdname:
+                    replay_gen_source += '            if (pPacket->pRaygenShaderBindingTable != nullptr) {\n'
+                    replay_gen_source += '                const_cast<VkStridedDeviceAddressRegionKHR*>(pPacket->pRaygenShaderBindingTable)->deviceAddress = traceDeviceAddrToReplayDeviceAddr4Buf[pPacket->pRaygenShaderBindingTable->deviceAddress].replayDeviceAddr;\n'
+                    replay_gen_source += '            };\n'
+                    replay_gen_source += '            if (pPacket->pMissShaderBindingTable != nullptr) {\n'
+                    replay_gen_source += '                const_cast<VkStridedDeviceAddressRegionKHR*>(pPacket->pMissShaderBindingTable)->deviceAddress = traceDeviceAddrToReplayDeviceAddr4Buf[pPacket->pMissShaderBindingTable->deviceAddress].replayDeviceAddr;\n'
+                    replay_gen_source += '            };\n'
+                    replay_gen_source += '            if (pPacket->pHitShaderBindingTable != nullptr) {\n'
+                    replay_gen_source += '                const_cast<VkStridedDeviceAddressRegionKHR*>(pPacket->pHitShaderBindingTable)->deviceAddress = traceDeviceAddrToReplayDeviceAddr4Buf[pPacket->pHitShaderBindingTable->deviceAddress].replayDeviceAddr;\n'
+                    replay_gen_source += '            };\n'
+                    replay_gen_source += '            if (pPacket->pCallableShaderBindingTable != nullptr) {\n'
+                    replay_gen_source += '                const_cast<VkStridedDeviceAddressRegionKHR*>(pPacket->pCallableShaderBindingTable)->deviceAddress = traceDeviceAddrToReplayDeviceAddr4Buf[pPacket->pCallableShaderBindingTable->deviceAddress].replayDeviceAddr;\n'
+                    replay_gen_source += '            };\n'
+                    if 'CmdTraceRaysIndirectKHR' == cmdname:
+                        replay_gen_source += '            pPacket->indirectDeviceAddress = traceDeviceAddrToReplayDeviceAddr4Buf[pPacket->indirectDeviceAddress].replayDeviceAddr;\n'
                 elif 'DestroySurface' in cmdname:
                     replay_gen_source += '            if (g_pReplaySettings->forceSingleWindow && surfRefCount > 1) {\n'
                     replay_gen_source += '                surfRefCount--;\n'
@@ -1989,9 +2006,228 @@ class VkTraceFileOutputGenerator(OutputGenerator):
         interp_func_body += '    }\n'
         interp_func_body += '    return NULL;\n'
         interp_func_body += '}\n'
+        interp_func_body += '\n'
+        interp_func_body += self.GenerateThinPacketFunc()
         return interp_func_body
-        #
-        # Return set of printf '%' qualifier, input to that qualifier, and any dereference
+    #
+    # Create slim packet function
+    def GenerateThinPacketFunc(self):
+        thinpacket_func_body = ''
+        thinpacket_func_body +=  'static void generateThinPacket(int additionalSize, vktrace_trace_packet_header* pFatHeader, vktrace_trace_packet_header* &pHeader, uint32_t &total_packet_size) { \n'
+        thinpacket_func_body +=  '    total_packet_size = ROUNDUP_TO_8(sizeof(vktrace_trace_packet_header) + ROUNDUP_TO_8(additionalSize)); \n'
+        thinpacket_func_body +=  '    void* pMemory = vktrace_malloc((size_t)total_packet_size); \n'
+        thinpacket_func_body +=  '    pHeader = (vktrace_trace_packet_header*)pMemory; \n'
+        thinpacket_func_body +=  '    *pHeader = *pFatHeader; \n'
+        thinpacket_func_body +=  '    pHeader->pBody = (uintptr_t)(((char*)pMemory) + sizeof(vktrace_trace_packet_header)); \n'
+        thinpacket_func_body +=  '    memcpy((void*)pHeader->pBody, (void*)pFatHeader->pBody, additionalSize); \n'
+        thinpacket_func_body +=  '    packet_vkApiVersion* pPacket = (packet_vkApiVersion*)pHeader->pBody; \n'
+        thinpacket_func_body +=  '    pPacket->header = pHeader; \n'
+        thinpacket_func_body +=  '} \n'
+        thinpacket_func_body += '\n'
+        thinpacket_func_body += '#define SETVAULE(packet, offset, vartype, var) \\\n'
+        thinpacket_func_body += '{ \\\n'
+        thinpacket_func_body += '    packet *pThinPacket = (packet*)(pHeader->pBody); \\\n'
+        thinpacket_func_body += '    pThinPacket->var = (vartype*)((char*)pHeader + (total_packet_size - (offset))); \\\n'
+        thinpacket_func_body += '    if (((packet*)(pFatHeader->pBody))->var != nullptr) { \\\n'
+        thinpacket_func_body += '        *(vartype*)pThinPacket->var = (*((packet*)(pFatHeader->pBody))->var); \\\n'
+        thinpacket_func_body += '    } \\\n'
+        thinpacket_func_body += '} \n'
+        thinpacket_func_body += '\n'
+        thinpacket_func_body += 'static vktrace_trace_packet_header* createThinPacket(vktrace_trace_packet_header* pFatHeader) { \n'
+        thinpacket_func_body += '    uint32_t total_packet_size = 0; \n'
+        thinpacket_func_body += '    vktrace_trace_packet_header* pHeader = nullptr; \n'
+        thinpacket_func_body += '    switch (pFatHeader->packet_id) { \n'
+        thinpacket_func_body += '    case VKTRACE_TPI_VK_vkApiVersion: {\n'
+        thinpacket_func_body += '         generateThinPacket(sizeof(packet_vkApiVersion), pFatHeader, pHeader, total_packet_size);\n'
+        thinpacket_func_body += '         break;\n'
+        thinpacket_func_body += '    }\n'
+        cmd_extension_dict = dict(self.cmd_extension_names)
+        cmd_member_dict = dict(self.cmdMembers)
+        for api in self.cmdMembers:
+            extension = cmd_extension_dict[api.name]
+            if 'VK_VERSION_' not in extension and extension not in approved_ext:
+                continue
+            if api.name[2:] in api_exclusions:
+                continue
+            thinpacket_func_body += '    case VKTRACE_TPI_VK_%s: {\n' % api.name
+            if 'vkQueueSubmit' == api.name:
+                thinpacket_func_body += '        generateThinPacket(sizeof(packet_%s) + sizeof(VkSubmitInfo) + 3 * sizeof(uint64_t), pFatHeader, pHeader, total_packet_size);\n' % api.name
+                thinpacket_func_body += '        packet_vkQueueSubmit* pThinPacket = (packet_vkQueueSubmit*)(pHeader->pBody);\n'
+                thinpacket_func_body += '        VkSubmitInfo* pSubmits = (VkSubmitInfo*)((char*)pHeader + (total_packet_size - sizeof(VkSubmitInfo) - 3 * sizeof(uint64_t)));\n'
+                thinpacket_func_body += '        pThinPacket->pSubmits = pSubmits;\n'
+                thinpacket_func_body += '        *pSubmits = *((packet_vkQueueSubmit*)(pFatHeader->pBody))->pSubmits;\n'
+                thinpacket_func_body += '        if (((packet_vkQueueSubmit*)(pFatHeader->pBody))->pSubmits->waitSemaphoreCount > 0) {\n'
+                thinpacket_func_body += '            pSubmits->pWaitSemaphores = (VkSemaphore*)((char*)(pThinPacket->pSubmits) + sizeof(VkSubmitInfo));\n'
+                thinpacket_func_body += '            *const_cast<VkSemaphore*>(pSubmits->pWaitSemaphores) = *((packet_vkQueueSubmit*)(pFatHeader->pBody))->pSubmits->pWaitSemaphores;\n'
+                thinpacket_func_body += '        } else {\n'
+                thinpacket_func_body += '            pSubmits->pWaitSemaphores = nullptr;\n'
+                thinpacket_func_body += '        }\n'
+                thinpacket_func_body += '        if (((packet_vkQueueSubmit*)(pFatHeader->pBody))->pSubmits->commandBufferCount > 0) {\n'
+                thinpacket_func_body += '            pSubmits->pCommandBuffers = (VkCommandBuffer*)((char*)(pThinPacket->pSubmits) + (sizeof(VkSubmitInfo) + sizeof(VkSemaphore)));\n'
+                thinpacket_func_body += '            *const_cast<VkCommandBuffer*>(pSubmits->pCommandBuffers) = *((packet_vkQueueSubmit*)(pFatHeader->pBody))->pSubmits->pCommandBuffers;\n'
+                thinpacket_func_body += '        } else {\n'
+                thinpacket_func_body += '            pSubmits->pCommandBuffers = nullptr;\n'
+                thinpacket_func_body += '        }\n'
+                thinpacket_func_body += '        if (((packet_vkQueueSubmit*)(pFatHeader->pBody))->pSubmits->signalSemaphoreCount > 0) {\n'
+                thinpacket_func_body += '            pSubmits->pSignalSemaphores = (VkSemaphore*)((char*)(pThinPacket->pSubmits) + (sizeof(VkSubmitInfo) + sizeof(VkSemaphore) + sizeof(VkCommandBuffer)));\n'
+                thinpacket_func_body += '            *const_cast<VkSemaphore*>(pSubmits->pSignalSemaphores) = *((packet_vkQueueSubmit*)(pFatHeader->pBody))->pSubmits->pSignalSemaphores;\n'
+                thinpacket_func_body += '        } else {\n'
+                thinpacket_func_body += '            pSubmits->pSignalSemaphores = nullptr;\n'
+                thinpacket_func_body += '        }\n'
+            elif 'vkCmdWaitEvents' == api.name:
+                thinpacket_func_body += '        generateThinPacket(sizeof(packet_%s) + sizeof(VkBufferMemoryBarrier) + sizeof(VkImageMemoryBarrier), pFatHeader, pHeader, total_packet_size);\n' % api.name
+                thinpacket_func_body += '        if (((packet_vkCmdWaitEvents*)(pFatHeader->pBody))->bufferMemoryBarrierCount > 0) {\n'
+                thinpacket_func_body += '            SETVAULE(packet_vkCmdWaitEvents, sizeof(VkBufferMemoryBarrier) + sizeof(VkImageMemoryBarrier), VkBufferMemoryBarrier, pBufferMemoryBarriers)\n'
+                thinpacket_func_body += '        }\n'
+                thinpacket_func_body += '        if (((packet_vkCmdWaitEvents*)(pFatHeader->pBody))->imageMemoryBarrierCount > 0) {\n'
+                thinpacket_func_body += '            SETVAULE(packet_vkCmdWaitEvents, sizeof(VkImageMemoryBarrier), VkImageMemoryBarrier, pImageMemoryBarriers)\n'
+                thinpacket_func_body += '        }\n'
+            elif 'vkCmdPipelineBarrier' == api.name:
+                thinpacket_func_body += '        generateThinPacket(sizeof(packet_%s) + sizeof(VkBufferMemoryBarrier) + sizeof(VkImageMemoryBarrier), pFatHeader, pHeader, total_packet_size);\n' % api.name
+                thinpacket_func_body += '        if (((packet_vkCmdPipelineBarrier*)(pFatHeader->pBody))->bufferMemoryBarrierCount > 0) {\n'
+                thinpacket_func_body += '            SETVAULE(packet_vkCmdPipelineBarrier, sizeof(VkBufferMemoryBarrier) + sizeof(VkImageMemoryBarrier), VkBufferMemoryBarrier, pBufferMemoryBarriers)\n'
+                thinpacket_func_body += '        }\n'
+                thinpacket_func_body += '        if (((packet_vkCmdPipelineBarrier*)(pFatHeader->pBody))->imageMemoryBarrierCount > 0) {\n'
+                thinpacket_func_body += '            SETVAULE(packet_vkCmdPipelineBarrier, sizeof(VkImageMemoryBarrier), VkImageMemoryBarrier, pImageMemoryBarriers)\n'
+                thinpacket_func_body += '        }\n'
+            elif 'vkGetSwapchainImagesKHR' == api.name:
+                thinpacket_func_body += '        generateThinPacket(sizeof(packet_%s) +  + sizeof(uint32_t) + sizeof(uint64_t), pFatHeader, pHeader, total_packet_size);\n' % api.name
+                thinpacket_func_body += '        SETVAULE(packet_vkGetSwapchainImagesKHR, sizeof(uint32_t) + sizeof(uint64_t), uint32_t, pSwapchainImageCount)\n'
+                thinpacket_func_body += '        SETVAULE(packet_vkGetSwapchainImagesKHR, sizeof(uint64_t), VkImage, pSwapchainImages)\n'
+            elif 'vkQueuePresentKHR' == api.name:
+                thinpacket_func_body += '        generateThinPacket(sizeof(packet_%s) + sizeof(VkPresentInfoKHR) + 3 * sizeof(uint64_t), pFatHeader, pHeader, total_packet_size);\n' % api.name
+                thinpacket_func_body += '        SETVAULE(packet_vkQueuePresentKHR, sizeof(VkPresentInfoKHR) + 3 * sizeof(uint64_t), VkPresentInfoKHR, pPresentInfo)\n'
+                thinpacket_func_body += '        packet_vkQueuePresentKHR *pThinPacket = (packet_vkQueuePresentKHR*)(pHeader->pBody);\n'
+                thinpacket_func_body += '        VkPresentInfoKHR* pPresentInfo = (VkPresentInfoKHR*)pThinPacket->pPresentInfo;\n'
+                thinpacket_func_body += '        pPresentInfo->pWaitSemaphores = (VkSemaphore*)((char*)pHeader + (total_packet_size - 3 * sizeof(uint64_t)));\n'
+                thinpacket_func_body += '        pPresentInfo->pSwapchains = (VkSwapchainKHR*)((char*)pHeader + (total_packet_size - 2 * sizeof(uint64_t)));\n'
+                thinpacket_func_body += '        pPresentInfo->pImageIndices = (uint32_t*)((char*)pHeader + (total_packet_size - sizeof(uint64_t)));\n'
+                thinpacket_func_body += '        VkSemaphore* pWaitSemaphores = (VkSemaphore*)pPresentInfo->pWaitSemaphores;\n'
+                thinpacket_func_body += '        VkSwapchainKHR* pSwapchains = (VkSwapchainKHR*)pPresentInfo->pSwapchains;\n'
+                thinpacket_func_body += '        uint32_t* pImageIndices = (uint32_t*)pPresentInfo->pImageIndices;\n'
+                thinpacket_func_body += '        if (((packet_vkQueuePresentKHR*)(pFatHeader->pBody))->pPresentInfo->pWaitSemaphores != nullptr) {\n'
+                thinpacket_func_body += '            *pWaitSemaphores = *((packet_vkQueuePresentKHR*)(pFatHeader->pBody))->pPresentInfo->pWaitSemaphores;\n'
+                thinpacket_func_body += '        } else {\n'
+                thinpacket_func_body += '            pPresentInfo->pWaitSemaphores = nullptr;\n'
+                thinpacket_func_body += '        }\n'
+                thinpacket_func_body += '        if (((packet_vkQueuePresentKHR*)(pFatHeader->pBody))->pPresentInfo->pSwapchains != nullptr) {\n'
+                thinpacket_func_body += '            *pSwapchains = *((packet_vkQueuePresentKHR*)(pFatHeader->pBody))->pPresentInfo->pSwapchains;\n'
+                thinpacket_func_body += '        } else {\n'
+                thinpacket_func_body += '            pPresentInfo->pSwapchains = nullptr;\n'
+                thinpacket_func_body += '        }\n'
+                thinpacket_func_body += '        if (((packet_vkQueuePresentKHR*)(pFatHeader->pBody))->pPresentInfo->pImageIndices != nullptr) {\n'
+                thinpacket_func_body += '            *pImageIndices = *((packet_vkQueuePresentKHR*)(pFatHeader->pBody))->pPresentInfo->pImageIndices;\n'
+                thinpacket_func_body += '        } else {\n'
+                thinpacket_func_body += '            pPresentInfo->pImageIndices = nullptr;\n'
+                thinpacket_func_body += '        }\n'
+            elif 'vkCmdBuildAccelerationStructuresIndirectKHR' == api.name:
+                thinpacket_func_body += '        generateThinPacket(sizeof(packet_%s) + 2 * sizeof(uint64_t), pFatHeader, pHeader, total_packet_size);\n' % api.name
+                thinpacket_func_body += '        SETVAULE(packet_vkCmdBuildAccelerationStructuresIndirectKHR, sizeof(uint64_t) * 2, uint32_t, pIndirectStrides)\n'
+                thinpacket_func_body += '        if (((packet_vkCmdBuildAccelerationStructuresIndirectKHR*)(pFatHeader->pBody))->ppMaxPrimitiveCounts != nullptr) {\n'
+                thinpacket_func_body += '            packet_vkCmdBuildAccelerationStructuresIndirectKHR *pThinPacket = (packet_vkCmdBuildAccelerationStructuresIndirectKHR*)(pHeader->pBody);\n'
+                thinpacket_func_body += '            uint32_t** ppMaxPrimitiveCounts = (uint32_t**)pThinPacket->ppMaxPrimitiveCounts;\n'
+                thinpacket_func_body += '            *ppMaxPrimitiveCounts = (uint32_t*)(*((packet_vkCmdBuildAccelerationStructuresIndirectKHR*)(pFatHeader->pBody))->ppMaxPrimitiveCounts);\n'
+                thinpacket_func_body += '        }\n'
+            elif 'vkGetFenceFdKHR' == api.name:
+                thinpacket_func_body += '        generateThinPacket(sizeof(packet_%s)+ sizeof(VkFenceGetFdInfoKHR) + sizeof(int), pFatHeader, pHeader, total_packet_size);\n' % api.name
+                thinpacket_func_body += '        SETVAULE(packet_vkGetFenceFdKHR, (sizeof(VkFenceGetFdInfoKHR) + sizeof(int)), VkFenceGetFdInfoKHR, pGetFdInfo)\n'
+                thinpacket_func_body += '        SETVAULE(packet_vkGetFenceFdKHR, sizeof(int), int, pFd)\n'
+            elif 'vkMapMemory' == api.name:
+                thinpacket_func_body += '        generateThinPacket(sizeof(packet_%s) + sizeof(uint64_t), pFatHeader, pHeader, total_packet_size);\n' % api.name
+                thinpacket_func_body += '        SETVAULE(packet_%s, sizeof(uint64_t), void*, ppData)\n' % api.name
+            elif 'vkCmdCopyBuffer' == api.name:
+                thinpacket_func_body += '        generateThinPacket(sizeof(packet_%s) + sizeof(VkBufferCopy), pFatHeader, pHeader, total_packet_size);\n' % api.name
+                thinpacket_func_body += '        SETVAULE(packet_%s, sizeof(VkBufferCopy), VkBufferCopy, pRegions)\n'  % api.name
+            elif 'vkGetFenceWin32Handle' in api.name:
+                thinpacket_func_body += '        generateThinPacket(sizeof(packet_%s) + sizeof(VkFenceGetWin32HandleInfoKHR), pFatHeader, pHeader, total_packet_size);\n' % api.name
+                thinpacket_func_body += '        SETVAULE(packet_%s, sizeof(VkFenceGetWin32HandleInfoKHR), VkFenceGetWin32HandleInfoKHR, pGetWin32HandleInfo)\n' % api.name
+            elif 'vkFlushMappedMemoryRanges' == api.name or 'vkInvalidateMappedMemoryRanges' == api.name:
+                thinpacket_func_body += '        generateThinPacket(sizeof(packet_%s) + sizeof(VkMappedMemoryRange), pFatHeader, pHeader, total_packet_size);\n' % api.name
+                thinpacket_func_body += '        SETVAULE(packet_%s, sizeof(VkMappedMemoryRange), VkMappedMemoryRange, pMemoryRanges)\n'  % api.name
+            elif 'vkResetFences' == api.name or 'vkWaitForFences' == api.name:
+                thinpacket_func_body += '        generateThinPacket(sizeof(packet_%s) + sizeof(VkFence), pFatHeader, pHeader, total_packet_size);\n' % api.name
+                thinpacket_func_body += '        SETVAULE(packet_%s, sizeof(VkFence), VkFence, pFences)\n' % api.name
+            elif 'vkRegisterDeviceEventEXT' == api.name or 'vkRegisterDisplayEventEXT' == api.name:
+                thinpacket_func_body += '        generateThinPacket(sizeof(packet_%s) + sizeof(VkFence), pFatHeader, pHeader, total_packet_size);\n' % api.name
+                thinpacket_func_body += '        SETVAULE(packet_%s, sizeof(VkFence), VkFence, pFence)\n' % api.name
+            elif 'vkGetBufferMemoryRequirements' == api.name or 'vkGetImageMemoryRequirements' == api.name:
+                thinpacket_func_body += '        generateThinPacket(sizeof(packet_%s) + sizeof(VkMemoryRequirements), pFatHeader, pHeader, total_packet_size);\n' % api.name
+                thinpacket_func_body += '        SETVAULE(packet_%s, sizeof(VkMemoryRequirements), VkMemoryRequirements, pMemoryRequirements)\n' % api.name
+            elif 'vkGetBufferMemoryRequirements2' in api.name or 'vkGetImageMemoryRequirements2' in api.name or "vkGetAccelerationStructureMemoryRequirementsNV" in api.name:
+                thinpacket_func_body += '        generateThinPacket(sizeof(packet_%s) + sizeof(VkMemoryRequirements2), pFatHeader, pHeader, total_packet_size);\n' % api.name
+                thinpacket_func_body += '        SETVAULE(packet_%s, sizeof(VkMemoryRequirements2), VkMemoryRequirements2, pMemoryRequirements)\n' % api.name
+            else:
+                create_func = True if True in [create_txt in api.name for create_txt in ['Create', 'Allocate', 'MapMemory']] else False
+                params = cmd_member_dict[api.name]
+                need_type = ['VkDeviceSize',
+                             'uint64_t',
+                             'uint32_t',
+                             'size_t',
+                             'VkPeerMemoryFeatureFlags',
+                             'VkBool32',
+                             'VkDeviceGroupPresentModeFlagsKHR',
+                             'int']
+                save_type = ""
+                save_name = ""
+                need_setvalue = False
+                for p in params:
+                    if p.name == '':
+                        if params[-1].name == '':
+                            if need_setvalue:
+                                thinpacket_func_body += '        generateThinPacket(sizeof(packet_%s) + sizeof(%s), pFatHeader, pHeader, total_packet_size);\n' % (api.name, save_type)
+                                thinpacket_func_body += '        SETVAULE(packet_%s, sizeof(%s), %s, %s)\n' % (api.name, save_type, save_type, save_name)
+                            else:
+                                thinpacket_func_body += '        generateThinPacket(sizeof(packet_%s), pFatHeader, pHeader, total_packet_size);\n' %api.name
+                            save_type = ""
+                            save_name = ""
+                            need_setvalue = False
+                        continue
+                    if p.type in need_type and p.ispointer:
+                        save_type = p.type
+                        save_name = p.name
+                        need_setvalue = True
+                    last_param = False
+                    if (p.name == params[-1].name):
+                        last_param = True
+                    if last_param:
+                        if create_func: # Last param of create func
+                            thinpacket_func_body += '        generateThinPacket(sizeof(packet_%s) + sizeof(%s), pFatHeader, pHeader, total_packet_size);\n' % (api.name, p.type)
+                            thinpacket_func_body += '        SETVAULE(packet_%s, sizeof(%s), %s, %s)\n' % (api.name, p.type, p.type, p.name)
+                        else:
+                            if need_setvalue:
+                                thinpacket_func_body += '        generateThinPacket(sizeof(packet_%s) + sizeof(%s), pFatHeader, pHeader, total_packet_size);\n' % (api.name, save_type)
+                                thinpacket_func_body += '        SETVAULE(packet_%s, sizeof(%s), %s, %s)\n' % (api.name, save_type, save_type, save_name)
+                            else:
+                                thinpacket_func_body += '        generateThinPacket(sizeof(packet_%s), pFatHeader, pHeader, total_packet_size);\n' %api.name
+                        save_type = ""
+                        save_name = ""
+                        need_setvalue = False
+            thinpacket_func_body += '        break;\n'
+            thinpacket_func_body += '    }\n'
+        thinpacket_func_body += '    case VKTRACE_TPI_VK_vkCmdPushConstantsRemap: {\n'
+        thinpacket_func_body += '         generateThinPacket(sizeof(packet_vkCmdPushConstants), pFatHeader, pHeader, total_packet_size);\n'
+        thinpacket_func_body += '         break;\n'
+        thinpacket_func_body += '    }\n'
+        thinpacket_func_body += '    case VKTRACE_TPI_VK_vkFlushMappedMemoryRangesRemap: {\n'
+        thinpacket_func_body += '         generateThinPacket(sizeof(packet_vkFlushMappedMemoryRanges) + sizeof(VkMappedMemoryRange), pFatHeader, pHeader, total_packet_size);\n'
+        thinpacket_func_body += '         SETVAULE(packet_vkFlushMappedMemoryRanges, sizeof(VkMappedMemoryRange), VkMappedMemoryRange, pMemoryRanges)\n'
+        thinpacket_func_body += '         break;\n'
+        thinpacket_func_body += '    }\n'
+        thinpacket_func_body += '    case VKTRACE_TPI_VK_vkCmdCopyBufferRemapAS:\n'
+        thinpacket_func_body += '    case VKTRACE_TPI_VK_vkCmdCopyBufferRemapBuffer:\n'
+        thinpacket_func_body += '    case VKTRACE_TPI_VK_vkCmdCopyBufferRemapASandBuffer: {\n'
+        thinpacket_func_body += '         generateThinPacket(sizeof(packet_vkCmdCopyBuffer) + sizeof(VkBufferCopy), pFatHeader, pHeader, total_packet_size);\n'
+        thinpacket_func_body += '         SETVAULE(packet_vkCmdCopyBuffer, sizeof(VkBufferCopy), VkBufferCopy, pRegions)\n'
+        thinpacket_func_body += '         break;\n'
+        thinpacket_func_body += '    }\n'
+        thinpacket_func_body += '    default:\n'
+        thinpacket_func_body += '    vktrace_LogError("vktraceviewer does not support the packet_id = %d.", pFatHeader->packet_id);\n'
+        thinpacket_func_body += '    }\n'
+        thinpacket_func_body += '    return pHeader;\n'
+        thinpacket_func_body += '}\n'
+        return thinpacket_func_body
+    #
+    # Return set of printf '%' qualifier, input to that qualifier, and any dereference
     def GetPrintfParams(self, param, output_param):
         vk_type = param.type
         name = 'pPacket->%s' % param.name
@@ -3514,6 +3750,7 @@ class VkTraceFileOutputGenerator(OutputGenerator):
                                          'vkDestroyAccelerationStructureKHR',
                                          'vkResetCommandPool',
                                          'vkCmdCopyBuffer',
+                                         'vkCreateRayTracingPipelinesKHR',
                                          # TODO: VK_EXT_display_control
                                          ]
 
@@ -4595,6 +4832,12 @@ class VkTraceFileOutputGenerator(OutputGenerator):
                             trace_pkt_hdr += '    }\n'
                         elif 'AccelerationStructureBuildGeometryInfoKHR' in p.type:
                             trace_pkt_hdr += '    pPacket->%s = interpret_VkAccelerationStructureBuildGeometryInfoKHR(pHeader, (intptr_t)pPacket->%s, false);\n' % (p.name, p.name)
+                        elif 'VkRayTracingPipelineCreateInfoKHR' in p.type and "pCreateInfos" == p.name:
+                            trace_pkt_hdr += '    intptr_t pCreateInfosOffset = (intptr_t)pPacket->pCreateInfos;\n'
+                            trace_pkt_hdr += '    pPacket->pCreateInfos = (VkRayTracingPipelineCreateInfoKHR*)vktrace_trace_packet_interpret_buffer_pointer(pHeader, (intptr_t)pPacket->pCreateInfos);\n'
+                            trace_pkt_hdr += '    for (uint32_t i = 0; i < pPacket->createInfoCount; ++i) {\n'
+                            trace_pkt_hdr += '        interpret_VkRayTracingPipelineCreateInfoKHR(pHeader, pCreateInfosOffset + sizeof(VkRayTracingPipelineCreateInfoKHR) * i);\n'
+                            trace_pkt_hdr += '    }\n'
                         elif 'DebugUtilsLabelEXT' in p.type:
                             trace_pkt_hdr += '    pPacket->%s = interpret_VkDebugUtilsLabelEXT(pHeader, (intptr_t)pPacket->%s);\n' % (p.name, p.name)
                         else:
