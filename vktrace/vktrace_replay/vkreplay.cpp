@@ -32,8 +32,44 @@
 #include "vktrace_vk_packet_id.h"
 #include "vktrace_tracelog.h"
 
-static vkreplayer_settings s_defaultVkReplaySettings = {NULL, 1, 0, UINT_MAX, true, false, NULL, NULL, NULL,
-                                                        NULL, "xcb", FALSE, TRUE, FALSE, FALSE, FALSE, FALSE, FALSE, 50, FALSE, FALSE, NULL, false, 0};
+static vkreplayer_settings s_defaultVkReplaySettings = {
+                                                            .pTraceFilePath = NULL,
+                                                            .numLoops = 1,
+                                                            .loopStartFrame = 0,
+                                                            .loopEndFrame = UINT_MAX,
+                                                            .compatibilityMode = true,
+                                                            .exitOnAnyError = false,
+                                                            .screenshotList = NULL,
+                                                            .screenshotColorFormat = NULL,
+                                                            .screenshotPrefix = NULL,
+                                                            .verbosity = NULL,
+                                                            .displayServer = NULL,
+                                                            .preloadTraceFile = TRUE,
+                                                            .enablePortabilityTable = TRUE,
+                                                            .vsyncOff = FALSE,
+                                                            .headless = FALSE,
+                                                            .selfManageMemAllocation = FALSE,
+                                                            .forceSingleWindow = FALSE,
+                                                            .forceDisableAF = FALSE,
+                                                            .memoryPercentage = 90,
+                                                            .premapping = FALSE,
+                                                            .enablePipelineCache = FALSE,
+                                                            .pipelineCachePath = NULL,
+                                                            .forceSyncImgIdx = FALSE,
+                                                            .disableAsCaptureReplay = FALSE,
+                                                            .disableBufferCaptureReplay = FALSE,
+                                                            .forceRayQuery = FALSE,
+                                                            .triggerScript = UINT_MAX,
+                                                            .pScriptPath = NULL,
+                                                            .perfMeasuringMode = 0,
+                                                            .printCurrentGPI = FALSE,
+                                                            .enableSyncValidation = FALSE,
+                                                            .overrideCreateDeviceFeatures = FALSE,
+                                                            .swapChainMinImageCount = 1,
+                                                            .instrumentationDelay = 0,
+                                                            .preloadChunkSize = 200,
+                                                            .skipGetFenceStatus = 0,
+};
 
 vkReplay* g_pReplayer = NULL;
 VKTRACE_CRITICAL_SECTION g_handlerLock;

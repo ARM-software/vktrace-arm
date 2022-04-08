@@ -256,6 +256,7 @@ deviceFeatureSupport query_device_feature(PFN_vkGetPhysicalDeviceFeatures2KHR Ge
     VkPhysicalDeviceAccelerationStructureFeaturesKHR pdasf;
     memset(&pdasf, 0, sizeof(pdasf));
     pdasf.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR;
+    pdf2.pNext = &pdasf;
     bool supportVk12 = false;
     VkApplicationInfo* pNext = (VkApplicationInfo*)(pCreateInfo->pNext);
     while (pNext != NULL) {
@@ -273,19 +274,17 @@ deviceFeatureSupport query_device_feature(PFN_vkGetPhysicalDeviceFeatures2KHR Ge
                 pdbf.pNext = pNext;
                 break;
             }
-            case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR: {
-                void* pNext = pdf2.pNext;
-                pdf2.pNext = &pdasf;
-                pdasf.pNext = pNext;
-                break;
-            }
             default:
                 break;
+        }
+        if (pdf2.pNext && (pdvf12.pNext || pdasf.pNext)) {
+            break;
         }
         pNext = (VkApplicationInfo*)(pNext->pNext);
     }
     GetPhysicalDeviceFeatures(physicalDevice, &pdf2);
     dfs.accelerationStructureCaptureReplay = pdasf.accelerationStructureCaptureReplay;
+    dfs.accelerationStructureHostCommands = pdasf.accelerationStructureHostCommands;
     if (supportVk12) {
         dfs.bufferDeviceAddressCaptureReplay = pdvf12.bufferDeviceAddressCaptureReplay;
     } else {
@@ -532,6 +531,10 @@ void vktrace_add_pnext_structs_to_trace_packet(vktrace_trace_packet_header* pHea
                     AddPointerWithCountToTracebuffer(VkValidationFeaturesEXT, VkValidationFeatureEnableEXT, pEnabledValidationFeatures, enabledValidationFeatureCount);
                     AddPointerWithCountToTracebuffer(VkValidationFeaturesEXT, VkValidationFeatureDisableEXT, pDisabledValidationFeatures, disabledValidationFeatureCount);
                     break;
+                case VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR:
+                    AddPointerWithCountToTracebuffer(VkPipelineRenderingCreateInfoKHR, VkFormat, pColorAttachmentFormats, colorAttachmentCount);
+                    break;
+
                 default:
                     // The cases in this switch statement are only those pnext struct types that have
                     // pointers inside them that need to be added. The pnext list may contain
@@ -1210,6 +1213,9 @@ void vkreplay_interpret_pnext_pointers(vktrace_trace_packet_header* pHeader, voi
             case VK_STRUCTURE_TYPE_VALIDATION_FEATURES_EXT:
                 InterpretPointerInPNext(VkValidationFeaturesEXT, VkValidationFeatureEnableEXT, pEnabledValidationFeatures);
                 InterpretPointerInPNext(VkValidationFeaturesEXT, VkValidationFeatureDisableEXT, pDisabledValidationFeatures);
+                break;
+            case VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR:
+                InterpretPointerInPNext(VkPipelineRenderingCreateInfoKHR, VkFormat, pColorAttachmentFormats);
                 break;
             default:
                 // The cases in this switch statement are only those pnext struct types that have

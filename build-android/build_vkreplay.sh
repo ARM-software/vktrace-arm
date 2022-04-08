@@ -93,6 +93,6 @@ create_APK vkreplay32
 popd
 }
 
-git checkout -- .
-
+git checkout -- AndroidManifest.xml
+git checkout -- vkreplay/AndroidManifest.xml
 exit 0

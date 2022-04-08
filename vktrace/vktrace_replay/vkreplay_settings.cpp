@@ -62,6 +62,9 @@ static vkreplayer_settings s_defaultVkReplaySettings = {
                                                             .enableSyncValidation = FALSE,
                                                             .overrideCreateDeviceFeatures = FALSE,
                                                             .swapChainMinImageCount = 1,
+                                                            .instrumentationDelay = 0,
+                                                            .preloadChunkSize = 200,
+                                                            .skipGetFenceStatus = 0,
                                                        };
 
 vktrace_SettingInfo g_vk_settings_info[] = {
@@ -286,7 +289,28 @@ vktrace_SettingInfo g_vk_settings_info[] = {
      {&g_vkReplaySettings.swapChainMinImageCount},
      {&s_defaultVkReplaySettings.swapChainMinImageCount},
      FALSE,
-     "Change the swapchain min image count."}
+     "Change the swapchain min image count."},
+    {"intd",
+     "instrumentationDelay",
+     VKTRACE_SETTING_UINT,
+     {&g_vkReplaySettings.instrumentationDelay},
+     {&s_defaultVkReplaySettings.instrumentationDelay},
+     TRUE,
+     "Delay in microseconds that the retracer should sleep for after each present call in the measurement range."},
+    {"plcs",
+     "preloadChunkSize",
+     VKTRACE_SETTING_UINT,
+     {&g_vkReplaySettings.preloadChunkSize},
+     {&s_defaultVkReplaySettings.preloadChunkSize},
+     FALSE,
+     "Set the chunk size for preloading vktrace file,the default is 200(MB)."},
+    {"sgfs",
+     "skipGetFenceStatus",
+     VKTRACE_SETTING_UINT,
+     {&g_vkReplaySettings.skipGetFenceStatus},
+     {&s_defaultVkReplaySettings.skipGetFenceStatus},
+     TRUE,
+     "Skip the GetFenceStatus() calls, 0 - Not skip; 1 - Skip all the unsuccess calls; 2 - Skip all calls."}
 };
 
 vktrace_SettingGroup g_vkReplaySettingGroup = {"vkreplay_vk", sizeof(g_vk_settings_info) / sizeof(g_vk_settings_info[0]),

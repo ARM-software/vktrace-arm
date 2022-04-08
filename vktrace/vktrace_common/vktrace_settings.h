@@ -96,6 +96,9 @@ typedef struct vkreplayer_settings {
     BOOL enableSyncValidation;
     BOOL overrideCreateDeviceFeatures;
     unsigned int swapChainMinImageCount;
+    unsigned int instrumentationDelay;
+    unsigned int preloadChunkSize;
+    unsigned int skipGetFenceStatus;
 } vkreplayer_settings;
 
 int vktrace_SettingGroup_init(vktrace_SettingGroup* pSettingGroup, FILE* pSettingsFile, int argc, char* argv[],

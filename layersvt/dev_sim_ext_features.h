@@ -30,12 +30,18 @@ typedef union {
         VkStructureType    sType;
         void*              pNext;
     } base;
-    VkPhysicalDeviceASTCDecodeFeaturesEXT           astc_decode_feature;
-    VkPhysicalDeviceScalarBlockLayoutFeatures       scalar_block_layout_feature;
-    VkPhysicalDeviceShaderFloat16Int8Features       shader_float16_int8_feature;
-    VkPhysicalDevice16BitStorageFeatures            bit16_storage_feature;
-    VkPhysicalDeviceMultiviewFeatures               multiview_feature;
-    VkPhysicalDeviceSamplerYcbcrConversionFeatures  sampler_ycbcr_conv_feature;
+    VkPhysicalDeviceASTCDecodeFeaturesEXT            astc_decode_feature;
+    VkPhysicalDeviceScalarBlockLayoutFeatures        scalar_block_layout_feature;
+    VkPhysicalDeviceShaderFloat16Int8Features        shader_float16_int8_feature;
+    VkPhysicalDevice16BitStorageFeatures             bit16_storage_feature;
+    VkPhysicalDeviceMultiviewFeatures                multiview_feature;
+    VkPhysicalDeviceSamplerYcbcrConversionFeatures   sampler_ycbcr_conv_feature;
+    VkPhysicalDeviceAccelerationStructureFeaturesKHR acceleration_structure_feature;
+    VkPhysicalDeviceRayTracingPipelineFeaturesKHR    ray_tracing_pipeline_feature;
+    VkPhysicalDeviceRayQueryFeaturesKHR              ray_query_feature;
+    VkPhysicalDeviceBufferDeviceAddressFeatures      buffer_device_address_feature;
+    VkPhysicalDeviceFragmentDensityMapFeaturesEXT    fragment_density_map_feature;
+    VkPhysicalDeviceFragmentDensityMap2FeaturesEXT   fragment_density_map2_feature;
     // Todo: Add more extended features here
 } ExtendedFeature;
 
@@ -48,6 +54,9 @@ typedef union {
     VkPhysicalDeviceExternalMemoryHostPropertiesEXT     external_memory_host_prop;
     VkPhysicalDeviceTransformFeedbackPropertiesEXT      transform_feedback_prop;
     VkPhysicalDeviceSubgroupProperties                  physical_device_subgroup_prop;
+    VkPhysicalDeviceRayTracingPipelinePropertiesKHR     ray_tracing_pipeline_prop;
+    VkPhysicalDeviceFragmentDensityMapPropertiesEXT     fragment_density_map_prop;
+    VkPhysicalDeviceFragmentDensityMap2PropertiesEXT    fragment_density_map2_prop;
     // Todo: Add more extended properties here
 } ExtendedProperty;
 

@@ -428,7 +428,9 @@ int main(int argc, char** argv) {
                     uint64_t meta_data_json_str_size = hdr.size - sizeof(hdr);
                     char* meta_data_json_str = new char[meta_data_json_str_size];
                     if (meta_data_json_str && vktrace_FileLike_ReadRaw(traceFile, meta_data_json_str, meta_data_json_str_size)) {
-                        cout << "Meta Data: " << meta_data_json_str;
+                        if (!hideBriefInfo) {
+                            cout << "Meta Data: " << meta_data_json_str;
+                        }
                     }
                     delete[] meta_data_json_str;
                 } else {

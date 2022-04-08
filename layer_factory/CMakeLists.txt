@@ -46,6 +46,8 @@ else()
     set (CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wpointer-arith -Wno-unused-function -Wno-sign-compare")
 endif()
 
+add_definitions(-DVK_ENABLE_BETA_EXTENSIONS)
+
 run_vulkantools_vk_xml_generate(layer_factory_generator.py layer_factory.h)
 run_vulkantools_vk_xml_generate(layer_factory_generator.py layer_factory.cpp)
 add_custom_target(generate_vlf DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/layer_factory.cpp ${CMAKE_CURRENT_BINARY_DIR}/layer_factory.h)

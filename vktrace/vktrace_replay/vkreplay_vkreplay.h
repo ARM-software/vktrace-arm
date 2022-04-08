@@ -30,6 +30,7 @@
 #include <vector>
 #include <stack>
 #include <string>
+#include <queue>
 #if defined(PLATFORM_LINUX)
 #if defined(ANDROID)
 #include <android_native_app_glue.h>
@@ -275,6 +276,8 @@ class vkReplay {
     void manually_replay_vkCmdBeginRenderPass(packet_vkCmdBeginRenderPass* pPacket);
     void manually_replay_vkCmdBeginRenderPass2KHR(packet_vkCmdBeginRenderPass2KHR *pPacket);
     void manually_replay_vkCmdBeginRenderPass2(packet_vkCmdBeginRenderPass2 *pPacket);
+    void manually_replay_vkCmdBeginRenderingKHR(packet_vkCmdBeginRenderingKHR *pPacket);
+    void manually_replay_vkCmdEndRenderingKHR(packet_vkCmdEndRenderingKHR *pPacket);
     VkResult manually_replay_vkBeginCommandBuffer(packet_vkBeginCommandBuffer* pPacket);
     VkResult manually_replay_vkAllocateCommandBuffers(packet_vkAllocateCommandBuffers* pPacket);
     VkResult manually_replay_vkWaitForFences(packet_vkWaitForFences* pPacket);
@@ -460,6 +463,9 @@ class vkReplay {
 
     std::stack<SwapchainImageState> savedSwapchainImgStates;
     std::unordered_map< VkSwapchainKHR, std::vector<bool> > swapchainImageAcquireStatus;
+    std::unordered_map< uint32_t, VkSemaphore > swapchainImgIdxToAcquireSemaphore;
+    std::unordered_map< VkSemaphore, VkSemaphore > acquireSemaphoreToFSIISemaphore;
+    std::queue<VkSemaphore> fsiiSemaphores;
 
     // Map VkImage to VkMemoryRequirements
     std::unordered_map<VkImage, VkMemoryRequirements> replayGetImageMemoryRequirements;
@@ -493,7 +499,7 @@ class vkReplay {
     }traceMemoryMapInfo;
 
     typedef struct _objDeviceAddr{
-        VkDeviceAddress replayDeviceAddr = VK_NULL_HANDLE;
+        VkDeviceAddress replayDeviceAddr = 0;
         uint64_t traceObjHandle = 0;
     }objDeviceAddr;
     std::unordered_map<VkDeviceAddress, objDeviceAddr> traceDeviceAddrToReplayDeviceAddr4Buf;
@@ -517,6 +523,7 @@ class vkReplay {
 
     uint32_t m_instCount = 0;
 
+    void forceDisableCaptureReplayFeature();
     void* fromTraceAddr2ReplayAddr(VkDevice replayDevice, const void* traceAddress);
     bool isMapMemoryAddress(const void* hostAddress);
     bool getReplayMemoryTypeIdx(VkDevice traceDevice, VkDevice replayDevice, uint32_t traceIdx,

@@ -34,7 +34,7 @@ extern "C" {
 #include "vkreplay_vkreplay.h"
 #include "vkreplay_main.h"
 
-#define MAX_CHUNK_COUNT 6
+#define MAX_CHUNK_COUNT 600
 #define SIZE_1K         1024
 #define SIZE_1M         (SIZE_1K * SIZE_1K)
 
@@ -42,7 +42,21 @@ enum chunk_status {
     CHUNK_EMPTY,
     CHUNK_LOADING,
     CHUNK_READY,
-    CHUNK_USING
+    CHUNK_USING,
+    CHUNK_SKIPPED
+};
+
+// skipped_to_first, 0: no skipping; 1: skipping detected; 2: skipping notify
+enum skip_status {
+    SKIPPING_NONE,
+    SKIPPING_DETECTED,
+    SKIPPING_NOTIFY,
+    SKIPPING_DONE
+};
+
+enum skip_notify_status {
+    SKIP_NOTIFY_NONE,
+    SKIP_NOTIFY
 };
 
 struct mem_chunk_info {
@@ -83,13 +97,19 @@ struct preload_context {
     std::thread thd_obj;
     simple_sem  replay_start_sem;
     simple_sem  preload_sem;
+    simple_sem  preload_sem_get;
+    simple_sem  preload_sem_skip;
+    simple_sem  preload_sem_head;
+    simple_sem  preload_sem_ready;
     bool        exceed_preloading_range = false;
     uint64_t    preload_waiting_time = 0;
+
 } g_preload_context;
 
 vktrace_trace_packet_header g_preload_header;
 vktrace_trace_packet_header_compression_ext g_preload_header_ext;
 static decompressor* g_decompressor = nullptr;
+static char*        tmp_address     = nullptr;
 
 uint64_t get_preload_waiting_time_when_replaying()
 {
@@ -181,6 +201,8 @@ static void get_packet_size(FileLike* file) {
     else {      // an uncompressed packet
         g_preload_context.next_pkt_size_decompressed = g_preload_header.size;
     }
+    if(g_preload_context.next_pkt_size_decompressed > replaySettings.preloadChunkSize * SIZE_1M)
+        vktrace_LogDebug("The size of packet (global id: %llu, size %llu) is larger than the chunk size!", g_preload_header.global_packet_index, g_preload_context.next_pkt_size_decompressed);
 }
 
 vktrace_replay::vktrace_trace_packet_replay_library **replayerArray;
@@ -346,6 +368,9 @@ bool preloaded_whole()
     return preloaded_whole_range;
 }
 
+// skipped_to_first, 0: no skipping; 1: skipping detected; 2: skipping notify
+volatile uint32_t skipped_to_first = SKIPPING_NONE;
+volatile uint32_t skipped_notify = SKIP_NOTIFY_NONE;
 static void chunk_loading() {
     bool first_full = true;
     g_preload_context.loading_idx = 0;
@@ -356,13 +381,22 @@ static void chunk_loading() {
                 g_preload_context.replay_start_sem.notify();
                 first_full = false;
             }
+            if(skipped_to_first == SKIPPING_DETECTED) {
+                skipped_to_first = SKIPPING_NOTIFY;
+                vktrace_LogDebug("Skipped to the first chunk!");
+            }
+        }
+        if(skipped_to_first == SKIPPING_NOTIFY){
+            vktrace_LogDebug("Chunk: %d notify when loading, skip status(%d)", g_preload_context.loading_idx, skipped_to_first);
+            g_preload_context.preload_sem_skip.notify();
+            skipped_to_first = SKIPPING_NONE;
+            skipped_notify = SKIP_NOTIFY;
         }
 
         mem_chunk_info* cur_chunk = &g_preload_context.chunks[g_preload_context.loading_idx];
-
         if (cur_chunk->status == CHUNK_EMPTY || cur_chunk->status == CHUNK_USING) {
             cur_chunk->mtx.lock();
-            cur_chunk->status = CHUNK_LOADING;
+            vktrace_LogDebug("Chunk %llu is locked when loading.", g_preload_context.loading_idx);
 
             if (!first_full) {
                 preloaded_whole_range = false;
@@ -371,6 +405,81 @@ static void chunk_loading() {
             vktrace_LogDebug("Loading chunk %d !", g_preload_context.loading_idx);
             uint32_t loaded_packet_count = 0;
             char* boundary_addr = cur_chunk->base_address + cur_chunk->chunk_size;
+
+            uint32_t chunks_needed = 1;
+
+            // if the loading packet size is larger than the size of a chunk
+            if(g_preload_context.next_pkt_size_decompressed > cur_chunk->chunk_size){
+                // ceil(chunks_needed)
+                chunks_needed =uint32_t((g_preload_context.next_pkt_size_decompressed - 1) * 1.0 / cur_chunk->chunk_size) + 1;
+                assert(chunks_needed > 1);
+                vktrace_LogDebug("The packet size is larger than the chunk size! %d chunks are needed!", chunks_needed);
+
+                // if the remaining chunks size is not enough, skip to the first chunk, and set those chunk status as SKIPPED
+                if(g_preload_context.loading_idx + chunks_needed > g_preload_context.chunk_count){
+                    cur_chunk->status = CHUNK_SKIPPED;
+                    // it is illegal to skip the first chunks
+                    assert(g_preload_context.loading_idx != 0);
+                    vktrace_LogDebug("Chunk %llu is SKIPPED !", g_preload_context.loading_idx);
+
+                    for(uint32_t chunk_idx = g_preload_context.loading_idx + 1; chunk_idx < g_preload_context.chunk_count; ++chunk_idx){
+                        mem_chunk_info* tmp_chunk = &g_preload_context.chunks[chunk_idx];
+                        // wait if the chunk status is READY
+                        if(tmp_chunk->status == CHUNK_READY || tmp_chunk->status == CHUNK_SKIPPED){
+                            vktrace_LogDebug("Chunk %llu need to wait until its status is EMPTY or USING when loading (during skipping).", g_preload_context.loading_idx);
+                            g_preload_context.preload_sem_get.wait([&]{
+                                return tmp_chunk->status == CHUNK_EMPTY || tmp_chunk->status == CHUNK_USING;
+                            });
+                        }
+                        tmp_chunk->mtx.lock();
+                        vktrace_LogDebug("Chunk %llu is locked when loading.", chunk_idx);
+                        tmp_chunk->status = CHUNK_SKIPPED;
+                        tmp_chunk->mtx.unlock();
+                        vktrace_LogDebug("Chunk %llu is unlocked when loading.", chunk_idx);
+                        skipped_to_first = SKIPPING_DETECTED;
+                        vktrace_LogDebug("Chunk %llu is SKIPPED!", chunk_idx);
+                    }
+                    cur_chunk->mtx.unlock();
+                    vktrace_LogDebug("Chunk %llu is unlocked when loading.", g_preload_context.loading_idx);
+                    // loading_idx will be 0 on next loop
+                    g_preload_context.loading_idx = g_preload_context.chunk_count;
+                    continue;
+
+                } else if(g_preload_context.loading_idx + chunks_needed == g_preload_context.chunk_count) {
+                    // a special case: notify the waiting thread
+                   skipped_notify = SKIP_NOTIFY;
+                }
+
+                // if no chunks are skipped, then lock other chunks
+                for(uint32_t i = 1; i < chunks_needed; ++i) {
+                    mem_chunk_info* tmp_chunk = &g_preload_context.chunks[g_preload_context.loading_idx + i];
+                    // lock directly if the following chunk status is EMPTY or USING
+                    // wait if the chunk status is READY
+                    // set these chunk status as LOADING
+                    if(tmp_chunk->status == CHUNK_READY || tmp_chunk->status == CHUNK_SKIPPED){
+                        vktrace_LogDebug("Chunk %llu need to wait until its status is EMPTY or USING when loading.", g_preload_context.loading_idx + i);
+                        g_preload_context.preload_sem_get.wait([&]{
+                            return tmp_chunk->status == CHUNK_EMPTY || tmp_chunk->status == CHUNK_USING;
+                        });
+                        vktrace_LogDebug("Chunk %llu finished waiting because of status(%llu) when loading.", g_preload_context.loading_idx + i, tmp_chunk->status);
+                    }
+                    tmp_chunk->mtx.lock();
+                    vktrace_LogDebug("Chunk %llu is locked when loading.", g_preload_context.loading_idx + i);
+                    tmp_chunk->status = CHUNK_LOADING;
+                    vktrace_LogDebug("Loading chunk - %d !", g_preload_context.loading_idx + i);
+                }
+
+                // set a new boudary address
+                boundary_addr = cur_chunk->base_address + cur_chunk->chunk_size * chunks_needed;
+            }
+
+            cur_chunk->status = CHUNK_LOADING;
+            if(skipped_notify == SKIP_NOTIFY) {
+                g_preload_context.preload_sem_head.notify();
+                vktrace_LogDebug("Chunk %llu notify after skipping to the first chunk.", g_preload_context.using_idx);
+                skipped_notify = SKIP_NOTIFY_NONE;
+            }
+            vktrace_LogDebug("Chunk %llu is LOADING when loading.", g_preload_context.loading_idx);
 
             while (!g_preload_context.exiting_thd
                    && g_preload_context.next_pkt_size_decompressed
@@ -384,12 +493,24 @@ static void chunk_loading() {
                 loaded_packet_count++;
             }
             cur_chunk->status = CHUNK_READY;
-            g_preload_context.loading_idx++;
+            vktrace_LogDebug("Chunk %d is READY when loading!", g_preload_context.loading_idx);
             vktrace_LogDebug("%d packets are loaded", loaded_packet_count);
             cur_chunk->mtx.unlock();
+            vktrace_LogDebug("Chunk %llu is unlocked when loading.", g_preload_context.loading_idx);
+            // after loading, update other chunks' current address, status and unlock those chunks
+            for(uint32_t i = 1; i < chunks_needed; ++i){
+                mem_chunk_info* tmp_chunk = &g_preload_context.chunks[g_preload_context.loading_idx + i];
+                tmp_chunk->current_address = cur_chunk->current_address;
+                tmp_chunk->status = CHUNK_READY;
+                g_preload_context.preload_sem_ready.notify();
+                vktrace_LogDebug("Chunk %d is also READY, notify !", g_preload_context.loading_idx + i);
+                tmp_chunk->mtx.unlock();
+                vktrace_LogDebug("Chunk %llu is unlocked when loading.", g_preload_context.loading_idx + i);
+            }
+            g_preload_context.loading_idx += chunks_needed;
             g_preload_context.preload_sem.notify();
-        } else if (cur_chunk->status != CHUNK_READY) {
-            vktrace_LogWarning("Chunk loading thread: Not right, the chunk status(%d) confused !", cur_chunk->status);
+        } else if (cur_chunk->status != CHUNK_READY && cur_chunk->status != CHUNK_SKIPPED) {
+            vktrace_LogWarning("Chunk loading thread: Not right, the chunk (%llu) status(%llu) confused !", g_preload_context.loading_idx, cur_chunk->status);
         }
 
         if (!g_preload_context.next_pkt_size || g_preload_context.exceed_preloading_range) {
@@ -407,7 +528,13 @@ bool init_preload(FileLike* file, vktrace_replay::vktrace_trace_packet_replay_li
     uint64_t system_free_mem_size = get_free_memory_size();
     vktrace_LogAlways("Init preload: the free memory size = %llu, the decompress file size = %llu, original file size = %llu.", system_free_mem_size, filesize, file->mFileLen);
 
-    static const uint64_t chunk_size  = 400 * SIZE_1M;
+    vktrace_LogAlways("Init preload: chunk size: %llu (MB) ", replaySettings.preloadChunkSize);
+    if(replaySettings.preloadChunkSize < 200){
+        replaySettings.preloadChunkSize = 200;
+        vktrace_LogAlways("Init preload: the chunk size is too small, adjusted to 200 (MB)!");
+    }
+
+    static const uint64_t chunk_size  = replaySettings.preloadChunkSize * SIZE_1M;
     uint32_t chunk_count = calc_chunk_count(system_free_mem_size, chunk_size, filesize);
     if (chunk_count < 1) {
         return false;
@@ -460,17 +587,62 @@ vktrace_trace_packet_header* preload_get_next_packet()
 
     mem_chunk_info* cur_chunk = &g_preload_context.chunks[g_preload_context.using_idx];
     static char* boundary_addr = 0;
+    if (cur_chunk->status == CHUNK_SKIPPED){
+        vktrace_LogDebug("Chunk %llu is waiting to be preloaded !", g_preload_context.using_idx);
+        // wait until the loading chunk is skipped to the first
+        g_preload_context.preload_sem_skip.wait([&]{
+            return skipped_to_first == SKIPPING_NONE || !g_preload_context.next_pkt_size;
+        });
+        vktrace_LogDebug("Chunk %llu finished waiting because of status(%llu) when preloading.", g_preload_context.using_idx, cur_chunk->status);
+        cur_chunk->status = CHUNK_EMPTY;
+        vktrace_LogDebug("Chunk %llu is EMPTY when preloading.", g_preload_context.using_idx);
+        for(uint32_t chunk_idx = g_preload_context.using_idx + 1; chunk_idx < g_preload_context.chunk_count; ++chunk_idx){
+            mem_chunk_info* tmp_chunk = &g_preload_context.chunks[chunk_idx];
+            // all the following chunks status should be SKIPPED
+            if(tmp_chunk->status != CHUNK_SKIPPED){
+                vktrace_LogWarning("Skipping not right, the chunk status(%d) confused !", cur_chunk->status);
+            }
+            tmp_chunk->mtx.lock();
+            vktrace_LogDebug("Chunk %llu is locked when preloading.", chunk_idx);
+            tmp_chunk->status = CHUNK_EMPTY;
+            vktrace_LogDebug("Chunk %llu is EMPTY now !", chunk_idx);
+            tmp_chunk->mtx.unlock();
+            vktrace_LogDebug("Chunk %llu is unlocked when preloading.", chunk_idx);
+        }
+        g_preload_context.preload_sem_get.notify();
+        g_preload_context.using_idx = 0;
+        cur_chunk = &g_preload_context.chunks[g_preload_context.using_idx];
+        // skip to the first while the first chunk is still empty
+        if(cur_chunk->status == CHUNK_EMPTY){
+            vktrace_LogDebug("Chunk %llu is waiting to be preloaded because of skipping!", g_preload_context.using_idx);
+            g_preload_context.preload_sem_head.wait([&]{
+                return cur_chunk->status == CHUNK_LOADING || cur_chunk->status == CHUNK_READY || !g_preload_context.next_pkt_size;
+            });
+            vktrace_LogDebug("Chunk %llu finished waiting because of status(%llu) when preloading.", g_preload_context.using_idx, cur_chunk->status);
+        }
+    }
+
     if (cur_chunk->status == CHUNK_READY || cur_chunk->status == CHUNK_LOADING) {
         uint64_t start_time = vktrace_get_time();
         cur_chunk->mtx.lock();
+        vktrace_LogDebug("Chunk %llu is locked when preloading !", g_preload_context.using_idx);
         uint64_t end_time = vktrace_get_time();
         if (vktrace_replay::timerStarted())
             g_preload_context.preload_waiting_time += end_time - start_time;
         assert(cur_chunk->status == CHUNK_READY);
-        cur_chunk->status = CHUNK_USING;
+        if(boundary_addr == cur_chunk->current_address){
+            vktrace_LogDebug("This chunk has nothing! Too many chunks when preloading !");
+        }
         boundary_addr = cur_chunk->current_address;
-        cur_chunk->current_address = cur_chunk->base_address;
+        if(tmp_address != nullptr){
+            cur_chunk->current_address = tmp_address;
+        } else {
+            cur_chunk->current_address = cur_chunk->base_address;
+        }
+        cur_chunk->status = CHUNK_USING;
+        vktrace_LogDebug("Chunk %llu is USING now when preloading !", g_preload_context.using_idx);
     } else if (cur_chunk->status == CHUNK_EMPTY) {
+        vktrace_LogDebug("Chunk %llu is EMPY when preloading !!", g_preload_context.using_idx);
         assert(!g_preload_context.next_pkt_size);
         return NULL;
     }
@@ -480,13 +652,55 @@ vktrace_trace_packet_header* preload_get_next_packet()
         vktrace_LogError("This is a wrong packetage !");
     }
     cur_chunk->current_address += pHeader->size;
+    if(replaySettings.printCurrentGPI) {
+        vktrace_LogDebug("Chunk (%llu), pHeader: %p,id %llu, size: %llu, boundary_addr: %p",
+            g_preload_context.using_idx, pHeader, pHeader->global_packet_index, pHeader->size, boundary_addr);
+    }
+
+    bool update_tmp_address = false;
+    if(cur_chunk->current_address >= cur_chunk->base_address + cur_chunk->chunk_size)
+        update_tmp_address = true;
 
     if (cur_chunk->current_address >= boundary_addr) {
         cur_chunk->status = CHUNK_EMPTY;
+        g_preload_context.preload_sem_get.notify();
+        vktrace_LogDebug("Chunk %llu is EMPTY when preloading, notify !", g_preload_context.using_idx);
+        uint32_t chunks_occupied = 1;
+        chunks_occupied = uint32_t((cur_chunk->current_address - cur_chunk->base_address - 1) * 1.0 / cur_chunk->chunk_size) + 1;
+
         cur_chunk->current_address = cur_chunk->base_address;
-        g_preload_context.using_idx++;
         cur_chunk->mtx.unlock();
-        if (g_preload_context.loading_idx == g_preload_context.using_idx) {
+        vktrace_LogDebug("Chunk %llu is unlocked when preloading !", g_preload_context.using_idx);
+
+        if(update_tmp_address == true) {
+            vktrace_LogDebug("Chunk %llu ~ %llu are used by the packet(id: %llu, size: %llu) when preloading ! %llu chunks are occupied,", 
+                g_preload_context.using_idx, g_preload_context.using_idx + chunks_occupied -1, pHeader->global_packet_index, pHeader->size, chunks_occupied);
+            for(uint32_t chunk_idx = g_preload_context.using_idx + 1; chunk_idx < g_preload_context.using_idx + chunks_occupied; ++chunk_idx){
+                mem_chunk_info* tmp_chunk = &g_preload_context.chunks[chunk_idx];
+                // wait if the chunk status is not READY
+                if(tmp_chunk->status != CHUNK_READY ){
+                    vktrace_LogDebug("Chunk %llu need to wait until its status is READY when preloading !", chunk_idx);
+                    g_preload_context.preload_sem_ready.wait([&]{
+                        return tmp_chunk->status == CHUNK_READY;
+                    });
+                }
+                tmp_chunk->mtx.lock();
+                vktrace_LogDebug("Chunk %llu is locked when preloading !", chunk_idx);
+                tmp_chunk->status = CHUNK_EMPTY;
+                g_preload_context.preload_sem_get.notify();
+                vktrace_LogDebug("Chunk %llu is also EMPTY when preloading, notify !", chunk_idx);
+                tmp_chunk->current_address = tmp_chunk->base_address;
+                tmp_chunk->mtx.unlock();
+                vktrace_LogDebug("Chunk %llu is unlocked when preloading !", chunk_idx);
+            }
+            update_tmp_address = false;
+        }
+        vktrace_LogDebug("Chunk %llu (+ %llu) when preloading !", g_preload_context.using_idx, chunks_occupied);
+        if(update_tmp_address == false) {
+            g_preload_context.using_idx += chunks_occupied;
+        }
+
+        if (g_preload_context.loading_idx == g_preload_context.using_idx % g_preload_context.chunk_count) {
             g_preload_context.preload_sem.wait([&]{
                 return cur_chunk->status != CHUNK_EMPTY || g_preload_context.exceed_preloading_range || !g_preload_context.next_pkt_size;
             });

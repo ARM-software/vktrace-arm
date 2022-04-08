@@ -155,11 +155,19 @@ approved_ext = [
                 'VK_KHX_subgroup',
                 'VK_KHR_create_renderpass2',
                 'VK_EXT_debug_utils',
+                'VK_KHR_dynamic_rendering',
                 ]
 
 api_exclusions = [
                 'EnumerateInstanceVersion'
                 ]
+api_remap = [
+                'CmdCopyBufferRemapAS',
+                'CmdCopyBufferRemapBuffer',
+                'CmdCopyBufferRemapASandBuffer',
+                'CmdPushConstantsRemap',
+                'FlushMappedMemoryRnagesRemap',
+            ]
 
 # Helper functions
 
@@ -368,6 +376,11 @@ class VkTraceFileOutputGenerator(OutputGenerator):
                 decoratedName = '{}/{} + 1'.format(*match.group(2, 3))
             else:
                 decoratedName = '{}/{}'.format(*match.group(2, 3))
+        elif 'mathtt' in source:
+            # Matches expressions similar to 'latexmath:[2 \times \mathtt{VK\_UUID\_SIZE}]'
+            match=re.match(r'latexmath\s*\:\s*\[\s*([1-9])\s*\\times\s*\\mathtt\{(\w+)\\(\w+)\\(\w+)\}\s*\]',source)
+            name = ''
+            decoratedName = '{}*{}{}{}'.format(*match.group(1,2,3,4))
         else:
             # Matches expressions similar to 'latexmath : [dataSize \over 4]'
             match = re.match(r'latexmath\s*\:\s*\[\s*(\\textrm\{)?(\w+)\}?\s*\\over\s*(\d+)\s*\]', source)
@@ -457,6 +470,18 @@ class VkTraceFileOutputGenerator(OutputGenerator):
         self.cmd_info_data.append(self.CmdInfoData(name=cmdname, cmdinfo=cmdinfo))
         self.cmd_extension_names.append(self.cmd_extension_data(name=cmdname, extension_name=self.current_feature_name))
         self.cmd_feature_protect.append(self.CmdExtraProtect(name=cmdname, extra_protect=self.featureExtraProtect))
+
+        if cmdname in ['vkCmdCopyBuffer']:
+            for postfix in ['AS', 'Buffer', 'ASandBuffer']:
+                self.cmdMembers.append(self.CmdMemberData(name=cmdname+'Remap'+postfix, members=membersInfo))
+                self.cmd_info_data.append(self.CmdInfoData(name=cmdname+'Remap'+postfix, cmdinfo=cmdinfo))
+                self.cmd_extension_names.append(self.cmd_extension_data(name=cmdname+'Remap'+postfix, extension_name=self.current_feature_name))
+                self.cmd_feature_protect.append(self.CmdExtraProtect(name=cmdname+'Remap'+postfix, extra_protect=self.featureExtraProtect))
+        elif cmdname in ['vkCmdPushConstantsRemap', 'vkFlushMappedMemoryRangesRemap']:
+            self.cmdMembers.append(self.CmdMemberData(name=cmdname+'Remap', members=membersInfo))
+            self.cmd_info_data.append(self.CmdInfoData(name=cmdname+'Remap', cmdinfo=cmdinfo))
+            self.cmd_extension_names.append(self.cmd_extension_data(name=cmdname+'Remap', extension_name=self.current_feature_name))
+            self.cmd_feature_protect.append(self.CmdExtraProtect(name=cmdname+'Remap', extra_protect=self.featureExtraProtect))
     #
     # Generate local ready-access data describing Vulkan structures and unions from the XML metadata
     def genStruct(self, typeinfo, typeName, alias):
@@ -552,7 +577,12 @@ class VkTraceFileOutputGenerator(OutputGenerator):
         replay_objmapper_header += '    void clear_all_map_handles() {\n'
         for item in self.object_types:
             mangled_name = 'm_' + item[2:].lower() + 's'
-            replay_objmapper_header += '        %s.clear();\n' % mangled_name
+            if mangled_name == 'm_buffercollectionfuchsias':
+                replay_objmapper_header += '#if defined(VK_USE_PLATFORM_FUCHSIA)\n'
+                replay_objmapper_header += '        %s.clear();\n' % mangled_name
+                replay_objmapper_header += '#endif // VK_USE_PLATFORM_FUCHSIA\n'
+            else:
+                replay_objmapper_header += '        %s.clear();\n' % mangled_name
         for item in additional_remap_fifo:
             replay_objmapper_header += '        m_%s.clear();\n' % item
 
@@ -580,6 +610,8 @@ class VkTraceFileOutputGenerator(OutputGenerator):
                 obj_name = item[2:].lower() + 'Obj'
             else:
                 obj_name = item
+            if item == 'VkBufferCollectionFUCHSIA':
+                replay_objmapper_header += '#if defined(VK_USE_PLATFORM_FUCHSIA)\n'
             replay_objmapper_header += '    std::unordered_map<%s, %s> %s;\n' % (item, obj_name, mangled_name)
             replay_objmapper_header += '    void add_to_%s_map(%s pTraceVal, %s pReplayVal) {\n' % (map_name, item, obj_name)
             replay_objmapper_header += '        %s[pTraceVal] = pReplayVal;\n' % mangled_name
@@ -611,7 +643,11 @@ class VkTraceFileOutputGenerator(OutputGenerator):
                     replay_objmapper_header += '            vktrace_LogError("Failed to remap %s = %%llu.", value);\n' % (item)
                 replay_objmapper_header += '           return VK_NULL_HANDLE; }\n'
                 replay_objmapper_header += '        return q->second;\n'
-            replay_objmapper_header += '    }\n\n'
+            if item == 'VkBufferCollectionFUCHSIA':
+                replay_objmapper_header += '    }\n'
+                replay_objmapper_header += '#endif // VK_USE_PLATFORM_FUCHSIA\n\n'
+            else:
+                replay_objmapper_header += '    }\n\n'
 
         ##########################################################################
 
@@ -1110,7 +1146,8 @@ class VkTraceFileOutputGenerator(OutputGenerator):
                                  'DestroyAccelerationStructureKHR',
                                  'CopyAccelerationStructureToMemoryKHR',
                                  'CopyMemoryToAccelerationStructureKHR',
-                                 'CreateRayTracingPipelinesKHR'
+                                 'CreateRayTracingPipelinesKHR',
+                                 'CmdBeginRenderingKHR',
                                  ]
         # Map APIs to functions if body is fully custom
         custom_body_dict = {'CreateInstance': self.GenReplayCreateInstance,
@@ -1151,6 +1188,8 @@ class VkTraceFileOutputGenerator(OutputGenerator):
                 disp_table = "m_vkFuncs"
             else:
                 disp_table = "m_vkDeviceFuncs"
+            if cmdname in api_remap:
+                continue
             if 'DebugReport' not in cmdname:
                 replay_gen_source += '    %s.%s = (PFN_vk%s)(vktrace_platform_get_library_entrypoint(handle, "vk%s"));\n' % (disp_table, cmdname, cmdname, cmdname)
             else: # These func ptrs get assigned at GetProcAddr time
@@ -1199,6 +1238,8 @@ class VkTraceFileOutputGenerator(OutputGenerator):
             create_func = True if True in [create_txt in cmdname for create_txt in ['Create', 'Allocate', 'Acquire', 'GetDeviceQueue']] else False
             create_view = True if True in [create_txt in cmdname for create_txt in ['CreateBufferView', 'CreateImageView']] else False
             params = cmd_member_dict[vk_cmdname]
+            if cmdname in api_remap:
+                continue
             replay_gen_source += '        case VKTRACE_TPI_VK_vk%s: { \n' % cmdname
             if cmdname in ['CreateDebugUtilsMessengerEXT', 'DestroyDebugUtilsMessengerEXT']:
                 replay_gen_source += '            break;       // Now we just ignore this function\n'
@@ -1295,6 +1336,11 @@ class VkTraceFileOutputGenerator(OutputGenerator):
                 if cmdname in do_while_dict:
                     if cmdname == 'GetFenceStatus':
                         replay_gen_source += '            uint32_t call_id = m_inFrameRange ? VKTRACE_TPI_VK_vkGetFenceStatus : 0;\n'
+                        replay_gen_source += '            if ((replaySettings.skipGetFenceStatus > 1) && m_inFrameRange) {\n'
+                        replay_gen_source += '                break;\n'
+                        replay_gen_source += '            } else if ((replaySettings.skipGetFenceStatus > 0 && pPacket->result != VK_SUCCESS) && m_inFrameRange) {\n'
+                        replay_gen_source += '                break;\n'
+                        replay_gen_source += '            }\n'
                     elif cmdname == 'GetEventStatus':
                         replay_gen_source += '            uint32_t call_id = m_inFrameRange ? VKTRACE_TPI_VK_vkGetEventStatus : 0;\n'
                     elif cmdname == 'GetQueryPoolResults':
@@ -1489,6 +1535,12 @@ class VkTraceFileOutputGenerator(OutputGenerator):
                 elif 'GetAccelerationStructureDeviceAddress' in cmdname:
                     replay_gen_source += '            uint64_t traceASHandle = (uint64_t)(pPacket->pInfo->accelerationStructure);\n'
                     replay_gen_source += '            const_cast<VkAccelerationStructureDeviceAddressInfoKHR*>(pPacket->pInfo)->accelerationStructure = m_objMapper.remap_accelerationstructurekhrs(pPacket->pInfo->accelerationStructure);\n'
+                elif 'DestroyDevice' in cmdname:
+                    replay_gen_source += '            while (!fsiiSemaphores.empty()) {\n'
+                    replay_gen_source += '                m_vkDeviceFuncs.DestroySemaphore(remappeddevice, fsiiSemaphores.front(), NULL);\n'
+                    replay_gen_source += '                fsiiSemaphores.pop();\n'
+                    replay_gen_source += '            }\n'
+
                 # Build the call to the "real_" entrypoint
                 if cmdname == 'GetRefreshCycleDurationGOOGLE' or cmdname == 'GetPastPresentationTimingGOOGLE':
                     replay_gen_source += '            if (m_vkDeviceFuncs.%s) {\n' % cmdname
@@ -1991,6 +2043,8 @@ class VkTraceFileOutputGenerator(OutputGenerator):
                 continue
             if api.name[2:] in api_exclusions:
                 continue
+            if api.name[2:] in api_remap:
+                continue
             interp_func_body += '        case VKTRACE_TPI_VK_%s: {\n' % api.name
             interp_func_body += '            return interpret_body_as_%s(pHeader)->header;\n        }\n' % api.name
         interp_func_body += '        case VKTRACE_TPI_VK_vkCmdCopyBufferRemapBuffer:\n'
@@ -2048,6 +2102,8 @@ class VkTraceFileOutputGenerator(OutputGenerator):
             if 'VK_VERSION_' not in extension and extension not in approved_ext:
                 continue
             if api.name[2:] in api_exclusions:
+                continue
+            if api.name[2:] in api_remap:
                 continue
             thinpacket_func_body += '    case VKTRACE_TPI_VK_%s: {\n' % api.name
             if 'vkQueueSubmit' == api.name:
@@ -3515,6 +3571,22 @@ class VkTraceFileOutputGenerator(OutputGenerator):
                 dump_gen_source += '            ApiDumpInstance& dump_inst = ApiDumpInstance::current();\n'
                 dump_gen_source += '            const ApiDumpSettings& settings(dump_inst.settings());\n'
                 dump_gen_source += '            dump_inst.setThreadID(packet->thread_id);\n'
+                dump_gen_source += '            if (!settings.isFrameInRange(dump_inst.frameCount())) {\n'
+                if cmdname == 'QueuePresentKHR':
+                    dump_gen_source += '                dump_inst.nextFrame();\n'
+                elif cmdname == 'AllocateCommandBuffers':
+                    dump_gen_source += '                dump_inst.addCmdBuffers(pPacket->device,\n'
+                    dump_gen_source += '                                    pPacket->pAllocateInfo->commandPool,\n'
+                    dump_gen_source += '                                    std::vector<VkCommandBuffer>(pPacket->pCommandBuffers, pPacket->pCommandBuffers + pPacket->pAllocateInfo->commandBufferCount),\n'
+                    dump_gen_source += '                                    pPacket->pAllocateInfo->level);\n'
+                elif cmdname == 'DestroyCommandPool':
+                    dump_gen_source += '                dump_inst.eraseCmdBufferPool(pPacket->device, pPacket->commandPool);\n'
+                elif cmdname == 'FreeCommandBuffers':
+                    dump_gen_source += '                dump_inst.eraseCmdBuffers(pPacket->device,\n'
+                    dump_gen_source += '                                      pPacket->commandPool,\n'
+                    dump_gen_source += '                                      std::vector<VkCommandBuffer>(pPacket->pCommandBuffers, pPacket->pCommandBuffers + pPacket->commandBufferCount));\n'
+                dump_gen_source += '                break;\n'
+                dump_gen_source += '            }\n'
                 dump_gen_source += '            if (dump_inst.settings().format() == ApiDumpFormat::Text) {\n'
                 dump_gen_source += '                settings.stream() << \"GlobalPacketIndex \" << packet->global_packet_index << \", \";\n'
                 dump_gen_source += '            }\n'
@@ -3530,22 +3602,25 @@ class VkTraceFileOutputGenerator(OutputGenerator):
                     dump_gen_source += '                                      pPacket->commandPool,\n'
                     dump_gen_source += '                                      std::vector<VkCommandBuffer>(pPacket->pCommandBuffers, pPacket->pCommandBuffers + pPacket->commandBufferCount));\n'
                 dump_gen_source += '            switch(dump_inst.settings().format()) {\n'
+                cmdname_removeRemap = cmdname
+                if cmdname in api_remap:
+                    cmdname_removeRemap = cmdname[:cmdname.find('Remap')]
                 dump_gen_source += '            case ApiDumpFormat::Text:\n'
                 dump_gen_source += '                dump_text_head_vk%s(dump_inst, ' % cmdname
                 dump_gen_source += '%s\n' %param_string_no_result
-                dump_gen_source += '                dump_text_body_vk%s(dump_inst, ' % cmdname
+                dump_gen_source += '                dump_text_body_vk%s(dump_inst, ' % cmdname_removeRemap
                 dump_gen_source += '%s\n' % param_string
                 dump_gen_source += '                break;\n'
                 dump_gen_source += '            case ApiDumpFormat::Html:\n'
                 dump_gen_source += '                dump_html_head_vk%s(dump_inst, ' % cmdname
                 dump_gen_source += '%s\n' %param_string_no_result
-                dump_gen_source += '                dump_html_body_vk%s(dump_inst, ' % cmdname
+                dump_gen_source += '                dump_html_body_vk%s(dump_inst, ' % cmdname_removeRemap
                 dump_gen_source += '%s\n' % param_string
                 dump_gen_source += '                break;\n'
                 dump_gen_source += '            case ApiDumpFormat::Json:\n'
                 dump_gen_source += '                dump_json_head_vk%s(dump_inst, ' % cmdname
                 dump_gen_source += '%s\n' %param_string_no_result
-                dump_gen_source += '                dump_json_body_vk%s(dump_inst, ' % cmdname
+                dump_gen_source += '                dump_json_body_vk%s(dump_inst, ' % cmdname_removeRemap
                 dump_gen_source += '%s\n' % param_string
                 dump_gen_source += '                break;\n'
                 dump_gen_source += '            }\n'
@@ -3751,6 +3826,7 @@ class VkTraceFileOutputGenerator(OutputGenerator):
                                          'vkResetCommandPool',
                                          'vkCmdCopyBuffer',
                                          'vkCreateRayTracingPipelinesKHR',
+                                         'vkCmdBeginRenderingKHR',
                                          # TODO: VK_EXT_display_control
                                          ]
 
@@ -3795,6 +3871,8 @@ class VkTraceFileOutputGenerator(OutputGenerator):
             return_txt = ''
             packet_size = []
             in_data_size = False # Flag when we need to capture local input size variable for in/out size
+            if proto.name[2:] in api_remap:
+                continue
             trace_vk_src += 'VKTRACER_EXPORT VKAPI_ATTR %s VKAPI_CALL __HOOKED_%s(\n' % (resulttype, proto.name)
             for p in proto.members: # TODO : For all of the ptr types, check them for NULL and return 0 if NULL
                 if p.name == '':
@@ -3879,7 +3957,12 @@ class VkTraceFileOutputGenerator(OutputGenerator):
                     if (0 == len(packet_size)):
                         trace_vk_src += '    CREATE_TRACE_PACKET(%s, 0);\n' % (proto.name)
                     else:
-                        trace_vk_src += '    CREATE_TRACE_PACKET(%s, %s);\n' % (proto.name, ' + '.join(packet_size))
+                        if proto.name == 'vkGetBufferDeviceAddress':
+                            trace_vk_src += '    // Mali DDK doesn\'t expose vkGetBufferDeviceAddress on Android.\n'
+                            trace_vk_src += '    // So here we use equivalent vkGetBufferDeviceAddressKHR instead.\n'
+                            trace_vk_src += '    CREATE_TRACE_PACKET(%sKHR, %s);\n' % (proto.name, ' + '.join(packet_size))
+                        else:
+                            trace_vk_src += '    CREATE_TRACE_PACKET(%s, %s);\n' % (proto.name, ' + '.join(packet_size))
                 if proto.name == 'vkCreateImage':
                     trace_vk_src += '    VkImageCreateInfo replayCreateInfo = *pCreateInfo;\n'
                     trace_vk_src += '    VkImageCreateInfo trimCreateInfo = *pCreateInfo;\n'
@@ -3909,7 +3992,18 @@ class VkTraceFileOutputGenerator(OutputGenerator):
                     if param.name != '':
                         paramstext += ', %s' % param.name
                 c_call = proto.name[2:] + '(' + paramstext + ')'
-                trace_vk_src += '    %s%s.%s;\n' % (return_txt, table_txt, c_call)
+                c_callKHR = proto.name[2:] + 'KHR(' + paramstext + ')'
+                if proto.name == 'vkGetBufferDeviceAddress':
+                    trace_vk_src += '    #if defined(ANDROID)\n'
+                    trace_vk_src += '        if (%s.%s == nullptr)\n' % (table_txt, proto.name[2:])
+                    trace_vk_src += '            %s%s.%s;\n' % (return_txt, table_txt, c_callKHR)
+                    trace_vk_src += '        else\n'
+                    trace_vk_src += '            %s%s.%s;\n' % (return_txt, table_txt, c_call)
+                    trace_vk_src += '    #else\n'
+                    trace_vk_src += '        %s%s.%s;\n' % (return_txt, table_txt, c_call)
+                    trace_vk_src += '    #endif\n'
+                else:
+                    trace_vk_src += '    %s%s.%s;\n' % (return_txt, table_txt, c_call)
                 trace_vk_src += '    vktrace_set_packet_entrypoint_end_time(pHeader);\n'
                 if proto.name == 'vkCreateImage':
                     trace_vk_src += '    if (g_trimEnabled) {\n'
@@ -4169,6 +4263,8 @@ class VkTraceFileOutputGenerator(OutputGenerator):
             cmdname = cmd.name[2:]
             if not isSupportedCmd(cmd, cmd_extension_dict) or not isInstanceCmd(cmd):
                 continue
+            if cmdname in api_remap:
+                continue
             protect = cmd_protect_dict[cmd.name]
             if protect is not None:
                 trace_vk_src += '#ifdef %s\n' % protect
@@ -4186,6 +4282,8 @@ class VkTraceFileOutputGenerator(OutputGenerator):
         for cmd in self.cmdMembers:
             cmdname = cmd.name[2:]
             if not isSupportedCmd(cmd, cmd_extension_dict) or isInstanceCmd(cmd):
+                continue
+            if cmdname in api_remap:
                 continue
             protect = cmd_protect_dict[cmd.name]
             if protect is not None:
@@ -4461,6 +4559,17 @@ class VkTraceFileOutputGenerator(OutputGenerator):
                                                                                    '}']},
                              'CreateSwapchainKHR' : {'param': 'pCreateInfo', 'txt': ['uint32_t **ppQFI = (uint32_t**)&pPacket->pCreateInfo->pQueueFamilyIndices;\n',
                                                      '(*ppQFI) = (uint32_t*)vktrace_trace_packet_interpret_buffer_pointer(pHeader, (intptr_t)(pPacket->pCreateInfo->pQueueFamilyIndices));']},
+                             'CmdBeginRenderingKHR' : {'param': 'pRenderingInfo', 'txt' : ['VkRenderingInfoKHR* pRenderingInfo = (VkRenderingInfoKHR*)pPacket->pRenderingInfo;\n',
+                                                                                          'uint32_t i = 0;\n',
+                                                                                          'pRenderingInfo->pColorAttachments = (VkRenderingAttachmentInfoKHR*) vktrace_trace_packet_interpret_buffer_pointer(pHeader, (intptr_t)pRenderingInfo->pColorAttachments);\n',
+                                                                                          'for (i=0; i<pRenderingInfo->colorAttachmentCount; i++) {\n',
+                                                                                          '    vkreplay_process_pnext_structs(pHeader, (void *)&pRenderingInfo->pColorAttachments[i]);\n',
+                                                                                          '}\n',
+                                                                                          'pRenderingInfo->pDepthAttachment = (VkRenderingAttachmentInfoKHR*) vktrace_trace_packet_interpret_buffer_pointer(pHeader, (intptr_t)pRenderingInfo->pDepthAttachment);\n',
+                                                                                          'vkreplay_process_pnext_structs(pHeader, (void *)pRenderingInfo->pDepthAttachment);\n',
+                                                                                          'pRenderingInfo->pStencilAttachment = (VkRenderingAttachmentInfoKHR*) vktrace_trace_packet_interpret_buffer_pointer(pHeader, (intptr_t)pRenderingInfo->pStencilAttachment);\n',
+                                                                                          'vkreplay_process_pnext_structs(pHeader, (void *)pRenderingInfo->pStencilAttachment);\n',
+                                                                                          ]},
 
         }
         if_body = []

@@ -571,7 +571,7 @@ static bool writePPM(const char *filename, VkImage image1) {
     uint32_t const width = imageMap[image1]->imageExtent.width;
     uint32_t const height = imageMap[image1]->imageExtent.height;
     VkFormat const format = imageMap[image1]->format;
-    uint32_t const numChannels = FormatChannelCount(format);
+    uint32_t const numChannels = FormatComponentCount(format);
 
     // Initial dest format is undefined as we will look for one
     VkFormat destformat = VK_FORMAT_UNDEFINED;
@@ -645,75 +645,75 @@ static bool writePPM(const char *filename, VkImage image1) {
         // So format conversion gets costly.
         switch (numChannels) {
             case 4:
-                if (FormatIsUNorm(format))
+                if (FormatIsUNORM(format))
                     destformat = VK_FORMAT_R8G8B8A8_UNORM;
                 else if (FormatIsSRGB(format))
                     destformat = VK_FORMAT_R8G8B8A8_SRGB;
-                else if (FormatIsSNorm(format))
+                else if (FormatIsSNORM(format))
                     destformat = VK_FORMAT_R8G8B8A8_SNORM;
-                else if (FormatIsUScaled(format))
+                else if (FormatIsUSCALED(format))
                     destformat = VK_FORMAT_R8G8B8A8_USCALED;
-                else if (FormatIsSScaled(format))
+                else if (FormatIsSSCALED(format))
                     destformat = VK_FORMAT_R8G8B8A8_SSCALED;
-                else if (FormatIsUInt(format))
+                else if (FormatIsUINT(format))
                     destformat = VK_FORMAT_R8G8B8A8_UINT;
-                else if (FormatIsSInt(format))
+                else if (FormatIsSINT(format))
                     destformat = VK_FORMAT_R8G8B8A8_SINT;
-                else if (FormatIsFloat(format))
+                else if (FormatIsSFLOAT(format))
                     destformat = VK_FORMAT_R16G16B16A16_SFLOAT;
                 break;
             case 3:
-                if (FormatIsUNorm(format))
+                if (FormatIsUNORM(format))
                     destformat = VK_FORMAT_R8G8B8_UNORM;
                 else if (FormatIsSRGB(format))
                     destformat = VK_FORMAT_R8G8B8_SRGB;
-                else if (FormatIsSNorm(format))
+                else if (FormatIsSNORM(format))
                     destformat = VK_FORMAT_R8G8B8_SNORM;
-                else if (FormatIsUScaled(format))
+                else if (FormatIsUSCALED(format))
                     destformat = VK_FORMAT_R8G8B8_USCALED;
-                else if (FormatIsSScaled(format))
+                else if (FormatIsSSCALED(format))
                     destformat = VK_FORMAT_R8G8B8_SSCALED;
-                else if (FormatIsUInt(format))
+                else if (FormatIsUINT(format))
                     destformat = VK_FORMAT_R8G8B8_UINT;
-                else if (FormatIsSInt(format))
+                else if (FormatIsSINT(format))
                     destformat = VK_FORMAT_R8G8B8_SINT;
-                else if (FormatIsFloat(format))
+                else if (FormatIsSFLOAT(format))
                     destformat = VK_FORMAT_R16G16B16_SFLOAT;
                 break;
             case 2:
-                if (FormatIsUNorm(format))
+                if (FormatIsUNORM(format))
                     destformat = VK_FORMAT_R8G8_UNORM;
                 else if (FormatIsSRGB(format))
                     destformat = VK_FORMAT_R8G8_SRGB;
-                else if (FormatIsSNorm(format))
+                else if (FormatIsSNORM(format))
                     destformat = VK_FORMAT_R8G8_SNORM;
-                else if (FormatIsUScaled(format))
+                else if (FormatIsUSCALED(format))
                     destformat = VK_FORMAT_R8G8_USCALED;
-                else if (FormatIsSScaled(format))
+                else if (FormatIsSSCALED(format))
                     destformat = VK_FORMAT_R8G8_SSCALED;
-                else if (FormatIsUInt(format))
+                else if (FormatIsUINT(format))
                     destformat = VK_FORMAT_R8G8_UINT;
-                else if (FormatIsSInt(format))
+                else if (FormatIsSINT(format))
                     destformat = VK_FORMAT_R8G8_SINT;
-                else if (FormatIsFloat(format))
+                else if (FormatIsSFLOAT(format))
                     destformat = VK_FORMAT_R16G16_SFLOAT;
                 break;
             case 1:
-                if (FormatIsUNorm(format))
+                if (FormatIsUNORM(format))
                     destformat = VK_FORMAT_R8_UNORM;
                 else if (FormatIsSRGB(format))
                     destformat = VK_FORMAT_R8_SRGB;
-                else if (FormatIsSNorm(format))
+                else if (FormatIsSNORM(format))
                     destformat = VK_FORMAT_R8_SNORM;
-                else if (FormatIsUScaled(format))
+                else if (FormatIsUSCALED(format))
                     destformat = VK_FORMAT_R8_USCALED;
-                else if (FormatIsSScaled(format))
+                else if (FormatIsSSCALED(format))
                     destformat = VK_FORMAT_R8_SSCALED;
-                else if (FormatIsUInt(format))
+                else if (FormatIsUINT(format))
                     destformat = VK_FORMAT_R8_UINT;
-                else if (FormatIsSInt(format))
+                else if (FormatIsSINT(format))
                     destformat = VK_FORMAT_R8_SINT;
-                else if (FormatIsFloat(format))
+                else if (FormatIsSFLOAT(format))
                     destformat = VK_FORMAT_R16_SFLOAT;
                 break;
         }
@@ -1136,7 +1136,7 @@ static bool writePPM(const char *filename, VkImage image1) {
     }
 
     if (ppmSupport) {
-        uint32_t bytesPerChannel = FormatElementSize(destformat) / FormatChannelCount(destformat);
+        uint32_t bytesPerChannel = FormatElementSize(destformat) / FormatComponentCount(destformat);
         uint32_t maxColorValue = pow(256, bytesPerChannel) - 1;
 
         file << "P6\n";

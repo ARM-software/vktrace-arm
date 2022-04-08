@@ -902,6 +902,52 @@ std::ostream& dump_text_head_{funcName}(ApiDumpInstance& dump_inst, {funcTypedPa
 }}
 @end function
 
+@foreach function where('{funcName}' in ['vkCmdCopyBuffer'])
+@foreach postfix
+std::ostream& dump_text_head_{funcName}Remap{postfixName}(ApiDumpInstance& dump_inst, {funcTypedParams})
+{{
+    const ApiDumpSettings& settings(dump_inst.settings());
+    if (settings.showThreadAndFrame()) {{
+        settings.stream() << "Thread " << dump_inst.threadID() << ", Frame " << dump_inst.frameCount();
+    }}
+    if(settings.showTimestamp() && settings.showThreadAndFrame()) {{
+        settings.stream() << ", ";
+    }}
+    if (settings.showTimestamp()) {{
+        settings.stream() << "Time " << dump_inst.current_time_since_start().count() << " us";
+    }}
+    if (settings.showTimestamp() || settings.showThreadAndFrame()) {{
+        settings.stream() << ":\\n";
+    }}
+    settings.stream() << "{funcName}Remap{postfixName}({funcNamedParams}) returns {funcReturn}";
+
+    return settings.shouldFlush() ? settings.stream() << std::flush : settings.stream();
+}}
+@end postfix
+@end function
+
+@foreach function where('{funcName}' in ['vkCmdPushConstants', 'vkFlushMappedMemoryRanges'])
+std::ostream& dump_text_head_{funcName}Remap(ApiDumpInstance& dump_inst, {funcTypedParams})
+{{
+    const ApiDumpSettings& settings(dump_inst.settings());
+    if (settings.showThreadAndFrame()) {{
+        settings.stream() << "Thread " << dump_inst.threadID() << ", Frame " << dump_inst.frameCount();
+    }}
+    if(settings.showTimestamp() && settings.showThreadAndFrame()) {{
+        settings.stream() << ", ";
+    }}
+    if (settings.showTimestamp()) {{
+        settings.stream() << "Time " << dump_inst.current_time_since_start().count() << " us";
+    }}
+    if (settings.showTimestamp() || settings.showThreadAndFrame()) {{
+        settings.stream() << ":\\n";
+    }}
+    settings.stream() << "{funcName}Remap({funcNamedParams}) returns {funcReturn}";
+
+    return settings.shouldFlush() ? settings.stream() << std::flush : settings.stream();
+}}
+@end function
+
 @foreach function where('{funcName}' not in ['vkGetDeviceProcAddr', 'vkGetInstanceProcAddr'])
 @if('{funcReturn}' != 'void')
 std::ostream& dump_text_body_{funcName}(ApiDumpInstance& dump_inst, {funcReturn} result, {funcTypedParams})
@@ -1361,6 +1407,40 @@ std::ostream& dump_html_head_{funcName}(ApiDumpInstance& dump_inst, {funcTypedPa
         settings.stream() << "<div class='time'>Time: " << dump_inst.current_time_since_start().count() << " us</div>";
     settings.stream() << "<details class='fn'><summary>";
     dump_html_nametype(settings.stream(), settings.showType(), "{funcName}({funcNamedParams})", "{funcReturn}");
+
+    return settings.shouldFlush() ? settings.stream() << std::flush : settings.stream();
+}}
+@end function
+
+@foreach function where('{funcName}' in ['vkCmdCopyBuffer'])
+@foreach postfix
+std::ostream& dump_html_head_{funcName}Remap{postfixName}(ApiDumpInstance& dump_inst, {funcTypedParams})
+{{
+    const ApiDumpSettings& settings(dump_inst.settings());
+    if (settings.showThreadAndFrame()){{
+        settings.stream() << "<div class='thd'>Thread: " << dump_inst.threadID() << "</div>";
+    }}
+    if(settings.showTimestamp())
+        settings.stream() << "<div class='time'>Time: " << dump_inst.current_time_since_start().count() << " us</div>";
+    settings.stream() << "<details class='fn'><summary>";
+    dump_html_nametype(settings.stream(), settings.showType(), "{funcName}Remap{postfixName}({funcNamedParams})", "{funcReturn}");
+
+    return settings.shouldFlush() ? settings.stream() << std::flush : settings.stream();
+}}
+@end postfix
+@end function
+
+@foreach function where('{funcName}' in ['vkCmdPushConstants', 'vkFlushMappedMemoryRanges'])
+std::ostream& dump_html_head_{funcName}Remap(ApiDumpInstance& dump_inst, {funcTypedParams})
+{{
+    const ApiDumpSettings& settings(dump_inst.settings());
+    if (settings.showThreadAndFrame()){{
+        settings.stream() << "<div class='thd'>Thread: " << dump_inst.threadID() << "</div>";
+    }}
+    if(settings.showTimestamp())
+        settings.stream() << "<div class='time'>Time: " << dump_inst.current_time_since_start().count() << " us</div>";
+    settings.stream() << "<details class='fn'><summary>";
+    dump_html_nametype(settings.stream(), settings.showType(), "{funcName}Remap({funcNamedParams})", "{funcReturn}");
 
     return settings.shouldFlush() ? settings.stream() << std::flush : settings.stream();
 }}
@@ -1845,6 +1925,70 @@ std::ostream& dump_json_head_{funcName}(ApiDumpInstance& dump_inst, {funcTypedPa
 }}
 @end function
 
+@foreach function where('{funcName}' in ['vkCmdCopyBuffer'])
+@foreach postfix
+std::ostream& dump_json_head_{funcName}Remap{postfixName}(ApiDumpInstance& dump_inst, {funcTypedParams})
+{{
+    const ApiDumpSettings& settings(dump_inst.settings());
+
+    if(dump_inst.firstFunctionCallOnFrame())
+        needFuncComma = false;
+
+    if (needFuncComma) settings.stream() << ",\\n";
+
+    // Display apicall name
+    settings.stream() << settings.indentation(2) << "{{\\n";
+    settings.stream() << settings.indentation(3) << "\\\"name\\\" : \\\"{funcName}Remap{postfixName}\\\",\\n";
+
+    // Display thread info
+    if (settings.showThreadAndFrame()){{
+        settings.stream() << settings.indentation(3) << "\\\"thread\\\" : \\\"Thread " << dump_inst.threadID() << "\\\",\\n";
+    }}
+
+    // Display elapsed time
+    if(settings.showTimestamp()) {{
+        settings.stream() << settings.indentation(3) << "\\\"time\\\" : \\\""<< dump_inst.current_time_since_start().count() << " us\\\",\\n";
+    }}
+
+    // Display return value
+    settings.stream() << settings.indentation(3) << "\\\"returnType\\\" : " << "\\\"{funcReturn}\\\",\\n";
+
+    return settings.shouldFlush() ? settings.stream() << std::flush : settings.stream();
+}}
+@end postfix
+@end function
+
+@foreach function where('{funcName}' in ['vkCmdPushConstants', 'vkFlushMappedMemoryRanges'])
+std::ostream& dump_json_head_{funcName}Remap(ApiDumpInstance& dump_inst, {funcTypedParams})
+{{
+    const ApiDumpSettings& settings(dump_inst.settings());
+
+    if(dump_inst.firstFunctionCallOnFrame())
+        needFuncComma = false;
+
+    if (needFuncComma) settings.stream() << ",\\n";
+
+    // Display apicall name
+    settings.stream() << settings.indentation(2) << "{{\\n";
+    settings.stream() << settings.indentation(3) << "\\\"name\\\" : \\\"{funcName}Remap\\\",\\n";
+
+    // Display thread info
+    if (settings.showThreadAndFrame()){{
+        settings.stream() << settings.indentation(3) << "\\\"thread\\\" : \\\"Thread " << dump_inst.threadID() << "\\\",\\n";
+    }}
+
+    // Display elapsed time
+    if(settings.showTimestamp()) {{
+        settings.stream() << settings.indentation(3) << "\\\"time\\\" : \\\""<< dump_inst.current_time_since_start().count() << " us\\\",\\n";
+    }}
+
+    // Display return value
+    settings.stream() << settings.indentation(3) << "\\\"returnType\\\" : " << "\\\"{funcReturn}\\\",\\n";
+
+    return settings.shouldFlush() ? settings.stream() << std::flush : settings.stream();
+}}
+@end function
+
 @foreach function where(not '{funcName}' in ['vkGetDeviceProcAddr', 'vkGetInstanceProcAddr'])
 @if('{funcReturn}' != 'void')
 std::ostream& dump_json_body_{funcName}(ApiDumpInstance& dump_inst, {funcReturn} result, {funcTypedParams})
@@ -2051,6 +2195,15 @@ class ApiDumpGeneratorOptions(GeneratorOptions):
         self.indentFuncPointer = indentFuncPointer
         self.alignFuncParam  = alignFuncParam
 
+class Postfix():
+    def __init__(self, name):
+        self.name = name
+
+    def values(self):
+        return {
+            'postfixName': self.name
+        }
+
 
 class ApiDumpOutputGenerator(OutputGenerator):
 
@@ -2124,7 +2277,7 @@ class ApiDumpOutputGenerator(OutputGenerator):
                                 for member in struct.members:
                                     if node.get('name') == member.baseType or node.get('name') + '*' == member.baseType:
                                         sysType = VulkanSystemType(node.get('name'), self.extTypes[structName])
-                                        if sysType not in self.sysTypes:
+                                        if sysType not in self.sysTypes and "StdVideo" not in sysType.name:
                                             self.sysTypes.add(sysType)
                     for funcName in self.extTypes[extension].vkfuncs:
                         for func in self.functions:
@@ -2307,6 +2460,11 @@ class ApiDumpOutputGenerator(OutputGenerator):
             subjects = self.externalTypes
         elif loop.text == 'union':
             subjects = self.unions
+        elif loop.text == 'postfix':
+            subjects = set()
+            subjects.add(Postfix('AS'))
+            subjects.add(Postfix('Buffer'))
+            subjects.add(Postfix('ASandBuffer'))
         else:
             assert(False)
 
@@ -2419,8 +2577,10 @@ class VulkanVariable:
         self.lengthMember = False
         lengthString = rootNode.get('len')
         if lengthString is not None:
-            if "ename:" in lengthString:
+            if "ename:" in lengthString or "latexmath" in lengthString:
                 lengthString = rootNode.get('altlen')
+                if (lengthString == "(rasterizationSamples + 31) / 32"):
+                    lengthString = "rasterizationSamples + 31 >> 5"
         lengths = []
         if lengthString is not None:
             lengths = re.split(',', lengthString)
@@ -2784,6 +2944,8 @@ class VulkanStruct:
             if rootNode.get('noautovalidity') == 'true' and parentName in VALIDITY_CHECKS and self.name in VALIDITY_CHECKS[parentName]:
                 self.condition = VALIDITY_CHECKS[parentName][self.name]
             self.structValues = rootNode.get('values')
+            if (self.arrayLength == "(rasterizationSamples + 31) / 32"):
+                    self.arrayLength = "rasterizationSamples + 31 >> 5"
 
         def values(self):
             return {

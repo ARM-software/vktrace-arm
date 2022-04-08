@@ -177,7 +177,11 @@ class ToolHelperFileOutputGenerator(OutputGenerator):
         nameElem = interface[0][1]
         name = nameElem.get('name')
         if 'EXTENSION_NAME' not in name:
-            print("Error in vk.xml file -- extension name is not available")
+            if 'VK_NV_DEVICE_GENERATED_COMMANDS_SPEC_VERSION' in name:
+                nameElem = interface[0][2]
+                name = nameElem.get('name')
+            else:
+                print("Error in vk.xml file -- extension name is not available")
         if interface.get('type') == 'instance':
             self.instance_extension_info[name] = self.featureExtraProtect
         else:
@@ -271,6 +275,11 @@ class ToolHelperFileOutputGenerator(OutputGenerator):
                 decoratedName = '{}/{} + 1'.format(*match.group(2, 3))
             else:
                 decoratedName = '{}/{}'.format(*match.group(2, 3))
+        elif 'mathtt' in source:
+            # Matches expressions similar to 'latexmath:[2 \times \mathtt{VK\_UUID\_SIZE}]'
+            match=re.match(r'latexmath\s*\:\s*\[\s*([1-9])\s*\\times\s*\\mathtt\{(\w+)\\(\w+)\\(\w+)\}\s*\]',source)
+            name = ''
+            decoratedName = '{}*{}{}{}'.format(*match.group(1,2,3,4))
         else:
             # Matches expressions similar to 'latexmath : [dataSize \over 4]'
             match = re.match(r'latexmath\s*\:\s*\[\s*(\\textrm\{)?(\w+)\}?\s*\\over\s*(\d+)\s*\]', source)

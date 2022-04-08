@@ -63,6 +63,7 @@
 
 // This mutex is used to protect API calls sequence when trim starting process.
 std::mutex g_mutex_trace;
+bool g_is_vkreplay_proc = false;
 
 VKTRACER_LEAVE _Unload(void) {
     // only do the hooking and networking if the tracer is NOT loaded by vktrace
@@ -1823,6 +1824,17 @@ VKTRACER_EXPORT VKAPI_ATTR void VKAPI_CALL __HOOKED_vkCmdBuildAccelerationStruct
                                 vktrace_LogError("Can't support the geometry type.");
                         }
                     }
+                    if (pInfos[i].scratchData.deviceAddress != 0) {
+                        auto it = g_deviceAddressToBuffer.find(pInfos[i].scratchData.deviceAddress);
+                        if (it == g_deviceAddressToBuffer.end()) {
+                            vktrace_LogError("scratchData device address can't find.");
+                        } else {
+                            auto it0 = std::find(g_bufferInCmdBuildAS.begin(), g_bufferInCmdBuildAS.end(), it->second);
+                            if (it0 == g_bufferInCmdBuildAS.end()) {
+                                g_bufferInCmdBuildAS.push_back(it->second);
+                            }
+                        }
+                    }
                 }
             }
             vktrace_delete_trace_packet(&pHeader);
@@ -2190,6 +2202,10 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkCreateInstance(const V
 
     if (localCreateInfo.enabledLayerCount > 0) free((void*)localCreateInfo.ppEnabledLayerNames);
     if (localCreateInfo.enabledExtensionCount > 0) free((void*)localCreateInfo.ppEnabledExtensionNames);
+
+    if (strstr(vktrace_get_process_name(), "vkreplay") != NULL) {
+        g_is_vkreplay_proc = true;
+    }
 
     return result;
 }
@@ -4391,6 +4407,61 @@ VKTRACER_EXPORT VKAPI_ATTR void VKAPI_CALL __HOOKED_vkCmdBeginRenderPass2KHR(
     }
 }
 
+VKTRACER_EXPORT VKAPI_ATTR void VKAPI_CALL __HOOKED_vkCmdBeginRenderingKHR(
+    VkCommandBuffer commandBuffer,
+    const VkRenderingInfoKHR* pRenderingInfo) {
+    trim::TraceLock<std::mutex> lock(g_mutex_trace);
+    vktrace_trace_packet_header* pHeader;
+    packet_vkCmdBeginRenderingKHR* pPacket = NULL;
+
+    size_t customSize = 0;
+    customSize += get_struct_chain_size((void*)pRenderingInfo);
+    for (uint32_t i = 0; i < pRenderingInfo->colorAttachmentCount; ++i) {
+        customSize += get_struct_chain_size((void*)&pRenderingInfo->pColorAttachments[i]);
+    }
+    customSize += get_struct_chain_size((void*)(pRenderingInfo->pDepthAttachment));
+    customSize += get_struct_chain_size((void*)(pRenderingInfo->pStencilAttachment));
+    CREATE_TRACE_PACKET(vkCmdBeginRenderingKHR, customSize);
+
+    mdd(commandBuffer)->devTable.CmdBeginRenderingKHR(commandBuffer, pRenderingInfo);
+    vktrace_set_packet_entrypoint_end_time(pHeader);
+    pPacket = interpret_body_as_vkCmdBeginRenderingKHR(pHeader);
+
+    pPacket->commandBuffer = commandBuffer;
+    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pRenderingInfo), sizeof(VkRenderingInfoKHR), pRenderingInfo);
+    if (pRenderingInfo) vktrace_add_pnext_structs_to_trace_packet(pHeader, (void*)pPacket->pRenderingInfo, pRenderingInfo);
+
+    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pRenderingInfo->pColorAttachments),
+                                       (pRenderingInfo->colorAttachmentCount) * sizeof(VkRenderingAttachmentInfoKHR), pRenderingInfo->pColorAttachments);
+    for (uint32_t i = 0; i < pRenderingInfo->colorAttachmentCount; ++i) {
+        VkRenderingAttachmentInfoKHR* pColorAttachment = (VkRenderingAttachmentInfoKHR*)&(pPacket->pRenderingInfo->pColorAttachments[i]);
+        if (pColorAttachment) vktrace_add_pnext_structs_to_trace_packet(pHeader, (void*)pColorAttachment, &pRenderingInfo->pColorAttachments[i]);
+    }
+
+    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pRenderingInfo->pDepthAttachment), sizeof(VkRenderingAttachmentInfoKHR), pRenderingInfo->pDepthAttachment);
+    if(pRenderingInfo->pDepthAttachment) vktrace_add_pnext_structs_to_trace_packet(pHeader, (void*)pPacket->pRenderingInfo->pDepthAttachment, pRenderingInfo->pDepthAttachment);
+
+    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pRenderingInfo->pStencilAttachment), sizeof(VkRenderingAttachmentInfoKHR), pRenderingInfo->pStencilAttachment);
+    if(pRenderingInfo->pStencilAttachment) vktrace_add_pnext_structs_to_trace_packet(pHeader, (void*)pPacket->pRenderingInfo->pStencilAttachment, pRenderingInfo->pStencilAttachment);
+
+    vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pRenderingInfo->pColorAttachments));
+    vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pRenderingInfo->pDepthAttachment));
+    vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pRenderingInfo->pStencilAttachment));
+    vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pRenderingInfo));
+
+    if (!g_trimEnabled) {
+        FINISH_TRACE_PACKET();
+    } else {
+        // NOT TEST
+        vktrace_finalize_trace_packet(pHeader);
+        if (g_trimIsInTrim) {
+            trim::write_packet(pHeader);
+        } else {
+            vktrace_delete_trace_packet(&pHeader);
+        }
+    }
+}
+
 VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkFreeDescriptorSets(VkDevice device, VkDescriptorPool descriptorPool,
                                                                              uint32_t descriptorSetCount,
                                                                              const VkDescriptorSet* pDescriptorSets) {
@@ -5109,13 +5180,18 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkCreateSwapchainKHR(VkD
     VkResult result;
     vktrace_trace_packet_header* pHeader;
     packet_vkCreateSwapchainKHR* pPacket = NULL;
+    VkSwapchainCreateInfoKHR tmpCreateInfo = *pCreateInfo;
     CREATE_TRACE_PACKET(vkCreateSwapchainKHR, vk_size_vkswapchaincreateinfokhr(pCreateInfo) +
                                                   get_struct_chain_size((void*)pCreateInfo) + sizeof(VkSwapchainKHR) +
                                                   sizeof(VkAllocationCallbacks));
-    result = mdd(device)->devTable.CreateSwapchainKHR(device, pCreateInfo, pAllocator, pSwapchain);
+    if (!g_is_vkreplay_proc && tmpCreateInfo.minImageCount < 3) {
+        tmpCreateInfo.minImageCount = 3;
+        vktrace_LogWarning("Overwritting the minImageCount to 3 !");
+    }
+    result = mdd(device)->devTable.CreateSwapchainKHR(device, &tmpCreateInfo, pAllocator, pSwapchain);
     pPacket = interpret_body_as_vkCreateSwapchainKHR(pHeader);
     pPacket->device = device;
-    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pCreateInfo), sizeof(VkSwapchainCreateInfoKHR), pCreateInfo);
+    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pCreateInfo), sizeof(VkSwapchainCreateInfoKHR), &tmpCreateInfo);
     if (pCreateInfo) vktrace_add_pnext_structs_to_trace_packet(pHeader, (void*)pPacket->pCreateInfo, pCreateInfo);
     vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pAllocator), sizeof(VkAllocationCallbacks), NULL);
     vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pSwapchain), sizeof(VkSwapchainKHR), pSwapchain);

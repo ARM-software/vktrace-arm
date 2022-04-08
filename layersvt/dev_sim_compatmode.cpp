@@ -323,8 +323,74 @@ void ClampExtendedDevFeatures(const std::unordered_map<uint32_t, ExtendedFeature
                 }
             }
             break;
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR:
+            {
+                VkPhysicalDeviceAccelerationStructureFeaturesKHR& dst = *reinterpret_cast<VkPhysicalDeviceAccelerationStructureFeaturesKHR*>(pDummy);
+                if (features.find(pDummy->sType) != features.end()) {
+                    const VkPhysicalDeviceAccelerationStructureFeaturesKHR& src = features.at(pDummy->sType).acceleration_structure_feature;
+                    CLAMP_BOOL_VALUE(accelerationStructure)
+                    CLAMP_BOOL_VALUE(accelerationStructureCaptureReplay)
+                    CLAMP_BOOL_VALUE(accelerationStructureIndirectBuild)
+                    CLAMP_BOOL_VALUE(accelerationStructureHostCommands)
+                    CLAMP_BOOL_VALUE(descriptorBindingAccelerationStructureUpdateAfterBind)
+                }
+            }
+            break;
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR:
+            {
+                VkPhysicalDeviceRayTracingPipelineFeaturesKHR& dst = *reinterpret_cast<VkPhysicalDeviceRayTracingPipelineFeaturesKHR*>(pDummy);
+                if (features.find(pDummy->sType) != features.end()) {
+                    const VkPhysicalDeviceRayTracingPipelineFeaturesKHR& src = features.at(pDummy->sType).ray_tracing_pipeline_feature;
+                    CLAMP_BOOL_VALUE(rayTracingPipeline)
+                    CLAMP_BOOL_VALUE(rayTracingPipelineShaderGroupHandleCaptureReplay)
+                    CLAMP_BOOL_VALUE(rayTracingPipelineShaderGroupHandleCaptureReplayMixed)
+                    CLAMP_BOOL_VALUE(rayTracingPipelineTraceRaysIndirect)
+                    CLAMP_BOOL_VALUE(rayTraversalPrimitiveCulling)
+                }
+            }
+            break;
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR:
+            {
+                VkPhysicalDeviceRayQueryFeaturesKHR& dst = *reinterpret_cast<VkPhysicalDeviceRayQueryFeaturesKHR*>(pDummy);
+                if (features.find(pDummy->sType) != features.end()) {
+                    const VkPhysicalDeviceRayQueryFeaturesKHR& src = features.at(pDummy->sType).ray_query_feature;
+                    CLAMP_BOOL_VALUE(rayQuery)
+                }
+            }
+            break;
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES:
+            {
+                VkPhysicalDeviceBufferDeviceAddressFeatures& dst = *reinterpret_cast<VkPhysicalDeviceBufferDeviceAddressFeatures*>(pDummy);
+                if (features.find(pDummy->sType) != features.end()) {
+                    const VkPhysicalDeviceBufferDeviceAddressFeatures& src = features.at(pDummy->sType).buffer_device_address_feature;
+                    CLAMP_BOOL_VALUE(bufferDeviceAddress)
+                    CLAMP_BOOL_VALUE(bufferDeviceAddressCaptureReplay)
+                    CLAMP_BOOL_VALUE(bufferDeviceAddressMultiDevice)
+                }
+            }
+            break;
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_DENSITY_MAP_FEATURES_EXT:
+            {
+                VkPhysicalDeviceFragmentDensityMapFeaturesEXT& dst = *reinterpret_cast<VkPhysicalDeviceFragmentDensityMapFeaturesEXT*>(pDummy);
+                if (features.find(pDummy->sType) != features.end()) {
+                    const VkPhysicalDeviceFragmentDensityMapFeaturesEXT& src = features.at(pDummy->sType).fragment_density_map_feature;
+                    CLAMP_BOOL_VALUE(fragmentDensityMap)
+                    CLAMP_BOOL_VALUE(fragmentDensityMapDynamic)
+                    CLAMP_BOOL_VALUE(fragmentDensityMapNonSubsampledImages)
+                }
+            }
+            break;
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_DENSITY_MAP_2_FEATURES_EXT:
+            {
+                VkPhysicalDeviceFragmentDensityMap2FeaturesEXT& dst = *reinterpret_cast<VkPhysicalDeviceFragmentDensityMap2FeaturesEXT*>(pDummy);
+                if (features.find(pDummy->sType) != features.end()) {
+                    const VkPhysicalDeviceFragmentDensityMap2FeaturesEXT& src = features.at(pDummy->sType).fragment_density_map2_feature;
+                    CLAMP_BOOL_VALUE(fragmentDensityMapDeferred)
+                }
+            }
+            break;
         default:
-            ErrorPrintf("Unhandled extension feature %d", pDummy->sType);
+            ErrorPrintf("Unhandled extension feature %d\n", pDummy->sType);
             break;
         }
         pNext = const_cast<void*>(pDummy->pNext);
@@ -394,8 +460,48 @@ void ClampExtendedDevProperties(const std::unordered_map<uint32_t, ExtendedPrope
         case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES:
             // ignore
             break;
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_PROPERTIES_KHR:
+            {
+                VkPhysicalDeviceRayTracingPipelinePropertiesKHR& dst = *reinterpret_cast<VkPhysicalDeviceRayTracingPipelinePropertiesKHR*>(pDummy);
+                if (properties.find(pDummy->sType) != properties.end()) {
+                    const VkPhysicalDeviceRayTracingPipelinePropertiesKHR& src = properties.at(pDummy->sType).ray_tracing_pipeline_prop;
+                    CLAMP_TO_LARGE_VALUE(shaderGroupHandleSize)
+                    CLAMP_TO_SMALL_VALUE(maxRayRecursionDepth)
+                    CLAMP_TO_LCM_VALUE(shaderGroupBaseAlignment)
+                    CLAMP_TO_LARGE_VALUE(shaderGroupHandleCaptureReplaySize)
+                    CLAMP_TO_SMALL_VALUE(maxRayDispatchInvocationCount)
+                    CLAMP_TO_LCM_VALUE(shaderGroupHandleAlignment)
+                    CLAMP_TO_SMALL_VALUE(maxRayHitAttributeSize)
+                }
+            }
+            break;
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_DENSITY_MAP_PROPERTIES_EXT:
+            {
+                VkPhysicalDeviceFragmentDensityMapPropertiesEXT& dst = *reinterpret_cast<VkPhysicalDeviceFragmentDensityMapPropertiesEXT*>(pDummy);
+                if (properties.find(pDummy->sType) != properties.end()) {
+                    const VkPhysicalDeviceFragmentDensityMapPropertiesEXT& src = properties.at(pDummy->sType).fragment_density_map_prop;
+                    CLAMP_TO_LARGE_VALUE(minFragmentDensityTexelSize.width)
+                    CLAMP_TO_LARGE_VALUE(minFragmentDensityTexelSize.height)
+                    CLAMP_TO_SMALL_VALUE(maxFragmentDensityTexelSize.width)
+                    CLAMP_TO_SMALL_VALUE(maxFragmentDensityTexelSize.height)
+                    CLAMP_BOOL_VALUE(fragmentDensityInvocations)
+                }
+            }
+            break;
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_DENSITY_MAP_2_PROPERTIES_EXT:
+            {
+                VkPhysicalDeviceFragmentDensityMap2PropertiesEXT& dst = *reinterpret_cast<VkPhysicalDeviceFragmentDensityMap2PropertiesEXT*>(pDummy);
+                if (properties.find(pDummy->sType) != properties.end()) {
+                    const VkPhysicalDeviceFragmentDensityMap2PropertiesEXT& src = properties.at(pDummy->sType).fragment_density_map2_prop;
+                    CLAMP_BOOL_VALUE(subsampledLoads)
+                    CLAMP_BOOL_VALUE(subsampledCoarseReconstructionEarlyAccess)
+                    CLAMP_TO_SMALL_VALUE(maxSubsampledArrayLayers)
+                    CLAMP_TO_SMALL_VALUE(maxDescriptorSetSubsampledSamplers)
+                }
+            }
+            break;
         default:
-            ErrorPrintf("Unhandled extension property %d", pDummy->sType);
+            ErrorPrintf("Unhandled extension property %d\n", pDummy->sType);
             break;
         }
         pNext = const_cast<void*>(pDummy->pNext);

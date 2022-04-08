@@ -38,6 +38,60 @@ vktrace_process_id vktrace_get_pid() {
 #endif
 }
 
+const char*
+vktrace_get_process_name(void)
+#ifdef ANDROID
+{
+    // using the id, find the name of this process
+    static char currentProcessName[256];
+    char path[128];
+    sprintf(path, "/proc/%d/cmdline", getpid());
+    int pinfo = open(path, O_RDONLY);
+    if (pinfo)
+    {
+        read(pinfo, currentProcessName, sizeof(currentProcessName));
+        vktrace_LogDebug("Current process: %s (%d)\n", currentProcessName, getpid());
+        close(pinfo);
+    }
+    else
+    {
+        vktrace_LogError("Failed to open: %s\n", path);
+    }
+
+    return currentProcessName;
+}
+#else
+{
+    static char path[PATH_MAX];
+    size_t size = PATH_MAX;
+
+    // http://stackoverflow.com/questions/1023306/finding-current-executables-path-without-proc-self-exe
+#ifdef __APPLE__
+    uint32_t len = size;
+    if (_NSGetExecutablePath(path, &len) != 0) {
+        return NULL;
+    }
+#else
+    ssize_t len;
+    len = readlink("/proc/self/exe", path, size - 1);
+    if (len == -1) {
+        // /proc/self/exe is not available on setuid processes, so fallback to
+        // /proc/self/cmdline.
+        int fd = open("/proc/self/cmdline", O_RDONLY);
+        if (fd >= 0) {
+            len = read(fd, path, size - 1);
+            close(fd);
+        }
+    }
+    if (len <= 0) {
+        snprintf(path, size, "%i", (int)getpid());
+        return path;
+    }
+#endif
+    return path;
+}
+#endif
+
 char* vktrace_platform_get_current_executable_directory() {
     char* exePath = (char*)vktrace_malloc(_MAX_PATH);
 #if defined(WIN32)

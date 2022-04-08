@@ -47,6 +47,12 @@ VkStructureType ext_feature_name_to_stype(const std::string& ext_feat_name) {
         s_feature_name_to_stype_map["VK_EXT_scalar_block_layout"] = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SCALAR_BLOCK_LAYOUT_FEATURES;
         s_feature_name_to_stype_map["VK_KHR_shader_float16_int8"] = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_FLOAT16_INT8_FEATURES;
         s_feature_name_to_stype_map["VK_KHR_16bit_storage"] = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_16BIT_STORAGE_FEATURES;
+        s_feature_name_to_stype_map["VK_KHR_buffer_device_address"] = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES;
+        s_feature_name_to_stype_map["VK_KHR_acceleration_structure"] = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR;
+        s_feature_name_to_stype_map["VK_KHR_ray_tracing_pipeline"] = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR;
+        s_feature_name_to_stype_map["VK_KHR_ray_query"] = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR;
+        s_feature_name_to_stype_map["VK_EXT_fragment_density_map"] = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_DENSITY_MAP_FEATURES_EXT;
+        s_feature_name_to_stype_map["VK_EXT_fragment_density_map2"] = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_DENSITY_MAP_2_FEATURES_EXT;
     }
 
     if (s_feature_name_to_stype_map.find(ext_feat_name) != s_feature_name_to_stype_map.end()) {
@@ -128,8 +134,86 @@ void get_extension_feature(VkStructureType stype, const Json::Value& value, Exte
             }
         }
         break;
+    case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR:
+        {
+            if (strcmp(value["name"].asCString(), "accelerationStructure") == 0) {
+                feature.acceleration_structure_feature.accelerationStructure = value["supported"].asBool();
+            } else if (strcmp(value["name"].asCString(), "accelerationStructureCaptureReplay") == 0) {
+                feature.acceleration_structure_feature.accelerationStructureCaptureReplay = value["supported"].asBool();
+            } else if (strcmp(value["name"].asCString(), "accelerationStructureHostCommands") == 0) {
+                feature.acceleration_structure_feature.accelerationStructureHostCommands = value["supported"].asBool();
+            } else if (strcmp(value["name"].asCString(), "accelerationStructureIndirectBuild") == 0) {
+                feature.acceleration_structure_feature.accelerationStructureIndirectBuild = value["supported"].asBool();
+            } else if (strcmp(value["name"].asCString(), "descriptorBindingAccelerationStructureUpdateAfterBind") == 0) {
+                feature.acceleration_structure_feature.descriptorBindingAccelerationStructureUpdateAfterBind = value["supported"].asBool();
+            } else {
+                UNKNOWN_FEATURE("VK_KHR_acceleration_structure");
+            }
+        }
+        break;
+    case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR:
+        {
+            if (strcmp(value["name"].asCString(), "rayTracingPipeline") == 0) {
+                feature.ray_tracing_pipeline_feature.rayTracingPipeline = value["supported"].asBool();
+            } else if (strcmp(value["name"].asCString(), "rayTracingPipelineShaderGroupHandleCaptureReplay") == 0) {
+                feature.ray_tracing_pipeline_feature.rayTracingPipelineShaderGroupHandleCaptureReplay = value["supported"].asBool();
+            } else if (strcmp(value["name"].asCString(), "rayTracingPipelineShaderGroupHandleCaptureReplayMixed") == 0) {
+                feature.ray_tracing_pipeline_feature.rayTracingPipelineShaderGroupHandleCaptureReplayMixed = value["supported"].asBool();
+            } else if (strcmp(value["name"].asCString(), "rayTracingPipelineTraceRaysIndirect") == 0) {
+                feature.ray_tracing_pipeline_feature.rayTracingPipelineTraceRaysIndirect = value["supported"].asBool();
+            } else if (strcmp(value["name"].asCString(), "rayTraversalPrimitiveCulling") == 0) {
+                feature.ray_tracing_pipeline_feature.rayTraversalPrimitiveCulling = value["supported"].asBool();
+            } else {
+                UNKNOWN_FEATURE("VK_KHR_ray_tracing_pipeline");
+            }
+        }
+        break;
+    case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR:
+        {
+            if (strcmp(value["name"].asCString(), "rayQuery") == 0) {
+                feature.ray_query_feature.rayQuery = value["supported"].asBool();
+            } else {
+                UNKNOWN_FEATURE("VK_KHR_ray_query");
+            }
+        }
+        break;
+    case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES:
+        {
+            if (strcmp(value["name"].asCString(), "bufferDeviceAddress") == 0) {
+                feature.buffer_device_address_feature.bufferDeviceAddress = value["supported"].asBool();
+            } else if (strcmp(value["name"].asCString(), "bufferDeviceAddressCaptureReplay") == 0) {
+                feature.buffer_device_address_feature.bufferDeviceAddressCaptureReplay = value["supported"].asBool();
+            } else if (strcmp(value["name"].asCString(), "bufferDeviceAddressMultiDevice") == 0) {
+                feature.buffer_device_address_feature.bufferDeviceAddressMultiDevice = value["supported"].asBool();
+            } else {
+                UNKNOWN_FEATURE("VK_KHR_buffer_device_address");
+            }
+        }
+        break;
+    case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_DENSITY_MAP_FEATURES_EXT:
+        {
+            if (strcmp(value["name"].asCString(), "fragmentDensityMap") == 0) {
+                feature.fragment_density_map_feature.fragmentDensityMap = value["supported"].asBool();
+            } else if (strcmp(value["name"].asCString(), "fragmentDensityMapDynamic") == 0) {
+                feature.fragment_density_map_feature.fragmentDensityMapDynamic = value["supported"].asBool();
+            } else if (strcmp(value["name"].asCString(), "fragmentDensityMapNonSubsampledImages") == 0) {
+                feature.fragment_density_map_feature.fragmentDensityMapNonSubsampledImages = value["supported"].asBool();
+            } else {
+                UNKNOWN_FEATURE("VK_EXT_fragment_density_map");
+            }
+        }
+        break;
+    case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_DENSITY_MAP_2_FEATURES_EXT:
+        {
+            if (strcmp(value["name"].asCString(), "fragmentDensityMapNonSubsampledImages") == 0) {
+                feature.fragment_density_map2_feature.fragmentDensityMapDeferred = value["supported"].asBool();
+            } else {
+                UNKNOWN_FEATURE("VK_EXT_fragment_density_map2");
+            }
+        }
+        break;
     default:
-        ErrorPrintf("Unknown extension %d", stype);
+        ErrorPrintf("Unknown extension %d\n", stype);
         break;
     }
 }
@@ -144,6 +228,9 @@ VkStructureType ext_property_name_to_stype(const std::string& ext_prop_name) {
         s_prop_name_to_stype_map["VK_KHR_acceleration_structure"] = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_PROPERTIES_KHR;
         s_prop_name_to_stype_map["VK_EXT_external_memory_host"] = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_MEMORY_HOST_PROPERTIES_EXT;
         s_prop_name_to_stype_map["VK_EXT_transform_feedback"] = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TRANSFORM_FEEDBACK_PROPERTIES_EXT;
+        s_prop_name_to_stype_map["VK_KHR_ray_tracing_pipeline"] = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_PROPERTIES_KHR;
+        s_prop_name_to_stype_map["VK_EXT_fragment_density_map"] = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_DENSITY_MAP_PROPERTIES_EXT;
+        s_prop_name_to_stype_map["VK_EXT_fragment_density_map2"] = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_DENSITY_MAP_2_PROPERTIES_EXT;
     }
 
     if (s_prop_name_to_stype_map.find(ext_prop_name) != s_prop_name_to_stype_map.end()) {
@@ -221,8 +308,61 @@ void get_extension_property(VkStructureType stype, const Json::Value& value, Ext
     case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES:
         // ignore
         break;
+    case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_PROPERTIES_KHR:
+        {
+            if (strcmp(value["name"].asCString(), "maxRayDispatchInvocationCount") == 0) {
+                property.ray_tracing_pipeline_prop.maxRayDispatchInvocationCount = std::stoul(value["value"].asString());
+            } else if (strcmp(value["name"].asCString(), "maxRayHitAttributeSize") == 0) {
+                property.ray_tracing_pipeline_prop.maxRayHitAttributeSize = std::stoul(value["value"].asString());
+            } else if (strcmp(value["name"].asCString(), "maxRayRecursionDepth") == 0) {
+                property.ray_tracing_pipeline_prop.maxRayRecursionDepth = std::stoul(value["value"].asString());
+            } else if (strcmp(value["name"].asCString(), "maxShaderGroupStride") == 0) {
+                property.ray_tracing_pipeline_prop.maxShaderGroupStride = std::stoul(value["value"].asString());
+            } else if (strcmp(value["name"].asCString(), "shaderGroupBaseAlignment") == 0) {
+                property.ray_tracing_pipeline_prop.shaderGroupBaseAlignment = std::stoul(value["value"].asString());
+            } else if (strcmp(value["name"].asCString(), "shaderGroupHandleAlignment") == 0) {
+                property.ray_tracing_pipeline_prop.shaderGroupHandleAlignment = std::stoul(value["value"].asString());
+            } else if (strcmp(value["name"].asCString(), "shaderGroupHandleCaptureReplaySize") == 0) {
+                property.ray_tracing_pipeline_prop.shaderGroupHandleCaptureReplaySize = std::stoul(value["value"].asString());
+            } else if (strcmp(value["name"].asCString(), "shaderGroupHandleSize") == 0) {
+                property.ray_tracing_pipeline_prop.shaderGroupHandleSize = std::stoul(value["value"].asString());
+            } else {
+                UNKNOWN_PROPERTY("VK_KHR_ray_tracing_pipeline");
+            }
+        }
+        break;
+    case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_DENSITY_MAP_PROPERTIES_EXT:
+        {
+            if (strcmp(value["name"].asCString(), "minFragmentDensityTexelSize") == 0) {
+                property.fragment_density_map_prop.minFragmentDensityTexelSize.width = std::stoul(value["value"][0].asString());
+                property.fragment_density_map_prop.minFragmentDensityTexelSize.height = std::stoul(value["value"][1].asString());
+            } else if (strcmp(value["name"].asCString(), "maxFragmentDensityTexelSize") == 0) {
+                property.fragment_density_map_prop.maxFragmentDensityTexelSize.width = std::stoul(value["value"][0].asString());
+                property.fragment_density_map_prop.maxFragmentDensityTexelSize.height = std::stoul(value["value"][1].asString());
+            } else if (strcmp(value["name"].asCString(), "fragmentDensityInvocations") == 0) {
+                property.fragment_density_map_prop.fragmentDensityInvocations = value["value"].asBool();
+            } else {
+                UNKNOWN_PROPERTY("VK_EXT_fragment_density_map");
+            }
+        }
+        break;
+    case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_DENSITY_MAP_2_PROPERTIES_EXT:
+        {
+            if (strcmp(value["name"].asCString(), "subsampledLoads") == 0) {
+                property.fragment_density_map2_prop.subsampledLoads = value["value"].asBool();
+            } else if (strcmp(value["name"].asCString(), "subsampledCoarseReconstructionEarlyAccess") == 0) {
+                property.fragment_density_map2_prop.subsampledCoarseReconstructionEarlyAccess = value["value"].asBool();
+            } else if (strcmp(value["name"].asCString(), "maxSubsampledArrayLayers") == 0) {
+                property.fragment_density_map2_prop.maxSubsampledArrayLayers = std::stoul(value["value"].asString());
+            } else if (strcmp(value["name"].asCString(), "maxDescriptorSetSubsampledSamplers") == 0) {
+                property.fragment_density_map2_prop.maxDescriptorSetSubsampledSamplers = std::stoul(value["value"].asString());
+            } else {
+                UNKNOWN_PROPERTY("VK_EXT_fragment_density_map2");
+            }
+        }
+        break;
     default:
-        ErrorPrintf("Unknown extension %d", stype);
+        ErrorPrintf("Unknown extension %d\n", stype);
         break;
     }
 }

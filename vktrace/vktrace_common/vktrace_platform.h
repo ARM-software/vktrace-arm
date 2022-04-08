@@ -108,6 +108,9 @@ extern "C" {
 // return the process ID of current process
 vktrace_process_id vktrace_get_pid();
 
+// get the current process name
+const char* vktrace_get_process_name(void);
+
 // Get the path of the currently running executable.
 // The string returned must be freed by the caller.
 char* vktrace_platform_get_current_executable_directory();

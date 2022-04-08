@@ -244,6 +244,7 @@ from __future__ import print_function
 import argparse
 import json
 import distutils.dir_util
+import os
 import os.path
 import subprocess
 import sys
@@ -458,6 +459,8 @@ class GoodRepo(object):
                 if "Vulkan-Tools" in self.build_dir:
                     cmake_cmd.append("-DBUILD_CUBE=OFF")
                     cmake_cmd.append("-DBUILD_VULKANINFO=OFF")
+        # turn off Robin Hood hashing temporarily
+        cmake_cmd.append("-DUSE_ROBIN_HOOD_HASHING=OFF")
 
         # Apply a generator, if one is specified.  This can be used to supply
         # a specific generator for the dependent repositories to match
@@ -507,6 +510,15 @@ class GoodRepo(object):
 
     def Build(self, repos, repo_dict):
         """Build the dependent repo"""
+        if("Vulkan-ValidationLayers" in self.name):
+            target_file = self.repo_dir + '/layers/generated/vk_format_utils.cpp'
+            cmd = ' sed -i \"s/layer_data::unordered_map<VkFormat, FORMAT_INFO>/layer_data::unordered_map<uint32_t, FORMAT_INFO>/g\" '
+            cmd += target_file
+            os.system(cmd)
+            cmd = ' sed -i \"s/layer_data::unordered_map<VkFormat, MULTIPLANE_COMPATIBILITY>/layer_data::unordered_map<uint32_t, MULTIPLANE_COMPATIBILITY>/g\" '
+            cmd += target_file
+            os.system(cmd)
+            print("Patching...")
         print('Building {n} in {d}'.format(n=self.name, d=self.repo_dir))
         print('Build dir = {b}'.format(b=self.build_dir))
         print('Install dir = {i}\n'.format(i=self.install_dir))

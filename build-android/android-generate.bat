@@ -102,6 +102,7 @@ echo ********
 py -3 %VT_SCRIPTS%\vt_genvk.py -registry %REGISTRY% -scripts %REGISTRY_PATH% vkreplay_vk_func_ptrs.h
 py -3 %VT_SCRIPTS%\vt_genvk.py -registry %REGISTRY% -scripts %REGISTRY_PATH% vkreplay_vk_replay_gen.cpp
 py -3 %VT_SCRIPTS%\vt_genvk.py -registry %REGISTRY% -scripts %REGISTRY_PATH% vkreplay_vk_objmapper.h
+py -3 %VT_SCRIPTS%\vt_genvk.py -registry %REGISTRY% -scripts %REGISTRY_PATH% vk_struct_member.h
 
 REM Copy over the built source files to LVL.  Otherwise,
 REM cube won't build.

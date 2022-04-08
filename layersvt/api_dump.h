@@ -24,7 +24,9 @@
 
 #pragma once
 
+#ifndef NOMINMAX
 #define NOMINMAX
+#endif  // NOMINMAX
 
 #include "vulkan/vk_layer.h"
 #include "vk_layer_config.h"
@@ -54,8 +56,15 @@
 
 #include <android/log.h>
 #include <sys/system_properties.h>
+// Disable warning about bitshift precedence
+#pragma GCC diagnostic ignored "-Wshift-op-parentheses"
 
 #endif  // ANDROID
+
+#if defined(WIN32)
+// Disable warning about bitshift precedence
+#pragma warning(disable : 4554)
+#endif
 
 #define MAX_STRING_LENGTH 1024
 
@@ -1433,7 +1442,6 @@ inline std::ostream &dump_json_void(const void *object, const ApiDumpSettings &s
 }
 
 inline std::ostream &dump_json_int(int object, const ApiDumpSettings &settings, int indents) {
-    settings.stream() << settings.indentation(indents) << "\"value\" : ";
     settings.stream() << '"' << object << "\"";
     return settings.stream();
 }

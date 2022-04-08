@@ -17,6 +17,7 @@
  *
  * Author: Mike Weiblen <mikew@lunarg.com>
  * Author: Arda Coskunses <arda@lunarg.com>
+ * Author: Jeremy Kniager <jeremyk@lunarg.com>
  */
 
 /*
@@ -55,6 +56,7 @@
 #include <json/json.h>  // https://github.com/open-source-parsers/jsoncpp
 
 #include "vulkan/vk_layer.h"
+#include "vulkan/vulkan_beta.h"
 #include "vk_layer_config.h"
 #include "vk_layer_table.h"
 
@@ -1445,10 +1447,12 @@ VKAPI_ATTR void VKAPI_CALL GetPhysicalDeviceProperties(VkPhysicalDevice physical
     const auto dt = instance_dispatch_table(physicalDevice);
 
     PhysicalDeviceData *pdd = PhysicalDeviceData::Find(physicalDevice);
+    
+    dt->GetPhysicalDeviceProperties(physicalDevice, pProperties);
     if (pdd) {
+        VkPhysicalDeviceType localDeviceType = pProperties->deviceType;
         *pProperties = pdd->physical_device_properties_;
-    } else {
-        dt->GetPhysicalDeviceProperties(physicalDevice, pProperties);
+        pProperties->deviceType = localDeviceType; /// Do not override the device type.
     }
 }
 

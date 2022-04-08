@@ -322,7 +322,21 @@ vktrace_SettingInfo g_settings_info[] = {
      {&replaySettings.swapChainMinImageCount},
      {&replaySettings.swapChainMinImageCount},
      FALSE,
-     "Change the swapchain min image count."}
+     "Change the swapchain min image count."},
+    {"intd",
+     "instrumentationDelay",
+     VKTRACE_SETTING_UINT,
+     {&replaySettings.instrumentationDelay},
+     {&replaySettings.instrumentationDelay},
+     TRUE,
+     "Delay in microseconds that the retracer should sleep for after each present call in the measurement range."},
+    {"sgfs",
+     "skipGetFenceStatus",
+     VKTRACE_SETTING_UINT,
+     {&replaySettings.skipGetFenceStatus},
+     {&replaySettings.skipGetFenceStatus},
+     TRUE,
+     "Skip the GetFenceStatus() calls, 0 - Not skip; 1 - Skip all the unsuccess calls; 2 - Skip all calls."}
 };
 
 vktrace_SettingGroup g_replaySettingGroup = {"vkreplay", sizeof(g_settings_info) / sizeof(g_settings_info[0]), &g_settings_info[0], nullptr};
@@ -449,6 +463,11 @@ int main_loop(vktrace_replay::ReplayDisplay display, Sequencer& seq, vktrace_tra
                     }
                     // frame control logic
                     unsigned int frameNumber = g_replayer_interface->GetFrameNumber();
+
+                    if (frameNumber > start_frame && replaySettings.instrumentationDelay > 0) {
+                        usleep(replaySettings.instrumentationDelay);
+                    }
+
                     if (g_pReplaySettings->triggerScript != UINT_MAX && g_pReplaySettings->pScriptPath != NULL && (frameNumber + 1) == g_pReplaySettings->triggerScript) {
                         triggerScript();
                     }
@@ -1212,7 +1231,7 @@ int vkreplay_main(int argc, char** argv, vktrace_replay::ReplayDisplayImp* pDisp
 
 #if defined(ANDROID)
 static bool initialized = false;
-static bool active = false;
+static bool active = true;
 
 // Convert Intents to argv
 // Ported from Hologram sample, only difference is flexible key

@@ -467,6 +467,8 @@ typedef enum _VKTRACE_TRACE_PACKET_ID_VK {
     VKTRACE_TPI_VK_vkSetDebugUtilsObjectNameEXT = 382,
     VKTRACE_TPI_VK_vkSetDebugUtilsObjectTagEXT = 383,
     VKTRACE_TPI_VK_vkSubmitDebugUtilsMessageEXT = 384,
+    VKTRACE_TPI_VK_vkCmdBeginRenderingKHR = 385,
+    VKTRACE_TPI_VK_vkCmdEndRenderingKHR = 386,
     VKTRACE_TPI_VK_vkCmdPushConstantsRemap = 0xFFEC,            // non-standard API derived from vkCmdPushConstants
     VKTRACE_TPI_VK_vkFlushMappedMemoryRangesRemap = 0xFFED,     // non-standard API derived from vkFlushMappedMemoryRanges
     VKTRACE_TPI_VK_vkCmdCopyBufferRemapBuffer = 0xFFEE,         // non-standard API derived from vkCmdCopyBuffer
@@ -522,6 +524,7 @@ typedef enum VKTRACE_FILE_HEADER_FLAG {
 typedef struct _deviceFeatureSupport{
     VkBool32 accelerationStructureCaptureReplay;
     VkBool32 bufferDeviceAddressCaptureReplay;
+    VkBool32 accelerationStructureHostCommands;
 }deviceFeatureSupport;
 
 typedef struct {
