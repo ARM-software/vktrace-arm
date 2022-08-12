@@ -102,7 +102,7 @@ echo "Using python: $(which $PYTHON_EXECUTABLE)"
 ( cd generated/include; ${PYTHON_EXECUTABLE} ${LVL_SCRIPTS}/lvl_genvk.py -registry ${REGISTRY} -scripts ${REGISTRY_PATH} layer_chassis_dispatch.h )
 ( cd generated/include; ${PYTHON_EXECUTABLE} ${LVL_SCRIPTS}/lvl_genvk.py -registry ${REGISTRY} -scripts ${REGISTRY_PATH} chassis.cpp )
 ( cd generated/include; ${PYTHON_EXECUTABLE} ${LVL_SCRIPTS}/lvl_genvk.py -registry ${REGISTRY} -scripts ${REGISTRY_PATH} chassis.h )
-( cd generated/include; ${PYTHON_EXECUTABLE} ${LVL_SCRIPTS}/external_revision_generator.py --git_dir ../../third_party/shaderc/third_party/spirv-tools -s SPIRV_TOOLS_COMMIT_ID -o spirv_tools_commit_id.h )
+( cd generated/include; ${PYTHON_EXECUTABLE} ${LVL_SCRIPTS}/external_revision_generator.py --git_dir ../../third_party/Vulkan-ValidationLayers/build-android/third_party/shaderc/third_party/spirv-tools -s SPIRV_TOOLS_COMMIT_ID -o spirv_tools_commit_id.h )
 
 # layer factory
 ( cd generated/include; ${PYTHON_EXECUTABLE} ${VT_SCRIPTS}/vt_genvk.py -registry ${REGISTRY} -scripts ${REGISTRY_PATH} layer_factory.h )

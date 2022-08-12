@@ -177,11 +177,11 @@ class ToolHelperFileOutputGenerator(OutputGenerator):
         nameElem = interface[0][1]
         name = nameElem.get('name')
         if 'EXTENSION_NAME' not in name:
-            if 'VK_NV_DEVICE_GENERATED_COMMANDS_SPEC_VERSION' in name:
+            if 'VK_NV_DEVICE_GENERATED_COMMANDS_SPEC_VERSION' in name or 'VK_EXT_YCBCR_2PLANE_444_FORMATS_SPEC_VERSION' in name or 'VK_EXT_4444_FORMATS_SPEC_VERSION' in name:
                 nameElem = interface[0][2]
                 name = nameElem.get('name')
             else:
-                print("Error in vk.xml file -- extension name is not available")
+                print("Error in vk.xml file -- extension name is not available  for feature {}.".format(self.featureName))
         if interface.get('type') == 'instance':
             self.instance_extension_info[name] = self.featureExtraProtect
         else:

@@ -340,7 +340,9 @@ void get_extension_property(VkStructureType stype, const Json::Value& value, Ext
                 property.fragment_density_map_prop.maxFragmentDensityTexelSize.width = std::stoul(value["value"][0].asString());
                 property.fragment_density_map_prop.maxFragmentDensityTexelSize.height = std::stoul(value["value"][1].asString());
             } else if (strcmp(value["name"].asCString(), "fragmentDensityInvocations") == 0) {
-                property.fragment_density_map_prop.fragmentDensityInvocations = value["value"].asBool();
+                bool ret = false;
+                std::istringstream(value["value"].asString()) >> std::boolalpha >> ret;
+                property.fragment_density_map_prop.fragmentDensityInvocations = ret;
             } else {
                 UNKNOWN_PROPERTY("VK_EXT_fragment_density_map");
             }
@@ -349,9 +351,13 @@ void get_extension_property(VkStructureType stype, const Json::Value& value, Ext
     case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_DENSITY_MAP_2_PROPERTIES_EXT:
         {
             if (strcmp(value["name"].asCString(), "subsampledLoads") == 0) {
-                property.fragment_density_map2_prop.subsampledLoads = value["value"].asBool();
+                bool ret = false;
+                std::istringstream(value["value"].asString()) >> std::boolalpha >> ret;
+                property.fragment_density_map2_prop.subsampledLoads = ret;
             } else if (strcmp(value["name"].asCString(), "subsampledCoarseReconstructionEarlyAccess") == 0) {
-                property.fragment_density_map2_prop.subsampledCoarseReconstructionEarlyAccess = value["value"].asBool();
+                bool ret = false;
+                std::istringstream(value["value"].asString()) >> std::boolalpha >> ret;
+                property.fragment_density_map2_prop.subsampledCoarseReconstructionEarlyAccess = ret;
             } else if (strcmp(value["name"].asCString(), "maxSubsampledArrayLayers") == 0) {
                 property.fragment_density_map2_prop.maxSubsampledArrayLayers = std::stoul(value["value"].asString());
             } else if (strcmp(value["name"].asCString(), "maxDescriptorSetSubsampledSamplers") == 0) {

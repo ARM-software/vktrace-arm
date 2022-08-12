@@ -157,6 +157,9 @@ VKTRACE_THREAD_ROUTINE_RETURN_TYPE Process_RunWatchdogThread(LPVOID _procInfoPtr
     while (waitpid(pProcInfo->processId, &status, options) != -1) {
         if (WIFEXITED(status)) {
             vktrace_LogVerbose("Child process exited.");
+            if (g_settings.program != NULL) {
+                exit(0);
+            }
             rval = WEXITSTATUS(status);
             break;
         } else if (WCOREDUMP(status)) {
@@ -367,6 +370,14 @@ VKTRACE_THREAD_ROUTINE_RETURN_TYPE Process_RunRecordTraceThread(LPVOID _threadIn
                                       vktrace_LogLevelToShortString(pPacket->type), pPacket->message);
                     vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->message));
                 }
+            }
+
+            if (pHeader->packet_id == VKTRACE_TPI_MARKER_CHECKPOINT) {
+                vktrace_trace_packet_message* pPacket = vktrace_interpret_body_as_trace_packet_message(pHeader);
+                vktrace_LogAlways("vktrace %s: %s", vktrace_LogLevelToShortString(pPacket->type), pPacket->message);
+                vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->message));
+                vktrace_delete_trace_packet_no_lock(&pHeader);
+                continue;
             }
 
             if (pHeader->packet_id == VKTRACE_TPI_MARKER_TERMINATE_PROCESS) {

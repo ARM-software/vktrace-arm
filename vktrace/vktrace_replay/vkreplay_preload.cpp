@@ -244,7 +244,7 @@ static uint64_t load_packet(FileLike* file, void* load_addr, uint64_t packet_siz
 
     if (pHeader->packet_id == VKTRACE_TPI_VK_vkQueuePresentKHR) {
         ++frame_counter;
-        if (frame_counter + vktrace_replay::getStartFrame() >= vktrace_replay::getEndFrame()) {
+        if (frame_counter + vktrace_replay::getStartFrame() >= vktrace_replay::getEndFrame() + 1) {
             g_preload_context.exceed_preloading_range = true;
             g_preload_context.preload_sem.notify();
         }

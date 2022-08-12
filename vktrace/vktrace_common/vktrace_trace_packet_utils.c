@@ -797,7 +797,7 @@ void add_VkRayTracingPipelineCreateInfoKHR_to_packet(vktrace_trace_packet_header
         for (i = 0; i < pInStruct->stageCount; i++) {
             vktrace_add_pnext_structs_to_trace_packet(pHeader, (void*)&(*ppStruct)->pStages[i], (void*)&pInStruct->pStages[i]);
             if (pInStruct->pStages[i].pName != NULL) {
-                vktrace_add_buffer_to_trace_packet(pHeader, (void**)&((*ppStruct)->pStages[i].pName), strlen(pInStruct->pStages[i].pName) , pInStruct->pStages[i].pName);
+                vktrace_add_buffer_to_trace_packet(pHeader, (void**)&((*ppStruct)->pStages[i].pName), (pInStruct->pStages[i].pName != NULL)? strlen(pInStruct->pStages[i].pName) + 1 : 0, pInStruct->pStages[i].pName);
                 vktrace_finalize_buffer_address(pHeader, (void**)&((*ppStruct)->pStages[i].pName));
             }
             if (pInStruct->pStages[i].pSpecializationInfo != NULL) {

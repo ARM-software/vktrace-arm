@@ -99,6 +99,8 @@ typedef struct vkreplayer_settings {
     unsigned int instrumentationDelay;
     unsigned int preloadChunkSize;
     unsigned int skipGetFenceStatus;
+    char* skipFenceRanges;
+    BOOL finishBeforeSwap;
 } vkreplayer_settings;
 
 int vktrace_SettingGroup_init(vktrace_SettingGroup* pSettingGroup, FILE* pSettingsFile, int argc, char* argv[],

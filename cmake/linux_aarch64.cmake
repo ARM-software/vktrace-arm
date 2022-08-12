@@ -17,6 +17,7 @@ SET(CMAKE_SYSTEM_PROCESSOR aarch64)
 
 SET(CMAKE_C_COMPILER aarch64-linux-gnu-gcc)
 SET(CMAKE_CXX_COMPILER aarch64-linux-gnu-g++)
+SET(CMAKE_ASM_COMPILER aarch64-linux-gnu-as)
 SET(ARCH aarch64)
 
 set(CC_HOST "aarch64-linux-gnu")

@@ -60,6 +60,7 @@
 #include "vktrace_lib_pageguard.h"
 
 #include "vk_struct_size_helper.h"
+#include "vulkan_device_util.h"
 
 // This mutex is used to protect API calls sequence when trim starting process.
 std::mutex g_mutex_trace;
@@ -125,6 +126,10 @@ std::unordered_map<VkDeviceAddress, VkBuffer> g_BuftoDeviceAddrRev;
 
 std::unordered_map<VkAccelerationStructureKHR, VkDeviceAddress> g_AStoDeviceAddr;
 std::unordered_map<VkDeviceAddress, VkAccelerationStructureKHR> g_AStoDeviceAddrRev;
+
+// for ray tracing capture replay info
+uint32_t g_instanceApiVersion = 0;
+std::unordered_map<VkDevice, VulkanDevicePropertyFeatureInfo> g_propertyFeatureInfo;
 
 layer_instance_data* mid(void* object) {
     dispatch_key key = get_dispatch_key(object);
@@ -237,6 +242,19 @@ uint32_t getDelaySignalFenceFrames() {
         DelayFrames = getUintOption(VKTRACE_DELAY_SIGNAL_FENCE_FRAMES_ENV, 0);
     }
     return DelayFrames;
+}
+
+std::unordered_map<VkFence, uint64_t> g_submittedFenceCounter;
+
+uint32_t getDelaySignalFenceCounter() {
+    static uint32_t DelayFenceCounter = 0;
+    static bool FirstTimeRun = true;
+    if (FirstTimeRun) {
+        FirstTimeRun = false;
+        DelayFenceCounter = getUintOption(VKTRACE_DELAY_SIGNAL_FENCE_COUNTER_ENV, 0);
+    }
+
+    return DelayFenceCounter;
 }
 
 /*
@@ -370,7 +388,8 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkAllocateMemory(VkDevic
         auto it = g_deviceToFeatureSupport.find(device);
         if (it != g_deviceToFeatureSupport.end()) {
             if (it->second.bufferDeviceAddressCaptureReplay) {
-                allocateFlagInfo->flags = allocateFlagInfo->flags | VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_CAPTURE_REPLAY_BIT_KHR;
+                // TODO: the app is rendering error with added the flag on the NV, but AMD is OK.
+                // allocateFlagInfo->flags |= VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_CAPTURE_REPLAY_BIT;
             } else {
                 vktrace_LogDebug("The device doesn't support bufferDeviceAddressCaptureReplay feature.");
             }
@@ -1311,6 +1330,10 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkCreateDevice(VkPhysica
         return VK_ERROR_INITIALIZATION_FAILED;
     }
 
+    VulkanDeviceUtil deviceUtil;
+    VulkanDevicePropertyFeatureInfo propertyFeatureInfo = deviceUtil.EnableRequiredPhysicalDeviceFeatures(
+        g_instanceApiVersion, &(mid(physicalDevice)->instTable), physicalDevice, pCreateInfo);
+
     // Advance the link info for the next element on the chain
     chain_info->u.pLayerInfo = chain_info->u.pLayerInfo->pNext;
 
@@ -1411,6 +1434,10 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkCreateDevice(VkPhysica
         }
     }
     g_deviceToPhysicalDevice[*pDevice] = physicalDevice;
+    // Track state of physical device properties and features at device creation
+    g_propertyFeatureInfo[*pDevice] = propertyFeatureInfo;
+    // Restore modified property/feature create info values to the original application values
+    deviceUtil.RestoreModifiedPhysicalDeviceFeatures();
     return result;
 }
 
@@ -1436,6 +1463,15 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkCreateAccelerationStru
     VkResult result;
     vktrace_trace_packet_header* pHeader;
     packet_vkCreateAccelerationStructureKHR* pPacket = NULL;
+
+    if (g_propertyFeatureInfo.find(device) != g_propertyFeatureInfo.end()) {
+        VulkanDevicePropertyFeatureInfo propertyFeatureInfo = g_propertyFeatureInfo[device];
+        if (propertyFeatureInfo.feature_accelerationStructureCaptureReplay) {
+            VkAccelerationStructureCreateInfoKHR* modifiedCreateInfo = (VkAccelerationStructureCreateInfoKHR*)pCreateInfo;
+            modifiedCreateInfo->createFlags |= VK_ACCELERATION_STRUCTURE_CREATE_DEVICE_ADDRESS_CAPTURE_REPLAY_BIT_KHR;
+        }
+    }
+
     CREATE_TRACE_PACKET(vkCreateAccelerationStructureKHR, get_struct_chain_size((void*)pCreateInfo) + sizeof(VkAllocationCallbacks) + sizeof(VkAccelerationStructureKHR));
     result = mdd(device)->devTable.CreateAccelerationStructureKHR(device, pCreateInfo, pAllocator, pAccelerationStructure);
     if (result == VK_SUCCESS) {
@@ -1893,13 +1929,28 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkCreateRayTracingPipeli
     VkPipeline* pPipelines) {
     trim::TraceLock<std::mutex> lock(g_mutex_trace);
     VkResult result;
+
+    if (g_propertyFeatureInfo.find(device) != g_propertyFeatureInfo.end()) {
+        VulkanDevicePropertyFeatureInfo propertyFeatureInfo = g_propertyFeatureInfo[device];
+        if (propertyFeatureInfo.feature_rayTracingPipelineShaderGroupHandleCaptureReplay) {
+            VkRayTracingPipelineCreateInfoKHR* modifiedCreateInfos = (VkRayTracingPipelineCreateInfoKHR*)pCreateInfos;
+            for (uint32_t i = 0; i < createInfoCount; ++i) {
+                modifiedCreateInfos[i].flags |= VK_PIPELINE_CREATE_RAY_TRACING_SHADER_GROUP_HANDLE_CAPTURE_REPLAY_BIT_KHR;
+            }
+        }
+    }
+
     vktrace_trace_packet_header* pHeader;
     packet_vkCreateRayTracingPipelinesKHR* pPacket = NULL;
     size_t additionSize = 0;
+    uint32_t shaderGroupHandleSize = 0;
     for (uint32_t i = 0; i < createInfoCount; i++) {
         additionSize += get_struct_chain_size((void*)&pCreateInfos[i]);
+        if (g_propertyFeatureInfo.find(device) != g_propertyFeatureInfo.end()) {
+            shaderGroupHandleSize += g_propertyFeatureInfo[device].property_shaderGroupHandleCaptureReplaySize * pCreateInfos[i].groupCount;
+        }
     }
-    CREATE_TRACE_PACKET(vkCreateRayTracingPipelinesKHR, additionSize + sizeof(VkAllocationCallbacks) + createInfoCount * sizeof(VkPipeline));
+    CREATE_TRACE_PACKET(vkCreateRayTracingPipelinesKHR, shaderGroupHandleSize + additionSize + sizeof(VkAllocationCallbacks) + createInfoCount * sizeof(VkPipeline));
     result = mdd(device)->devTable.CreateRayTracingPipelinesKHR(device, deferredOperation, pipelineCache, createInfoCount, pCreateInfos, pAllocator, pPipelines);
     vktrace_set_packet_entrypoint_end_time(pHeader);
     pPacket = interpret_body_as_vkCreateRayTracingPipelinesKHR(pHeader);
@@ -1919,6 +1970,32 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkCreateRayTracingPipeli
     vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pCreateInfos));
     vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pAllocator));
     vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pPipelines));
+
+    if ((result == VK_SUCCESS) && (pPipelines != nullptr)) {
+        if (g_propertyFeatureInfo.find(device) != g_propertyFeatureInfo.end()) {
+            VulkanDevicePropertyFeatureInfo propertyFeatureInfo = g_propertyFeatureInfo[device];
+            if (propertyFeatureInfo.feature_rayTracingPipelineShaderGroupHandleCaptureReplay) {
+                std::vector<uint8_t> shaderGroupHandleData(shaderGroupHandleSize);
+                uint32_t lastDataSize = 0;
+
+                for (uint32_t i = 0; i < createInfoCount && shaderGroupHandleSize; ++i) {
+                    uint32_t dataSize = propertyFeatureInfo.property_shaderGroupHandleCaptureReplaySize * pCreateInfos[i].groupCount;
+                    VkResult ret = mdd(device)->devTable.GetRayTracingCaptureReplayShaderGroupHandlesKHR(
+                        device, pPipelines[i], 0, pCreateInfos[i].groupCount, dataSize, shaderGroupHandleData.data() + lastDataSize);
+                    lastDataSize += dataSize;
+                    if (result != VK_SUCCESS) {
+                        vktrace_LogError("Get shaderGroupHandleData error detected in GetRayTracingCaptureReplayShaderGroupHandlesKHR() ret=%d.", ret);
+                    }
+                }
+
+                if (shaderGroupHandleSize) {
+                    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pData), shaderGroupHandleSize, shaderGroupHandleData.data());
+                    vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pData));
+                }
+            }
+        }
+    }
+
     if (!g_trimEnabled) {
         FINISH_TRACE_PACKET();
     } else {
@@ -2061,7 +2138,7 @@ static bool send_vk_trace_file_header(VkInstance instance) {
     if (getPMBSyncGPUDataBackEnableFlag()) {
         pHeader->enabled_tracer_features |= TRACER_FEAT_PG_SYNC_GPU_DATA_BACK;
     }
-    if (getDelaySignalFenceFrames() > 0) {
+    if (getDelaySignalFenceFrames() > 0 || getDelaySignalFenceCounter() > 0) {
         pHeader->enabled_tracer_features |= TRACER_FEAT_DELAY_SIGNAL_FENCE;
     }
 
@@ -2107,6 +2184,7 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkCreateInstance(const V
     assert(chain_info->u.pLayerInfo);
     PFN_vkGetInstanceProcAddr fpGetInstanceProcAddr = chain_info->u.pLayerInfo->pfnNextGetInstanceProcAddr;
     assert(fpGetInstanceProcAddr);
+    g_instanceApiVersion = pCreateInfo->pApplicationInfo->apiVersion;
     PFN_vkCreateInstance fpCreateInstance = (PFN_vkCreateInstance)fpGetInstanceProcAddr(NULL, "vkCreateInstance");
     if (fpCreateInstance == NULL) {
         return VK_ERROR_INITIALIZATION_FAILED;
@@ -2163,6 +2241,27 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkCreateInstance(const V
         if (!send_vk_trace_file_header(*pInstance)) vktrace_LogError("Failed to write trace file header");
         send_vk_api_version_packet();
         firstCreateInstance = false;
+#if defined(ANDROID)
+        vktrace_LogSetCallback(loggingCallback);
+        // only to print global var
+        vktrace_get_global_var(VKTRACE_TRIM_POST_PROCESS_ENV);
+        vktrace_get_global_var(VKTRACE_ENABLE_TRACE_LOCK_ENV);
+        vktrace_get_global_var(VKTRACE_TRIM_TRIGGER_ENV);
+        vktrace_get_global_var(VKTRACE_FORCE_FIFO_ENV);
+        vktrace_get_global_var(VKTRACE_PAGEGUARD_ENABLE_SYNC_GPU_DATA_BACK_ENV);
+        vktrace_get_global_var(VKTRACE_DELAY_SIGNAL_FENCE_FRAMES_ENV);
+        vktrace_get_global_var(VKTRACE_DELAY_SIGNAL_FENCE_COUNTER_ENV);
+#endif
+
+#if defined(PLATFORM_LINUX) && !defined(ANDROID)
+        vktrace_LogAlways("getprop %s: %s", VKTRACE_TRIM_POST_PROCESS_ENV, vktrace_get_global_var(VKTRACE_TRIM_POST_PROCESS_ENV));
+        vktrace_LogAlways("getprop %s: %s", VKTRACE_ENABLE_TRACE_LOCK_ENV, vktrace_get_global_var(VKTRACE_ENABLE_TRACE_LOCK_ENV));
+        vktrace_LogAlways("getprop %s: %s", VKTRACE_TRIM_TRIGGER_ENV, vktrace_get_global_var(VKTRACE_TRIM_TRIGGER_ENV));
+        vktrace_LogAlways("getprop %s: %s", VKTRACE_FORCE_FIFO_ENV, vktrace_get_global_var(VKTRACE_FORCE_FIFO_ENV));
+        vktrace_LogAlways("getprop %s: %s", VKTRACE_PAGEGUARD_ENABLE_SYNC_GPU_DATA_BACK_ENV, vktrace_get_global_var(VKTRACE_PAGEGUARD_ENABLE_SYNC_GPU_DATA_BACK_ENV));
+        vktrace_LogAlways("getprop %s: %s", VKTRACE_DELAY_SIGNAL_FENCE_FRAMES_ENV, vktrace_get_global_var(VKTRACE_DELAY_SIGNAL_FENCE_FRAMES_ENV));
+        vktrace_LogAlways("getprop %s: %s", VKTRACE_DELAY_SIGNAL_FENCE_COUNTER_ENV, vktrace_get_global_var(VKTRACE_DELAY_SIGNAL_FENCE_COUNTER_ENV));
+#endif
         vktrace_LogAlways("Tracing with v%s", VKTRACE_VERSION);
     }
 
@@ -3302,13 +3401,19 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkGetFenceStatus(
     CREATE_TRACE_PACKET(vkGetFenceStatus, 0);
     result = mdd(device)->devTable.GetFenceStatus(device, fence);
     vktrace_set_packet_entrypoint_end_time(pHeader);
-    if (g_submittedFenceOnFrame.find(fence) != g_submittedFenceOnFrame.end() &&
-        getDelaySignalFenceFrames() > 0 &&
+    if (getDelaySignalFenceFrames() > 0 && g_submittedFenceOnFrame.find(fence) != g_submittedFenceOnFrame.end() &&
         result == VK_SUCCESS) {
         if (getDelaySignalFenceFrames() > (g_trimFrameCounter - g_submittedFenceOnFrame[fence]) ) {
             result = VK_NOT_READY;
         }
     }
+
+    if (getDelaySignalFenceCounter() > 0 && g_submittedFenceCounter.find(fence) != g_submittedFenceCounter.end() &&
+        g_submittedFenceCounter[fence] > 0) {
+            result = VK_NOT_READY;
+            g_submittedFenceCounter[fence]--;
+    }
+
     pPacket = interpret_body_as_vkGetFenceStatus(pHeader);
     pPacket->device = device;
     pPacket->fence = fence;
@@ -3474,6 +3579,12 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkQueueSubmit(VkQueue qu
     if (fence != VK_NULL_HANDLE && getDelaySignalFenceFrames() > 0) {
         g_submittedFenceOnFrame[fence] = g_trimFrameCounter;
     }
+
+    uint32_t delayCount = getDelaySignalFenceCounter();
+    if (fence != VK_NULL_HANDLE && delayCount > 0) {
+        g_submittedFenceCounter[fence] = delayCount;
+    }
+
     if (!g_trimEnabled) {
         // trim not enabled, send packet as usual
         FINISH_TRACE_PACKET();
@@ -4650,17 +4761,17 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkCreateBuffer(VkDevice 
     if (pCreateInfo->usage & VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR) {
         auto it = g_deviceToFeatureSupport.find(device);
         if (it != g_deviceToFeatureSupport.end() && it->second.accelerationStructureCaptureReplay) {
-            const_cast<VkBufferCreateInfo*>(pCreateInfo)->usage = pCreateInfo->usage | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT_EXT;
+            const_cast<VkBufferCreateInfo*>(pCreateInfo)->usage |= VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT_EXT;
         }
     }
 
-    if (pCreateInfo->usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT_EXT ) {
+    if (pCreateInfo->usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT_EXT) {
         auto it = g_deviceToFeatureSupport.find(device);
         if (it != g_deviceToFeatureSupport.end() && it->second.bufferDeviceAddressCaptureReplay) {
-            const_cast<VkBufferCreateInfo*>(pCreateInfo)->flags = pCreateInfo->flags | VK_BUFFER_CREATE_DEVICE_ADDRESS_CAPTURE_REPLAY_BIT_EXT;
+            const_cast<VkBufferCreateInfo*>(pCreateInfo)->flags |= VK_BUFFER_CREATE_DEVICE_ADDRESS_CAPTURE_REPLAY_BIT_EXT;
         } else {
-            const_cast<VkBufferCreateInfo*>(pCreateInfo)->flags = pCreateInfo->flags & ~VK_BUFFER_CREATE_DEVICE_ADDRESS_CAPTURE_REPLAY_BIT_EXT;
-            vktrace_LogDebug("The device doesn't support bufferDeviceAddressCaptureReplay feature.");
+            const_cast<VkBufferCreateInfo*>(pCreateInfo)->flags &= ~VK_BUFFER_CREATE_DEVICE_ADDRESS_CAPTURE_REPLAY_BIT_EXT;
+            vktrace_LogDebug("The replay device doesn't support bufferDeviceAddressCaptureReplay feature.");
         }
     }
 
@@ -6570,6 +6681,18 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkWaitForFences(VkDevice
     CREATE_TRACE_PACKET(vkWaitForFences, fenceCount * sizeof(VkFence));
     result = mdd(device)->devTable.WaitForFences(device, fenceCount, pFences, waitAll, timeout);
     vktrace_set_packet_entrypoint_end_time(pHeader);
+
+    if (getDelaySignalFenceCounter() > 0) {
+        for (uint32_t i = 0; i < fenceCount; i++) {
+            VkFence fence = pFences[i];
+            if (g_submittedFenceCounter.find(fence) != g_submittedFenceCounter.end() &&
+                g_submittedFenceCounter[fence] > 0) {
+                result = VK_TIMEOUT;
+                g_submittedFenceCounter[fence]--;
+            }
+        }
+    }
+
     if (!UseMappedExternalHostMemoryExtension()) {
     }
     pPacket = interpret_body_as_vkWaitForFences(pHeader);

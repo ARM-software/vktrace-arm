@@ -25,6 +25,7 @@
 #include <stdio.h>
 #include <string>
 #include <sstream>
+#include <utility>
 #include <algorithm>
 #include <inttypes.h>
 
@@ -336,7 +337,21 @@ vktrace_SettingInfo g_settings_info[] = {
      {&replaySettings.skipGetFenceStatus},
      {&replaySettings.skipGetFenceStatus},
      TRUE,
-     "Skip the GetFenceStatus() calls, 0 - Not skip; 1 - Skip all the unsuccess calls; 2 - Skip all calls."}
+     "Skip the GetFenceStatus() calls, 0 - Not skip; 1 - Skip all the unsuccess calls; 2 - Skip all calls."},
+    {"sfr",
+     "skipFenceRanges",
+     VKTRACE_SETTING_STRING,
+     {&replaySettings.skipFenceRanges},
+     {&replaySettings.skipFenceRanges},
+     TRUE,
+     "The ranges to skip fences in, defaults to no frames. Has no effect if skipGetFenceStatus is not set. Format is: START_FRAME1-END_FRAME1,START_FRAME2-END_FRAME2,..."},
+    {"fbw",
+     "finishBeforeSwap",
+     VKTRACE_SETTING_BOOL,
+     {&replaySettings.finishBeforeSwap},
+     {&replaySettings.finishBeforeSwap},
+     TRUE,
+     "inject the vkDeviceWaitIdle function before vkQueuePresent."}
 };
 
 vktrace_SettingGroup g_replaySettingGroup = {"vkreplay", sizeof(g_settings_info) / sizeof(g_settings_info[0]), &g_settings_info[0], nullptr};
@@ -374,6 +389,73 @@ unsigned int replay(vktrace_trace_packet_replay_library* replayer, vktrace_trace
     }
 }
 
+const std::vector<std::string> splitString(const std::string& str, const char& delimiter)
+{
+    std::vector<std::string> tokens;
+    std::stringstream ss(str);
+    std::string item;
+
+    for (std::string item; std::getline(ss, item, delimiter); tokens.push_back(item));
+
+    return tokens;
+}
+
+std::vector<std::pair<uint64_t, uint64_t>> getSkipRanges(const char* rangeString)
+{
+    std::vector<std::pair<uint64_t, uint64_t>> merged_ranges;
+
+    std::vector<std::string> str_ranges = splitString(std::string(rangeString), ',');
+    if (str_ranges.size() == 0) {
+        vktrace_LogError("No skip fence ranges set, skipFenceRanges was probably not specified or had an invalid format (must be a comma separated list of integer pairs where each pair is separated by a dash eg. 0-10,20-22,...), disabling fence skip functionality.");
+        return merged_ranges;
+    }
+
+    std::vector<std::pair<uint64_t, uint64_t>> ranges;
+    for (auto& str_range : str_ranges) {
+        std::vector<std::string> range = splitString(str_range, '-');
+
+        if (range.size() != 2) {
+            vktrace_LogError("Bad value for option skipFenceRanges, must be a comma separated list of integer pairs where each pair is separated by a dash (eg. 0-10,20-22,...).");
+            return merged_ranges;
+        }
+
+        try {
+            ranges.push_back(std::make_pair(std::stoi(range[0]), std::stoi(range[1])));
+        }
+        catch (const std::invalid_argument & e) {
+            vktrace_LogError("Bad value for option skipFenceRanges (frame values are not integers), must be a comma separated list of integer pairs where each pair is separated by a dash (eg. 0-10,20-22,...).");
+            return merged_ranges;
+        }
+        catch (const std::out_of_range & e) {
+            vktrace_LogError("Bad value for option skipFenceRanges, one of the frame values were too large to fit in a valid int type.");
+            return merged_ranges;
+        }
+    }
+
+    std::sort(ranges.begin(), ranges.end());
+
+    uint64_t start = ranges[0].first;
+    uint64_t end = ranges[0].second;
+
+    for (uint64_t i = 0; i < ranges.size() - 1; ++i) {
+        if (ranges[i].second >= ranges[i + 1].first) {
+            if (ranges[i].second < ranges[i + 1].second) {
+                end = ranges[i + 1].second;
+            } else {
+                i += 1;
+            }
+        } else {
+            merged_ranges.push_back(std::make_pair(start, end));
+            start = ranges[i + 1].first;
+            end = ranges[i + 1].second;
+        }
+    }
+
+    merged_ranges.push_back(std::make_pair(start, end));
+
+    return merged_ranges;
+}
+
 int main_loop(vktrace_replay::ReplayDisplay display, Sequencer& seq, vktrace_trace_packet_replay_library* replayerArray[]) {
     int err = 0;
     vktrace_trace_packet_header* packet;
@@ -384,6 +466,17 @@ int main_loop(vktrace_replay::ReplayDisplay display, Sequencer& seq, vktrace_tra
 
     bool trace_running = true;
 
+    std::vector<std::pair<uint64_t, uint64_t>> skipFenceRanges;
+    uint64_t currentSkipRange = 0;
+
+    if (replaySettings.skipGetFenceStatus) {
+        skipFenceRanges = getSkipRanges(replaySettings.skipFenceRanges);
+
+        if (skipFenceRanges.size() == 0) {
+            replaySettings.skipGetFenceStatus = false;
+        }
+    }
+
     // record the location of looping start packet
     seq.record_bookmark();
     seq.get_bookmark(startingPacket);
@@ -392,7 +485,7 @@ int main_loop(vktrace_replay::ReplayDisplay display, Sequencer& seq, vktrace_tra
     uint64_t end_time;
     uint64_t start_frame = replaySettings.loopStartFrame == UINT_MAX ? 0 : replaySettings.loopStartFrame;
     uint64_t end_frame = UINT_MAX;
-    if (start_frame == 0) {
+    if (start_frame <= 1) { //if start_frame is 1, then vktrace file needs to be loaded ahead of time
         if (replaySettings.preloadTraceFile) {
             vktrace_LogAlways("Preloading trace file...");
             bool success = seq.start_preload(replayerArray, g_decompressor);
@@ -472,8 +565,20 @@ int main_loop(vktrace_replay::ReplayDisplay display, Sequencer& seq, vktrace_tra
                         triggerScript();
                     }
 
+                    if (replaySettings.skipGetFenceStatus && (currentSkipRange < skipFenceRanges.size())) {
+                        if (frameNumber > skipFenceRanges[currentSkipRange].second) {
+                            currentSkipRange += 1;
+                            g_replayer_interface->SetInSkipFenceRange(false);
+                            vktrace_LogAlways("Disabling fence skip at start of frame: %d\n", frameNumber);
+                        }
+                        if ((currentSkipRange < skipFenceRanges.size()) && (frameNumber >= skipFenceRanges[currentSkipRange].first)) {
+                            g_replayer_interface->SetInSkipFenceRange(true);
+                            vktrace_LogAlways("Enabling fence skip at start of frame: %d\n", frameNumber);
+                        }
+                    }
+
                     // Only set the loop start location and start_time in the first loop when loopStartFrame is not 0
-                    if (frameNumber == start_frame && start_frame > 0 && replaySettings.numLoops == totalLoops) {
+                    if (frameNumber == start_frame - 1 && start_frame > 1 && replaySettings.numLoops == totalLoops) {
                         // record the location of looping start packet
                         seq.record_bookmark();
                         seq.get_bookmark(startingPacket);
@@ -541,6 +646,8 @@ int main_loop(vktrace_replay::ReplayDisplay display, Sequencer& seq, vktrace_tra
         }
         replaySettings.numLoops--;
         vktrace_LogVerbose("Loop number %d completed. Remaining loops:%d", replaySettings.numLoops + 1, replaySettings.numLoops);
+
+        currentSkipRange = 0;
 
         if (end_frame == UINT_MAX)
             end_frame = replaySettings.loopEndFrame == UINT_MAX

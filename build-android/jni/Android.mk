@@ -193,6 +193,7 @@ LOCAL_SRC_FILES += $(SRC_DIR)/vktrace/vktrace_common/vktrace_pageguard_memorycop
 LOCAL_SRC_FILES += $(SRC_DIR)/vktrace/vktrace_common/compression/compressor.cpp
 LOCAL_SRC_FILES += $(SRC_DIR)/vktrace/vktrace_common/compression/lz4compressor.cpp
 LOCAL_SRC_FILES += $(SRC_DIR)/vktrace/vktrace_common/compression/snpcompressor.cpp
+LOCAL_SRC_FILES += $(SRC_DIR)/vktrace/vktrace_common/vulkan_device_util.cpp
 LOCAL_SRC_FILES += $(SRC_DIR)/vktrace/vktrace_layer/vktrace_lib_trace.cpp
 LOCAL_SRC_FILES += $(SRC_DIR)/vktrace/vktrace_layer/vktrace_lib_helpers.cpp
 LOCAL_SRC_FILES += $(SRC_DIR)/vktrace/vktrace_layer/vktrace_vk_exts.cpp
@@ -219,10 +220,11 @@ LOCAL_C_INCLUDES += $(LOCAL_PATH)/$(SRC_DIR)/vktrace/include \
                     $(LOCAL_PATH)/$(SRC_DIR)/vktrace/vktrace_layer/vktrace_lib_pageguard.h \
                     $(LOCAL_PATH)/$(SRC_DIR)/vktrace/vktrace_common/vktrace_pageguard_memorycopy.h
 LOCAL_STATIC_LIBRARIES += layer_utils
-LOCAL_CPPFLAGS += -std=c++11 -Wall -Werror -Wno-unused-function -Wno-unused-const-variable -mxgot
+LOCAL_CPPFLAGS += -std=c++11 -Wall -Werror -Wno-unused-function -Wno-unused-const-variable -Wno-unused-result -Wno-switch -mxgot
 LOCAL_CPPFLAGS += -DVK_ENABLE_BETA_EXTENSIONS -DVK_USE_PLATFORM_ANDROID_KHR
 LOCAL_CPPFLAGS += -DPLATFORM_LINUX=1
 LOCAL_CPPFLAGS += -DPAGEGUARD_MEMCPY_USE_PPL_LIB
+LOCAL_CFLAGS += -Wall -Werror -Wno-unused-function -Wno-unused-variable -Wno-unused-const-variable -Wno-unused-result -Wno-switch
 LOCAL_CFLAGS += -DPLATFORM_LINUX=1
 LOCAL_CFLAGS += -DPLATFORM_POSIX=1
 LOCAL_CFLAGS += -DVK_ENABLE_BETA_EXTENSIONS -DVK_USE_PLATFORM_ANDROID_KHR
@@ -247,6 +249,7 @@ LOCAL_SRC_FILES += $(SRC_DIR)/vktrace/vktrace_common/vktrace_pageguard_memorycop
 LOCAL_SRC_FILES += $(SRC_DIR)/vktrace/vktrace_common/compression/decompressor.cpp
 LOCAL_SRC_FILES += $(SRC_DIR)/vktrace/vktrace_common/compression/lz4decompressor.cpp
 LOCAL_SRC_FILES += $(SRC_DIR)/vktrace/vktrace_common/compression/snpdecompressor.cpp
+LOCAL_SRC_FILES += $(SRC_DIR)/vktrace/vktrace_common/vulkan_device_util.cpp
 LOCAL_SRC_FILES += $(SRC_DIR)/vktrace/vktrace_replay/vkreplay_factory.cpp
 LOCAL_SRC_FILES += $(SRC_DIR)/vktrace/vktrace_replay/vkreplay_main.cpp
 LOCAL_SRC_FILES += $(SRC_DIR)/vktrace/vktrace_replay/vkreplay_seq.cpp
@@ -254,6 +257,7 @@ LOCAL_SRC_FILES += $(SRC_DIR)/vktrace/vktrace_replay/vkreplay.cpp
 LOCAL_SRC_FILES += $(SRC_DIR)/vktrace/vktrace_replay/vkreplay_settings.cpp
 LOCAL_SRC_FILES += $(SRC_DIR)/vktrace/vktrace_replay/vkreplay_vkdisplay.cpp
 LOCAL_SRC_FILES += $(SRC_DIR)/vktrace/vktrace_replay/vkreplay_vkreplay.cpp
+LOCAL_SRC_FILES += $(SRC_DIR)/vktrace/vktrace_replay/vkreplay_raytracingpipeline.cpp
 LOCAL_SRC_FILES += $(SRC_DIR)/vktrace/vktrace_replay/vkreplay_preload.cpp
 LOCAL_SRC_FILES += $(SRC_DIR)/vktrace/vktrace_replay/vkreplay_pipelinecache.cpp
 LOCAL_SRC_FILES += $(THIRD_PARTY)/Vulkan-Tools/common/vulkan_wrapper.cpp
@@ -272,10 +276,11 @@ LOCAL_C_INCLUDES += $(LOCAL_PATH)/$(SRC_DIR)/vktrace/include \
                     $(LOCAL_PATH)/$(ANDROID_DIR)/third_party/jsoncpp/dist \
                     $(LOCAL_PATH)/$(SRC_DIR)/vktrace/vktrace_replay
 LOCAL_STATIC_LIBRARIES += layer_utils android_native_app_glue
-LOCAL_CPPFLAGS += -std=c++11 -Wall -Werror -Wno-unused-function -Wno-unused-const-variable -mxgot
+LOCAL_CPPFLAGS += -std=c++11 -Wall -Werror -Wno-unused-function -Wno-unused-const-variable -Wno-unused-result -Wno-switch -mxgot
 LOCAL_CPPFLAGS += -DVK_ENABLE_BETA_EXTENSIONS -DVK_USE_PLATFORM_ANDROID_KHR --include=$(THIRD_PARTY)/Vulkan-Tools/common/vulkan_wrapper.h -fexceptions
 LOCAL_CPPFLAGS += -DPLATFORM_LINUX=1
 LOCAL_CPPFLAGS += -DPAGEGUARD_MEMCPY_USE_PPL_LIB
+LOCAL_CFLAGS += -Wall -Werror -Wno-unused-function -Wno-unused-variable -Wno-unused-const-variable -Wno-unused-result -Wno-switch
 LOCAL_CFLAGS += -DPLATFORM_LINUX=1
 LOCAL_CFLAGS += -DPLATFORM_POSIX=1
 LOCAL_CFLAGS += -DVK_ENABLE_BETA_EXTENSIONS -DVK_USE_PLATFORM_ANDROID_KHR

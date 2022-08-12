@@ -782,7 +782,7 @@ VkCommandPool getCommandPoolFromDevice(VkDevice device, uint32_t queueFamilyInde
         cmdPoolCreateInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
         cmdPoolCreateInfo.pNext = NULL;
         cmdPoolCreateInfo.queueFamilyIndex = queueFamilyIndex;
-        cmdPoolCreateInfo.flags = 0;
+        cmdPoolCreateInfo.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
 
         VkCommandPool commandPool = VK_NULL_HANDLE;
         VkResult result = mdd(device)->devTable.CreateCommandPool(device, &cmdPoolCreateInfo, NULL, &commandPool);
@@ -1327,7 +1327,7 @@ void snapshot_state_tracker() {
                 commandBufferBeginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
                 commandBufferBeginInfo.pNext = NULL;
                 commandBufferBeginInfo.pInheritanceInfo = NULL;
-                commandBufferBeginInfo.flags = 0;
+                commandBufferBeginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
                 VkResult result = mdd(device)->devTable.BeginCommandBuffer(commandBuffer, &commandBufferBeginInfo);
                 assert(result == VK_SUCCESS);
                 if (result != VK_SUCCESS) continue;
@@ -1627,7 +1627,7 @@ void snapshot_state_tracker() {
                 commandBufferBeginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
                 commandBufferBeginInfo.pNext = NULL;
                 commandBufferBeginInfo.pInheritanceInfo = NULL;
-                commandBufferBeginInfo.flags = 0;
+                commandBufferBeginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
                 VkResult result = mdd(device)->devTable.BeginCommandBuffer(commandBuffer, &commandBufferBeginInfo);
                 assert(result == VK_SUCCESS);
                 if (result != VK_SUCCESS) continue;
@@ -1711,7 +1711,7 @@ void snapshot_state_tracker() {
                 commandBufferBeginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
                 commandBufferBeginInfo.pNext = NULL;
                 commandBufferBeginInfo.pInheritanceInfo = NULL;
-                commandBufferBeginInfo.flags = 0;
+                commandBufferBeginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
                 VkResult result = mdd(device)->devTable.BeginCommandBuffer(commandBuffer, &commandBufferBeginInfo);
                 assert(result == VK_SUCCESS);
                 if (result != VK_SUCCESS) continue;
@@ -1848,7 +1848,7 @@ void snapshot_state_tracker() {
             commandBufferBeginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
             commandBufferBeginInfo.pNext = NULL;
             commandBufferBeginInfo.pInheritanceInfo = NULL;
-            commandBufferBeginInfo.flags = 0;
+            commandBufferBeginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
             VkResult result = mdd(device)->devTable.BeginCommandBuffer(commandBuffer, &commandBufferBeginInfo);
             assert(result == VK_SUCCESS);
             if (result != VK_SUCCESS) continue;
@@ -4841,7 +4841,7 @@ void recreate_query_pools(StateTracker &stateTracker) {
             beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
             beginInfo.pNext = nullptr;
             beginInfo.pInheritanceInfo = nullptr;
-            beginInfo.flags = 0;
+            beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
             vktrace_trace_packet_header *pBeginCB = generate::vkBeginCommandBuffer(false, commandBuffer, &beginInfo);
             vktrace_write_trace_packet(pBeginCB, vktrace_trace_get_trace_file());
             vktrace_delete_trace_packet(&pBeginCB);

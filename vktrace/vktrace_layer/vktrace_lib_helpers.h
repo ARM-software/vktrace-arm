@@ -24,6 +24,10 @@
 #pragma once
 #include <unordered_map>
 
+#if defined(ANDROID)
+#include <android/log.h>
+#endif
+
 #include "vktrace_vk_vk.h"
 #include "vulkan/vk_layer.h"
 #include "vk_layer_dispatch_table.h"
@@ -467,6 +471,70 @@ static void add_VkComputePipelineCreateInfos_to_trace_packet(vktrace_trace_packe
         }
     }
     return;
+}
+
+static void loggingCallback(VktraceLogLevel level, const char *pMessage) {
+    switch (level) {
+        case VKTRACE_LOG_DEBUG:
+            printf("vktrace debug: %s\n", pMessage);
+            break;
+        case VKTRACE_LOG_ERROR:
+            printf("vktrace error: %s\n", pMessage);
+            break;
+        case VKTRACE_LOG_WARNING:
+            printf("vktrace warning: %s\n", pMessage);
+            break;
+        case VKTRACE_LOG_VERBOSE:
+            printf("vktrace info: %s\n", pMessage);
+            break;
+        default:
+            printf("%s\n", pMessage);
+            break;
+    }
+    fflush(stdout);
+
+    if (vktrace_trace_get_trace_file() != NULL) {
+        uint32_t requiredLength = (uint32_t)ROUNDUP_TO_4(strlen(pMessage) + 1);
+        vktrace_trace_packet_header *pHeader = vktrace_create_trace_packet(VKTRACE_TID_VULKAN, VKTRACE_TPI_MARKER_CHECKPOINT,
+                                                                           sizeof(vktrace_trace_packet_message), requiredLength);
+        vktrace_trace_packet_message *pPacket = vktrace_interpret_body_as_trace_packet_message(pHeader);
+        pPacket->type = level;
+        pPacket->length = requiredLength;
+
+        vktrace_add_buffer_to_trace_packet(pHeader, (void **)&pPacket->message, strlen(pMessage) + 1, pMessage);
+        vktrace_finalize_buffer_address(pHeader, (void **)&pPacket->message);
+        vktrace_set_packet_entrypoint_end_time(pHeader);
+        vktrace_finalize_trace_packet(pHeader);
+
+        vktrace_write_trace_packet(pHeader, vktrace_trace_get_trace_file());
+        vktrace_delete_trace_packet(&pHeader);
+    }
+
+#if defined(WIN32)
+#if defined(_DEBUG)
+    OutputDebugString(pMessage);
+#endif
+#endif
+
+#if defined(ANDROID)
+    switch (level) {
+        case VKTRACE_LOG_DEBUG:
+            __android_log_print(ANDROID_LOG_DEBUG, "vktrace", "%s", pMessage);
+            break;
+        case VKTRACE_LOG_ERROR:
+            __android_log_print(ANDROID_LOG_ERROR, "vktrace", "%s", pMessage);
+            break;
+        case VKTRACE_LOG_WARNING:
+            __android_log_print(ANDROID_LOG_WARN, "vktrace", "%s", pMessage);
+            break;
+        case VKTRACE_LOG_VERBOSE:
+            __android_log_print(ANDROID_LOG_INFO, "vktrace", "%s", pMessage);
+            break;
+        default:
+            __android_log_print(ANDROID_LOG_INFO, "vktrace", "%s", pMessage);
+            break;
+    }
+#endif
 }
 
 VKTRACER_LEAVE _Unload(void);

@@ -28,6 +28,7 @@ set(SRC_LIST
     vktrace_tracelog.c
     vktrace_trace_packet_utils.c
     vktrace_pageguard_memorycopy.cpp
+    vulkan_device_util.cpp
     ${SRC_DIR}/../submodules/zlib/adler32.c
     ${SRC_DIR}/../submodules/zlib/crc32.c
     ${SRC_DIR}/../submodules/zlib/deflate.c
@@ -46,6 +47,7 @@ set(SRC_LIST
 
 set (CXX_SRC_LIST
      vktrace_pageguard_memorycopy.cpp
+     vulkan_device_util.cpp
      ${JSONCPP_SOURCE_DIR}/jsoncpp.cpp
      compression/compressor.cpp
      compression/decompressor.cpp

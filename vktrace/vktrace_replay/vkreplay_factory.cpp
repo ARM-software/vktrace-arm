@@ -60,6 +60,7 @@ vktrace_trace_packet_replay_library* ReplayFactory::Create(uint8_t tracerId) {
             pReplayer->ResetFrameNumber = VkReplayResetFrameNumber;
             pReplayer->OnTerminate = VkReplayOnTerminate;
             pReplayer->SetInFrameRange = VkReplaySetInFrameRange;
+            pReplayer->SetInSkipFenceRange = VkReplaySetInSkipFenceRange;
         }
     }
 

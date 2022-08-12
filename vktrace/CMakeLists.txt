@@ -210,6 +210,9 @@ if(MSVC)
         ${CMAKE_CXX_FLAGS_LIST}
         "/EHsc" # Need exceptions
     )
+    set(CMAKE_C_FLAGS_LIST
+        ${CMAKE_C_FLAGS_LIST}
+    )
 else()
     set(CMAKE_CXX_FLAGS_LIST
         ${CMAKE_CXX_FLAGS_LIST}
@@ -217,10 +220,29 @@ else()
         ${MARCH_STR}
         # "-msse2 -mfpmath=sse" # To build with SSE instruction sets
         "-Wno-unused-parameter -Wno-unused-function"
+
+        "-Wno-missing-field-initializers"
+        "-Wno-cast-function-type"
+        "-Wno-stringop-overflow"
+        "-Wno-unused-result"
+        "-Wno-cast-function-type"
+        "-Wno-sign-compare"
+        "-Wno-switch"
+        "-Wno-stringop-truncation"
+        "-Wno-unused-variable"
+        "-Wno-ignored-qualifiers"
+        "-Wno-parentheses"
+        "-Wno-implicit-fallthrough"
+        "-Wno-type-limits"
+
         "-fno-strict-aliasing" # DO NOT remove this, we have lots of code that will fail in obscure ways otherwise because it was developed with MSVC first.
         "-fno-math-errno"
         "-fvisibility=hidden"
         # "-fno-exceptions" # Exceptions are enabled by default for c++ files, disabled for c files.
+    )
+    set(CMAKE_C_FLAGS_LIST
+        ${CMAKE_C_FLAGS_LIST}
+        "-Wno-implicit-function-declaration"
     )
 endif()
 
@@ -267,7 +289,7 @@ if (NOT MSVC)
 endif()
 
 # Compiler flags
-string(REPLACE ";" " " CMAKE_C_FLAGS              "${CMAKE_C_FLAGS} ${CMAKE_CXX_FLAGS_LIST}")
+string(REPLACE ";" " " CMAKE_C_FLAGS              "${CMAKE_C_FLAGS} ${CMAKE_C_FLAGS_LIST} ${CMAKE_CXX_FLAGS_LIST}")
 string(REPLACE ";" " " CMAKE_C_FLAGS_RELEASE      "${CMAKE_CXX_FLAGS_RELEASE_LIST}")
 string(REPLACE ";" " " CMAKE_C_FLAGS_DEBUG        "${CMAKE_CXX_FLAGS_DEBUG_LIST}")
 

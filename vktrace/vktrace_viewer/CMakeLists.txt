@@ -83,6 +83,7 @@ set(SRC_LIST
     ${SRC_DIR}/vktrace_replay/vkreplay.cpp
     ${SRC_DIR}/vktrace_replay/vkreplay_settings.cpp
     ${SRC_DIR}/vktrace_replay/vkreplay_vkreplay.cpp
+    ${SRC_DIR}/vktrace_replay/vkreplay_raytracingpipeline.cpp
     ${SRC_DIR}/vktrace_replay/vkreplay_vkdisplay.cpp
     ${GENERATED_FILES_DIR}/vkreplay_vk_replay_gen.cpp
    )

@@ -69,6 +69,9 @@ static vkreplayer_settings s_defaultVkReplaySettings = {
                                                             .instrumentationDelay = 0,
                                                             .preloadChunkSize = 200,
                                                             .skipGetFenceStatus = 0,
+                                                            .skipFenceRanges = NULL,
+                                                            .finishBeforeSwap = FALSE,
+
 };
 
 vkReplay* g_pReplayer = NULL;
@@ -218,6 +221,12 @@ void VKTRACER_CDECL VkReplayOnTerminate() {
 void VKTRACER_CDECL VkReplaySetInFrameRange(bool inrange) {
     if (g_pReplayer != NULL) {
         g_pReplayer->set_in_frame_range(inrange);
+    }
+}
+
+void VKTRACER_CDECL VkReplaySetInSkipFenceRange(bool inrange) {
+    if (g_pReplayer != NULL) {
+        g_pReplayer->set_in_skip_fence_range(inrange);
     }
 }
 

@@ -279,6 +279,12 @@ static uint32_t getAHardwareBufBPP(uint32_t fmt) {
 
 #define VKTRACE_DELAY_SIGNAL_FENCE_FRAMES_ENV "VKTRACE_DELAY_SIGNAL_FENCE_FRAMES"
 
+// VKTRACE_DELAY_SIGNAL_FENCE_COUNTER_ENV env var is an option used only
+// when vkQueueSubmit is submited. It will return VK_TIMEOUT of vkWaitForFences or
+// VK_NOT_READY of vkGetFenceStatus, and return counts is indicated by this env var.
+// Set this env var to 0 to disablethe feature.
+#define VKTRACE_DELAY_SIGNAL_FENCE_COUNTER_ENV "VKTRACE_DELAY_SIGNAL_FENCE_COUNTER"
+
 // VKTRACE_CHECK_PAGEGUARD_HANDLER_IN_FRAMES env var is an option used only
 // when pageguard is enabled. It will check if the pageguard handler is overwritten
 // from frame 0 to the frame indicated by this env var. Set this env var to 0 to disable

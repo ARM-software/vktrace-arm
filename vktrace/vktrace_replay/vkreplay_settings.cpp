@@ -65,6 +65,8 @@ static vkreplayer_settings s_defaultVkReplaySettings = {
                                                             .instrumentationDelay = 0,
                                                             .preloadChunkSize = 200,
                                                             .skipGetFenceStatus = 0,
+                                                            .skipFenceRanges = NULL,
+                                                            .finishBeforeSwap = FALSE,
                                                        };
 
 vktrace_SettingInfo g_vk_settings_info[] = {
@@ -310,7 +312,21 @@ vktrace_SettingInfo g_vk_settings_info[] = {
      {&g_vkReplaySettings.skipGetFenceStatus},
      {&s_defaultVkReplaySettings.skipGetFenceStatus},
      TRUE,
-     "Skip the GetFenceStatus() calls, 0 - Not skip; 1 - Skip all the unsuccess calls; 2 - Skip all calls."}
+     "Skip the GetFenceStatus() calls, 0 - Not skip; 1 - Skip all the unsuccess calls; 2 - Skip all calls."},
+    {"sfr",
+     "skipFenceRanges",
+     VKTRACE_SETTING_STRING,
+     {&g_vkReplaySettings.skipFenceRanges},
+     {&s_defaultVkReplaySettings.skipFenceRanges},
+     TRUE,
+     "The ranges to skip fences in, defaults to no frames. Has no effect if skipGetFenceStatus is not set. Format is: START_FRAME1-END_FRAME1,START_FRAME2-END_FRAME2,... (all ranges are fully inclusive of both start and end frame)."},
+    {"fbw",
+     "finishBeforeSwap",
+     VKTRACE_SETTING_BOOL,
+     {&g_vkReplaySettings.finishBeforeSwap},
+     {&s_defaultVkReplaySettings.finishBeforeSwap},
+     TRUE,
+     "inject the vkDeviceWaitIdle function before vkQueuePresent."}
 };
 
 vktrace_SettingGroup g_vkReplaySettingGroup = {"vkreplay_vk", sizeof(g_vk_settings_info) / sizeof(g_vk_settings_info[0]),

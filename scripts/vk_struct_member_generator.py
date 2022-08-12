@@ -63,6 +63,8 @@ VK_STRUCT_MEMBER_CODEGEN = """
                                       'VkPhysicalDeviceTransformFeedbackFeaturesEXT',\
                                       'VkPhysicalDeviceVulkanMemoryModelFeatures',\
                                       'VkPhysicalDeviceInlineUniformBlockFeaturesEXT',\
+                                      'VkPhysicalDeviceInlineUniformBlockFeatures',\
+                                      'VkPhysicalDeviceFragmentDensityMapFeaturesEXT',\
                                       'VkPhysicalDeviceFragmentDensityMap2FeaturesEXT',\
                                       'VkPhysicalDeviceUniformBufferStandardLayoutFeatures',\
                                       'VkPhysicalDeviceDepthClipEnableFeaturesEXT',\
@@ -76,18 +78,24 @@ VK_STRUCT_MEMBER_CODEGEN = """
                                       'VkPhysicalDeviceSeparateDepthStencilLayoutsFeatures',\
                                       'VkPhysicalDevicePipelineExecutablePropertiesFeaturesKHR',\
                                       'VkPhysicalDeviceShaderDemoteToHelperInvocationFeaturesEXT',\
+                                      'VkPhysicalDeviceShaderDemoteToHelperInvocationFeatures',\
                                       'VkPhysicalDeviceTexelBufferAlignmentFeaturesEXT',\
                                       'VkPhysicalDeviceTextureCompressionASTCHDRFeaturesEXT',\
+                                      'VkPhysicalDeviceTextureCompressionASTCHDRFeatures',\
                                       'VkPhysicalDeviceLineRasterizationFeaturesEXT',\
                                       'VkPhysicalDeviceSubgroupSizeControlFeaturesEXT',\
+                                      'VkPhysicalDeviceSubgroupSizeControlFeatures',\
                                       'VkPhysicalDeviceAccelerationStructureFeaturesKHR',\
                                       'VkPhysicalDeviceRayTracingPipelineFeaturesKHR',\
                                       'VkPhysicalDeviceRayQueryFeaturesKHR',\
                                       'VkPhysicalDeviceExtendedDynamicStateFeaturesEXT',\
                                       'VkPhysicalDeviceDeviceMemoryReportFeaturesEXT',\
                                       'VkPhysicalDevicePipelineCreationCacheControlFeaturesEXT',\
+                                      'VkPhysicalDevicePipelineCreationCacheControlFeatures',\
                                       'VkPhysicalDeviceImageRobustnessFeaturesEXT',\
+                                      'VkPhysicalDeviceImageRobustnessFeatures',\
                                       'VkPhysicalDeviceShaderTerminateInvocationFeaturesKHR',\
+                                      'VkPhysicalDeviceShaderTerminateInvocationFeatures',\
                                       'VkPhysicalDeviceCustomBorderColorFeaturesEXT',\
                                       'VkPhysicalDevicePortabilitySubsetFeaturesKHR',\
                                       'VkPhysicalDevicePerformanceQueryFeaturesKHR',\

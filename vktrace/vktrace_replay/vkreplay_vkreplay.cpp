@@ -174,6 +174,8 @@ vkreplayer_settings replaySettings = {
                                         .instrumentationDelay = 0,
                                         .preloadChunkSize = 200,
                                         .skipGetFenceStatus = 0,
+                                        .skipFenceRanges = NULL,
+                                        .finishBeforeSwap = FALSE,
                                      };
 
 namespace vktrace_replay {
@@ -237,6 +239,7 @@ vkReplay::vkReplay(vkreplayer_settings *pReplaySettings, vktrace_trace_file_head
         }
         m_pipelinecache_accessor->SetPipelineCacheRootPath(g_pReplaySettings->pipelineCachePath);
     }
+    rtHandler = new RayTracingPipelineHandlerVer1;
 }
 
 std::vector<uintptr_t> portabilityTablePackets;
@@ -452,6 +455,7 @@ vkReplay::~vkReplay() {
     }
 
     delete m_display;
+    delete rtHandler;
     vktrace_platform_close_library(m_libHandle);
 }
 
@@ -545,6 +549,11 @@ vktrace_replay::VKTRACE_REPLAY_RESULT vkReplay::handle_replay_errors(const char 
             res = vktrace_replay::VKTRACE_REPLAY_BAD_RETURN;
             vktrace_LogError("Return value %s from API call (%s) does not match return value from trace file %s.",
                             string_VkResult((VkResult)resCall), entrypointName, string_VkResult((VkResult)resTrace));
+            if (!strcmp(entrypointName, "vkQueuePresentKHR")) {
+                // Replaying vkQueuePresent fail will cause frame index mismatch and hence untrusted hwc data. Exit to avoid more implicit issues.
+                vktrace_LogError("Fail to replay vkQueuePresent(), exiting.");
+                exit(1);
+            }
         }
     }
     return res;
@@ -737,6 +746,11 @@ VkResult vkReplay::manually_replay_vkCreateInstance(packet_vkCreateInstance *pPa
     if (extensions) {
         vktrace_free(extensions);
     }
+    // vkGetPhysicalDeviceFeatures2KHR function need VK_KHR_get_physical_device_properties2 extension
+    auto it = std::find(extension_names.begin(), extension_names.end(), "VK_KHR_get_physical_device_properties2");
+    if (it == extension_names.end()) {
+        extension_names.push_back("VK_KHR_get_physical_device_properties2");
+    }
 
     pCreateInfo->ppEnabledExtensionNames = extension_names.data();
     pCreateInfo->enabledExtensionCount = (uint32_t)extension_names.size();
@@ -764,6 +778,7 @@ VkResult vkReplay::manually_replay_vkCreateInstance(packet_vkCreateInstance *pPa
 
     if (replayResult == VK_SUCCESS) {
         m_objMapper.add_to_instances_map(*(pPacket->pInstance), inst);
+        replayInstanceApiVersion = pPacket->pCreateInfo->pApplicationInfo->apiVersion;
 
         // Build instance dispatch table
         layer_init_instance_dispatch_table(inst, &m_vkFuncs, m_vkFuncs.GetInstanceProcAddr);
@@ -996,7 +1011,7 @@ void vkReplay::checkDeviceExtendFeatures(const VkBaseOutStructure *pNext, VkPhys
             CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VERTEX_ATTRIBUTE_DIVISOR_FEATURES_EXT, VkPhysicalDeviceVertexAttributeDivisorFeaturesEXT, 2)
             CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TRANSFORM_FEEDBACK_FEATURES_EXT, VkPhysicalDeviceTransformFeedbackFeaturesEXT, 2)
             CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_MEMORY_MODEL_FEATURES, VkPhysicalDeviceVulkanMemoryModelFeatures, 3)
-            CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_INLINE_UNIFORM_BLOCK_FEATURES_EXT, VkPhysicalDeviceInlineUniformBlockFeaturesEXT, 2)
+            CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_INLINE_UNIFORM_BLOCK_FEATURES_EXT, VkPhysicalDeviceInlineUniformBlockFeatures, 2)
             CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_DENSITY_MAP_2_FEATURES_EXT, VkPhysicalDeviceFragmentDensityMap2FeaturesEXT, 1)
             CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_UNIFORM_BUFFER_STANDARD_LAYOUT_FEATURES, VkPhysicalDeviceUniformBufferStandardLayoutFeatures, 1)
             CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DEPTH_CLIP_ENABLE_FEATURES_EXT, VkPhysicalDeviceDepthClipEnableFeaturesEXT, 1)
@@ -1010,11 +1025,11 @@ void vkReplay::checkDeviceExtendFeatures(const VkBaseOutStructure *pNext, VkPhys
             //CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRIMITIVE_TOPOLOGY_LIST_RESTART_FEATURES_EXT, VkPhysicalDevicePrimitiveTopologyListRestartFeaturesEXT, 2)
             CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SEPARATE_DEPTH_STENCIL_LAYOUTS_FEATURES, VkPhysicalDeviceSeparateDepthStencilLayoutsFeatures, 1)
             CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PIPELINE_EXECUTABLE_PROPERTIES_FEATURES_KHR, VkPhysicalDevicePipelineExecutablePropertiesFeaturesKHR, 1)
-            CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_DEMOTE_TO_HELPER_INVOCATION_FEATURES_EXT, VkPhysicalDeviceShaderDemoteToHelperInvocationFeaturesEXT, 1)
+            CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_DEMOTE_TO_HELPER_INVOCATION_FEATURES_EXT, VkPhysicalDeviceShaderDemoteToHelperInvocationFeatures, 1)
             CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TEXEL_BUFFER_ALIGNMENT_FEATURES_EXT, VkPhysicalDeviceTexelBufferAlignmentFeaturesEXT, 1)
-            CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TEXTURE_COMPRESSION_ASTC_HDR_FEATURES_EXT, VkPhysicalDeviceTextureCompressionASTCHDRFeaturesEXT, 1)
+            CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TEXTURE_COMPRESSION_ASTC_HDR_FEATURES_EXT, VkPhysicalDeviceTextureCompressionASTCHDRFeatures, 1)
             CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_LINE_RASTERIZATION_FEATURES_EXT, VkPhysicalDeviceLineRasterizationFeaturesEXT, 6)
-            CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_SIZE_CONTROL_FEATURES_EXT, VkPhysicalDeviceSubgroupSizeControlFeaturesEXT, 2)
+            CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_SIZE_CONTROL_FEATURES_EXT, VkPhysicalDeviceSubgroupSizeControlFeatures, 2)
             CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR, VkPhysicalDeviceAccelerationStructureFeaturesKHR, 5)
             CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR, VkPhysicalDeviceRayTracingPipelineFeaturesKHR, 5)
             CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR, VkPhysicalDeviceRayQueryFeaturesKHR, 1)
@@ -1022,11 +1037,11 @@ void vkReplay::checkDeviceExtendFeatures(const VkBaseOutStructure *pNext, VkPhys
             //CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_2_FEATURES_EXT, VkPhysicalDeviceExtendedDynamicState2FeaturesEXT, 3)
             CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DEVICE_MEMORY_REPORT_FEATURES_EXT, VkPhysicalDeviceDeviceMemoryReportFeaturesEXT, 1)
             //CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_GLOBAL_PRIORITY_QUERY_FEATURES_EXT, VkPhysicalDeviceGlobalPriorityQueryFeaturesEXT, 1)
-            CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PIPELINE_CREATION_CACHE_CONTROL_FEATURES_EXT, VkPhysicalDevicePipelineCreationCacheControlFeaturesEXT, 1)
+            CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PIPELINE_CREATION_CACHE_CONTROL_FEATURES_EXT, VkPhysicalDevicePipelineCreationCacheControlFeatures, 1)
             //CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ZERO_INITIALIZE_WORKGROUP_MEMORY_FEATURES_KHR, VkPhysicalDeviceZeroInitializeWorkgroupMemoryFeaturesKHR, 1)
             //CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_SUBGROUP_UNIFORM_CONTROL_FLOW_FEATURES_KHR, VkPhysicalDeviceShaderSubgroupUniformControlFlowFeaturesKHR, 1)
-            CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGE_ROBUSTNESS_FEATURES_EXT, VkPhysicalDeviceImageRobustnessFeaturesEXT, 1)
-            CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_TERMINATE_INVOCATION_FEATURES_KHR, VkPhysicalDeviceShaderTerminateInvocationFeaturesKHR, 1)
+            CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGE_ROBUSTNESS_FEATURES_EXT, VkPhysicalDeviceImageRobustnessFeatures, 1)
+            CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_TERMINATE_INVOCATION_FEATURES_KHR, VkPhysicalDeviceShaderTerminateInvocationFeatures, 1)
             CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_CUSTOM_BORDER_COLOR_FEATURES_EXT, VkPhysicalDeviceCustomBorderColorFeaturesEXT, 2)
             //CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BORDER_COLOR_SWIZZLE_FEATURES_EXT, VkPhysicalDeviceBorderColorSwizzleFeaturesEXT, 2)
             CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PORTABILITY_SUBSET_FEATURES_KHR, VkPhysicalDevicePortabilitySubsetFeaturesKHR, 15)
@@ -1047,6 +1062,7 @@ void vkReplay::checkDeviceExtendFeatures(const VkBaseOutStructure *pNext, VkPhys
             //CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RGBA10X6_FORMATS_FEATURES_EXT, VkPhysicalDeviceRGBA10X6FormatsFeaturesEXT, 1)
             //CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_4_FEATURES_KHR, VkPhysicalDeviceMaintenance4FeaturesKHR, 1)
             //CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_FEATURES_KHR, VkPhysicalDeviceDynamicRenderingFeaturesKHR, 1)
+            CHECKDEVICEFEATURES(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_DENSITY_MAP_FEATURES_EXT, VkPhysicalDeviceFragmentDensityMapFeaturesEXT, 3)
             default:
             vktrace_LogWarning("Device Features id = %u", pNext->sType);
         }
@@ -1213,6 +1229,11 @@ VkResult vkReplay::manually_replay_vkCreateDevice(packet_vkCreateDevice *pPacket
     }
     const VkBaseOutStructure *pNext = reinterpret_cast<const VkBaseOutStructure *>(pPacket->pCreateInfo->pNext);
     checkDeviceExtendFeatures(pNext, remappedPhysicalDevice);
+
+    VulkanDeviceUtil deviceUtil;
+    VulkanDevicePropertyFeatureInfo propertyFeatureInfo = deviceUtil.EnableRequiredPhysicalDeviceFeatures(
+        replayInstanceApiVersion, &m_vkFuncs, remappedPhysicalDevice, pPacket->pCreateInfo);
+
     replayResult = m_vkFuncs.CreateDevice(remappedPhysicalDevice, pPacket->pCreateInfo, NULL, &device);
     if (ppEnabledLayerNames) {
         // restore the packets CreateInfo struct
@@ -1250,11 +1271,11 @@ VkResult vkReplay::manually_replay_vkCreateDevice(packet_vkCreateDevice *pPacket
     replayDeviceToFeatureSupport[device] = query_device_feature(func, remappedPhysicalDevice, pPacket->pCreateInfo);
     auto it = g_TraceDeviceToDeviceFeatures.find(*(pPacket->pDevice));
     if (it != g_TraceDeviceToDeviceFeatures.end()) {
-        if (it->second.accelerationStructureCaptureReplay != replayDeviceToFeatureSupport[device].accelerationStructureCaptureReplay) {
+        if (it->second.accelerationStructureCaptureReplay && !replayDeviceToFeatureSupport[device].accelerationStructureCaptureReplay) {
             vktrace_LogError("Retrace device AS CaptureReplay is different from the trace one, so the retrace may be risky. retrace feature: %d, trace feature: %d", \
             replayDeviceToFeatureSupport[device].accelerationStructureCaptureReplay, it->second.accelerationStructureCaptureReplay);
         }
-        if (it->second.bufferDeviceAddressCaptureReplay != replayDeviceToFeatureSupport[device].bufferDeviceAddressCaptureReplay) {
+        if (it->second.bufferDeviceAddressCaptureReplay && !replayDeviceToFeatureSupport[device].bufferDeviceAddressCaptureReplay) {
             vktrace_LogError("Retrace device buffer CaptureReplay is different from the trace one, so the retrace may be risky. retrace feature: %d, trace feature: %d", \
             replayDeviceToFeatureSupport[device].bufferDeviceAddressCaptureReplay, it->second.bufferDeviceAddressCaptureReplay);
         }
@@ -1265,7 +1286,12 @@ VkResult vkReplay::manually_replay_vkCreateDevice(packet_vkCreateDevice *pPacket
         if (g_pReplaySettings->disableAsCaptureReplay == TRUE) { e.second.accelerationStructureCaptureReplay = 0; }
         if (g_pReplaySettings->disableBufferCaptureReplay == TRUE) { e.second.bufferDeviceAddressCaptureReplay = 0; }
     }
+
     forceDisableCaptureReplayFeature();
+    // Track state of physical device properties and features at device creation
+    replayPropertyFeatureInfo[device] = propertyFeatureInfo;
+    // Restore modified property/feature create info values to the original application values
+    deviceUtil.RestoreModifiedPhysicalDeviceFeatures();
     return replayResult;
 }
 
@@ -1303,19 +1329,20 @@ VkResult vkReplay::manually_replay_vkCreateBuffer(packet_vkCreateBuffer *pPacket
         if (it1 == traceASSizeToReplayASBuildSizes.end() && it2 == traceUpdateSizeToReplayASBuildSizes.end() && it3 == traceBuildSizeToReplayASBuildSizes.end()) {
             vktrace_LogWarning("vkCreateBuffer: Cannot find matched AS or scratch buffer size.");
         }
-    } else if (traceScratchSizeToReplayScratchSize.size() > 0 && (pPacket->pCreateInfo->usage & VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR)) {
+    } else if (traceScratchSizeToReplayScratchSize.size() > 0 && (pPacket->pCreateInfo->usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT)) {
         auto it = traceScratchSizeToReplayScratchSize.find(pPacket->pCreateInfo->size);
         if (it != traceScratchSizeToReplayScratchSize.end()) {
             const_cast<VkBufferCreateInfo*>(pPacket->pCreateInfo)->size = std::max(it->second, pPacket->pCreateInfo->size);
         }
     }
 
-    if (pPacket->pCreateInfo->flags & VK_BUFFER_CREATE_DEVICE_ADDRESS_CAPTURE_REPLAY_BIT_EXT) {
+    if ((pPacket->pCreateInfo->flags & VK_BUFFER_CREATE_DEVICE_ADDRESS_CAPTURE_REPLAY_BIT_EXT) == VK_BUFFER_CREATE_DEVICE_ADDRESS_CAPTURE_REPLAY_BIT_EXT) {
         auto it = replayDeviceToFeatureSupport.find(remappedDevice);
         if (it != replayDeviceToFeatureSupport.end() && it->second.bufferDeviceAddressCaptureReplay == 0) {
             const_cast<VkBufferCreateInfo*>(pPacket->pCreateInfo)->flags = pPacket->pCreateInfo->flags & ~VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_CAPTURE_REPLAY_BIT_KHR;
         }
     }
+    rtHandler->addSbtBufferFlag(const_cast<VkBufferCreateInfo*>(pPacket->pCreateInfo)->usage);
     replayResult = m_vkDeviceFuncs.CreateBuffer(remappedDevice, pPacket->pCreateInfo, NULL, &local_bufferObj.replayBuffer);
     if (replayResult == VK_SUCCESS) {
         traceBufferToDevice[*pPacket->pBuffer] = pPacket->device;
@@ -1324,6 +1351,7 @@ VkResult vkReplay::manually_replay_vkCreateBuffer(packet_vkCreateBuffer *pPacket
         if (pPacket->pCreateInfo->usage & VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR) {
             replayBufferToASBuildSizes[local_bufferObj.replayBuffer] = pPacket->pCreateInfo->size;
         }
+        rtHandler->addSbtBuffer(*pPacket->pBuffer, pPacket->pCreateInfo->usage);
     }
     return replayResult;
 }
@@ -2643,15 +2671,15 @@ VkResult vkReplay::manually_replay_vkCreateFramebuffer(packet_vkCreateFramebuffe
             SwapchainImageState& curSwapchainImgStat = swapchainImageStates[curSwapchainHandle];
             if (curSwapchainImgStat.traceImageViewToImageIndex.find(pInfo->pAttachments[i]) != curSwapchainImgStat.traceImageViewToImageIndex.end()) {
                 if (m_imageIndex != UINT32_MAX && m_imageIndex != m_pktImgIndex
-                    && curSwapchainImgStat.traceImageIndexToImageViews.find(m_imageIndex) != curSwapchainImgStat.traceImageIndexToImageViews.end()
                     && curSwapchainImgStat.traceImageIndexToImageViews[m_imageIndex].size() == 1) {
                     curSwapchainImgStat.traceFramebufferToImageIndex[*(pPacket->pFramebuffer)] = m_imageIndex;
-                    curSwapchainImgStat.traceImageIndexToFramebuffer[m_imageIndex] = *(pPacket->pFramebuffer);
-                    savedIV = *curSwapchainImgStat.traceImageIndexToImageViews[m_imageIndex].begin();
+                    if (curSwapchainImgStat.traceImageIndexToImageViews.find(m_imageIndex) != curSwapchainImgStat.traceImageIndexToImageViews.end()) {
+                        savedIV = *curSwapchainImgStat.traceImageIndexToImageViews[m_imageIndex].begin();
+                    }
                 } else {
                     curSwapchainImgStat.traceFramebufferToImageIndex[*(pPacket->pFramebuffer)] = curSwapchainImgStat.traceImageViewToImageIndex[pInfo->pAttachments[i]];
-                    curSwapchainImgStat.traceImageIndexToFramebuffer[curSwapchainImgStat.traceImageViewToImageIndex[pInfo->pAttachments[i]]] = *(pPacket->pFramebuffer);
                 }
+                curSwapchainImgStat.traceFramebufferToRenderpass[*(pPacket->pFramebuffer)] = pPacket->pCreateInfo->renderPass;
             }
             pAttachments[i] = m_objMapper.remap_imageviews(savedIV);
             if (pAttachments[i] == VK_NULL_HANDLE && savedIV != VK_NULL_HANDLE) {
@@ -2820,10 +2848,29 @@ void vkReplay::manually_replay_vkCmdBeginRenderPass(packet_vkCmdBeginRenderPass 
     memcpy((void *)&local_renderPassBeginInfo, (void *)pPacket->pRenderPassBegin, sizeof(VkRenderPassBeginInfo));
     local_renderPassBeginInfo.pClearValues = (const VkClearValue *)pPacket->pRenderPassBegin->pClearValues;
     if (curSwapchainImgStat.traceFramebufferToImageIndex.find(pPacket->pRenderPassBegin->framebuffer) != curSwapchainImgStat.traceFramebufferToImageIndex.end() &&
-        curSwapchainImgStat.traceImageIndexToFramebuffer.find(m_imageIndex) != curSwapchainImgStat.traceImageIndexToFramebuffer.end() &&
-        m_imageIndex != UINT32_MAX && m_imageIndex != m_pktImgIndex) {
+        curSwapchainImgStat.traceFramebufferToRenderpass.find(pPacket->pRenderPassBegin->framebuffer) != curSwapchainImgStat.traceFramebufferToRenderpass.end() &&
+        m_imageIndex != UINT32_MAX) {
         // Use Framebuffer mapped to the image index returned by vkAcquireNextImage()
-        local_renderPassBeginInfo.framebuffer = m_objMapper.remap_framebuffers(curSwapchainImgStat.traceImageIndexToFramebuffer[m_imageIndex]);
+        bool bFind = false;
+        for(auto& e : curSwapchainImgStat.traceFramebufferToImageIndex) {
+            if(e.second == m_imageIndex && curSwapchainImgStat.traceFramebufferToRenderpass[e.first] == pPacket->pRenderPassBegin->renderPass) {
+                local_renderPassBeginInfo.framebuffer = m_objMapper.remap_framebuffers(e.first);
+                bFind = true;
+                break;
+            }
+        }
+        if (!bFind) {
+            for(auto& e : curSwapchainImgStat.traceFramebufferToImageIndex) {
+               if(e.second == m_imageIndex) {
+                   local_renderPassBeginInfo.framebuffer = m_objMapper.remap_framebuffers(e.first);
+                   bFind = true;
+                   break;
+               }
+            }
+        }
+        if (!bFind) {
+            local_renderPassBeginInfo.framebuffer = m_objMapper.remap_framebuffers(pPacket->pRenderPassBegin->framebuffer);
+        }
     } else {
         local_renderPassBeginInfo.framebuffer = m_objMapper.remap_framebuffers(pPacket->pRenderPassBegin->framebuffer);
     }
@@ -2855,10 +2902,29 @@ void vkReplay::manually_replay_vkCmdBeginRenderPass2KHR(packet_vkCmdBeginRenderP
     memcpy((void *)&local_renderPassBeginInfo, (void *)pPacket->pRenderPassBegin, sizeof(VkRenderPassBeginInfo));
     local_renderPassBeginInfo.pClearValues = (const VkClearValue *)pPacket->pRenderPassBegin->pClearValues;
     if (curSwapchainImgStat.traceFramebufferToImageIndex.find(pPacket->pRenderPassBegin->framebuffer) != curSwapchainImgStat.traceFramebufferToImageIndex.end() &&
-        curSwapchainImgStat.traceImageIndexToFramebuffer.find(m_imageIndex) != curSwapchainImgStat.traceImageIndexToFramebuffer.end() &&
-        m_imageIndex != UINT32_MAX && m_imageIndex != m_pktImgIndex) {
+        curSwapchainImgStat.traceFramebufferToRenderpass.find(pPacket->pRenderPassBegin->framebuffer) != curSwapchainImgStat.traceFramebufferToRenderpass.end() &&
+        m_imageIndex != UINT32_MAX) {
         // Use Framebuffer mapped to the image index returned by vkAcquireNextImage()
-        local_renderPassBeginInfo.framebuffer = m_objMapper.remap_framebuffers(curSwapchainImgStat.traceImageIndexToFramebuffer[m_imageIndex]);
+        bool bFind = false;
+        for(auto& e : curSwapchainImgStat.traceFramebufferToImageIndex) {
+            if(e.second == m_imageIndex && curSwapchainImgStat.traceFramebufferToRenderpass[e.first] == pPacket->pRenderPassBegin->renderPass) {
+                local_renderPassBeginInfo.framebuffer = m_objMapper.remap_framebuffers(e.first);
+                bFind = true;
+                break;
+            }
+        }
+        if (!bFind) {
+            for(auto& e : curSwapchainImgStat.traceFramebufferToImageIndex) {
+               if(e.second == m_imageIndex) {
+                   local_renderPassBeginInfo.framebuffer = m_objMapper.remap_framebuffers(e.first);
+                   bFind = true;
+                   break;
+               }
+            }
+        }
+        if (!bFind) {
+            local_renderPassBeginInfo.framebuffer = m_objMapper.remap_framebuffers(pPacket->pRenderPassBegin->framebuffer);
+        }
     } else {
         local_renderPassBeginInfo.framebuffer = m_objMapper.remap_framebuffers(pPacket->pRenderPassBegin->framebuffer);
     }
@@ -2892,7 +2958,7 @@ void vkReplay::manually_replay_vkCmdBeginRenderingKHR(packet_vkCmdBeginRendering
         VkRenderingAttachmentInfoKHR local_colorAttachmentInfo = local_renderingInfo.pColorAttachments[i];
         if (curSwapchainImgStat.traceImageViewToImageIndex.find(pPacket->pRenderingInfo->pColorAttachments[i].imageView) != curSwapchainImgStat.traceImageViewToImageIndex.end() &&
             curSwapchainImgStat.traceImageIndexToImageViews.find(m_imageIndex) != curSwapchainImgStat.traceImageIndexToImageViews.end() &&
-            m_imageIndex != UINT32_MAX && m_imageIndex != m_pktImgIndex) {
+            m_imageIndex != UINT32_MAX) {
             local_colorAttachmentInfo.imageView = m_objMapper.remap_imageviews(*curSwapchainImgStat.traceImageIndexToImageViews[m_imageIndex].begin());
         } else {
             local_colorAttachmentInfo.imageView = m_objMapper.remap_imageviews(pPacket->pRenderingInfo->pColorAttachments[i].imageView);
@@ -2909,7 +2975,7 @@ void vkReplay::manually_replay_vkCmdBeginRenderingKHR(packet_vkCmdBeginRendering
     VkRenderingAttachmentInfoKHR local_depthAttachmentInfo = *local_renderingInfo.pDepthAttachment;
     if (curSwapchainImgStat.traceImageViewToImageIndex.find(pPacket->pRenderingInfo->pDepthAttachment->imageView) != curSwapchainImgStat.traceImageViewToImageIndex.end() &&
         curSwapchainImgStat.traceImageIndexToImageViews.find(m_imageIndex) != curSwapchainImgStat.traceImageIndexToImageViews.end() &&
-        m_imageIndex != UINT32_MAX && m_imageIndex != m_pktImgIndex) {
+        m_imageIndex != UINT32_MAX) {
         local_depthAttachmentInfo.imageView = m_objMapper.remap_imageviews(*curSwapchainImgStat.traceImageIndexToImageViews[m_imageIndex].begin());
     } else {
         local_depthAttachmentInfo.imageView = m_objMapper.remap_imageviews(pPacket->pRenderingInfo->pDepthAttachment->imageView);
@@ -2924,7 +2990,7 @@ void vkReplay::manually_replay_vkCmdBeginRenderingKHR(packet_vkCmdBeginRendering
     VkRenderingAttachmentInfoKHR local_stencilAttachmentInfo = *local_renderingInfo.pStencilAttachment;
     if (curSwapchainImgStat.traceImageViewToImageIndex.find(pPacket->pRenderingInfo->pStencilAttachment->imageView) != curSwapchainImgStat.traceImageViewToImageIndex.end() &&
         curSwapchainImgStat.traceImageIndexToImageViews.find(m_imageIndex) != curSwapchainImgStat.traceImageIndexToImageViews.end() &&
-        m_imageIndex != UINT32_MAX && m_imageIndex != m_pktImgIndex) {
+        m_imageIndex != UINT32_MAX) {
         local_stencilAttachmentInfo.imageView = m_objMapper.remap_imageviews(*curSwapchainImgStat.traceImageIndexToImageViews[m_imageIndex].begin());
     } else {
         local_stencilAttachmentInfo.imageView = m_objMapper.remap_imageviews(pPacket->pRenderingInfo->pStencilAttachment->imageView);
@@ -2961,10 +3027,29 @@ VkResult vkReplay::manually_replay_vkBeginCommandBuffer(packet_vkBeginCommandBuf
         pFB = &(pHinfo->framebuffer);
         *pRP = m_objMapper.remap_renderpasss(savedRP);
         if (curSwapchainImgStat.traceFramebufferToImageIndex.find(savedFB) != curSwapchainImgStat.traceFramebufferToImageIndex.end() &&
-            curSwapchainImgStat.traceImageIndexToFramebuffer.find(m_imageIndex) != curSwapchainImgStat.traceImageIndexToFramebuffer.end() &&
-            m_imageIndex != UINT32_MAX && m_imageIndex != m_pktImgIndex) {
+            curSwapchainImgStat.traceFramebufferToRenderpass.find(savedFB) != curSwapchainImgStat.traceFramebufferToRenderpass.end() &&
+            m_imageIndex != UINT32_MAX) {
             // Use Framebuffer mapped to the image index returned by vkAcquireNextImage()
-            *pFB = m_objMapper.remap_framebuffers(curSwapchainImgStat.traceImageIndexToFramebuffer[m_imageIndex]);
+            bool bFind = false;
+            for(auto& e : curSwapchainImgStat.traceFramebufferToImageIndex) {
+                if(e.second == m_imageIndex && curSwapchainImgStat.traceFramebufferToRenderpass[e.first] == savedRP) {
+                    *pFB = m_objMapper.remap_framebuffers(e.first);
+                    bFind = true;
+                    break;
+                }
+            }
+            if (!bFind) {
+                for(auto& e : curSwapchainImgStat.traceFramebufferToImageIndex) {
+                    if(e.second == m_imageIndex) {
+                        *pFB = m_objMapper.remap_framebuffers(e.first);
+                        bFind = true;
+                        break;
+                    }
+                }
+            }
+            if (!bFind) {
+                *pFB = m_objMapper.remap_framebuffers(savedFB);
+            }
         } else {
             *pFB = m_objMapper.remap_framebuffers(savedFB);
         }
@@ -3331,9 +3416,11 @@ VkResult vkReplay::manually_replay_vkAllocateMemory(packet_vkAllocateMemory *pPa
 
     if (pPacket->result == VK_ERROR_OUT_OF_DEVICE_MEMORY) {
         /// ignore the recorded failed call
+        vktrace_LogError("Skipping vkAllocateMemory() due to ignore the recorded failed call.");
         return VK_SUCCESS;
     }
 
+    VkDeviceSize origSize = pPacket->pAllocateInfo->allocationSize;
     // VkMemoryAllocateInfo parameter of vkAllocateMemory contains a pNext member.
     // It might points to a VkMemoryDedicatedAllocateInfo structure:
     //     typedef struct VkMemoryDedicatedAllocateInfo {
@@ -3440,7 +3527,7 @@ VkResult vkReplay::manually_replay_vkAllocateMemory(packet_vkAllocateMemory *pPa
         if (allocateFlagInfo == nullptr) {
             allocateFlagInfo = (VkMemoryAllocateFlagsInfo*)find_ext_struct((const vulkan_struct_header*)pPacket->pAllocateInfo->pNext, VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO_KHR);
         }
-        if (allocateFlagInfo != nullptr && (allocateFlagInfo->flags & VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_CAPTURE_REPLAY_BIT_KHR)) {
+        if ((allocateFlagInfo != nullptr && (allocateFlagInfo->flags & VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_CAPTURE_REPLAY_BIT_KHR) == VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_CAPTURE_REPLAY_BIT_KHR)) {
             auto it = replayDeviceToFeatureSupport.find(remappedDevice);
             if (it != replayDeviceToFeatureSupport.end() && it->second.bufferDeviceAddressCaptureReplay == 0) {
                 allocateFlagInfo->flags &= ~VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_CAPTURE_REPLAY_BIT_KHR;
@@ -3467,6 +3554,7 @@ VkResult vkReplay::manually_replay_vkAllocateMemory(packet_vkAllocateMemory *pPa
                 }
             }
         }
+        rtHandler->addSbtCandidateMemory(*pPacket->pMemory, origSize);
         replayResult = m_vkDeviceFuncs.AllocateMemory(remappedDevice, pPacket->pAllocateInfo, NULL, &local_mem.replayDeviceMemory);
     }
     if (replayResult == VK_SUCCESS) {
@@ -4001,6 +4089,21 @@ VkResult vkReplay::manually_replay_vkBuildAccelerationStructuresKHR(packet_vkBui
     return replayResult;
 }
 
+// Some buffer addresses are offsets from other buffer addresses
+// So find the closest address of addr in traceDeviceAddrToReplayDeviceAddr4Buf
+std::unordered_map<VkDeviceAddress, vkReplay::objDeviceAddr>::iterator vkReplay::findClosestAddress(VkDeviceAddress addr) {
+    int delta_min = INT_MAX;
+    auto it_result = traceDeviceAddrToReplayDeviceAddr4Buf.end();
+    for (auto it = traceDeviceAddrToReplayDeviceAddr4Buf.begin(); it != traceDeviceAddrToReplayDeviceAddr4Buf.end(); ++it) {
+        int delta = addr - it->first;
+        if (delta >= 0 && delta < delta_min) {
+            delta_min = delta;
+            it_result = it;
+        }
+    }
+    return it_result;
+}
+
 void vkReplay::manually_replay_vkCmdBuildAccelerationStructuresKHR(packet_vkCmdBuildAccelerationStructuresKHR* pPacket) {
     VkCommandBuffer remappedcommandBuffer = m_objMapper.remap_commandbuffers(pPacket->commandBuffer);
     if (pPacket->commandBuffer != VK_NULL_HANDLE && remappedcommandBuffer == VK_NULL_HANDLE) {
@@ -4036,37 +4139,77 @@ void vkReplay::manually_replay_vkCmdBuildAccelerationStructuresKHR(packet_vkCmdB
             switch (pPacket->pInfos[i].pGeometries[j].geometryType) {
                 case VK_GEOMETRY_TYPE_TRIANGLES_KHR:
                     if (pPacket->pInfos[i].pGeometries[j].geometry.triangles.vertexData.deviceAddress != 0 && supportBufferCaptureReplay == false) {
-                        it = traceDeviceAddrToReplayDeviceAddr4Buf.find(pPacket->pInfos[i].pGeometries[j].geometry.triangles.vertexData.deviceAddress);
+                        VkDeviceAddress vertexAddr = pPacket->pInfos[i].pGeometries[j].geometry.triangles.vertexData.deviceAddress;
+                        it = traceDeviceAddrToReplayDeviceAddr4Buf.find(vertexAddr);
                         if (it != traceDeviceAddrToReplayDeviceAddr4Buf.end()) {
                             const_cast<VkAccelerationStructureGeometryKHR*>(pPacket->pInfos[i].pGeometries)[j].geometry.triangles.vertexData.deviceAddress = it->second.replayDeviceAddr;
                         } else {
-                            vktrace_LogError("Can't find the replay device address for vertexData.");
+                            vktrace_LogWarning("Can't find the replay device address for vertexData[%d][%d] = %p in packet = %d. Trying to find the closest address",
+                                    i, j, vertexAddr, pPacket->header->global_packet_index);
+                            it = findClosestAddress(vertexAddr);
+                            if (it != traceDeviceAddrToReplayDeviceAddr4Buf.end()) {
+                                vktrace_LogWarning("Found a closest one = %p. We'll try to use the offset = %d of it.", it->first, vertexAddr - it->first);
+                                const_cast<VkAccelerationStructureGeometryKHR*>(pPacket->pInfos[i].pGeometries)[j].geometry.triangles.vertexData.deviceAddress = it->second.replayDeviceAddr + (vertexAddr - it->first);
+                            }
+                            else {
+                                vktrace_LogError("Can't find the replay device address for vertexData[%d][%d] = %p in packet = %d", i, j, vertexAddr, pPacket->header->global_packet_index);
+                            }
                         }
                     }
                     if (pPacket->pInfos[i].pGeometries[j].geometry.triangles.indexData.deviceAddress != 0 && supportBufferCaptureReplay == false) {
-                        it = traceDeviceAddrToReplayDeviceAddr4Buf.find(pPacket->pInfos[i].pGeometries[j].geometry.triangles.indexData.deviceAddress);
+                        VkDeviceAddress indexAddr = pPacket->pInfos[i].pGeometries[j].geometry.triangles.indexData.deviceAddress;
+                        it = traceDeviceAddrToReplayDeviceAddr4Buf.find(indexAddr);
                         if (it != traceDeviceAddrToReplayDeviceAddr4Buf.end()) {
                             const_cast<VkAccelerationStructureGeometryKHR*>(pPacket->pInfos[i].pGeometries)[j].geometry.triangles.indexData.deviceAddress = it->second.replayDeviceAddr;
                         } else {
-                            vktrace_LogError("Can't find the replay device address for indexData.");
+                            vktrace_LogWarning("Can't find the replay device address for indexData[%d][%d] = %p in packet = %d. Trying to find the closest address",
+                                    i, j, indexAddr, pPacket->header->global_packet_index);
+                            it = findClosestAddress(indexAddr);
+                            if (it != traceDeviceAddrToReplayDeviceAddr4Buf.end()) {
+                                vktrace_LogWarning("Found a closest one = %p. We'll try to use the offset = %d of it.", it->first, indexAddr - it->first);
+                                const_cast<VkAccelerationStructureGeometryKHR*>(pPacket->pInfos[i].pGeometries)[j].geometry.triangles.indexData.deviceAddress = it->second.replayDeviceAddr + (indexAddr - it->first);
+                            }
+                            else {
+                                vktrace_LogError("Can't find the replay device address for indexData[%d][%d] = %p in packet = %d", i, j, indexAddr, pPacket->header->global_packet_index);
+                            }
                         }
                     }
                     if (pPacket->pInfos[i].pGeometries[j].geometry.triangles.transformData.deviceAddress != 0 && supportBufferCaptureReplay == false) {
-                        it = traceDeviceAddrToReplayDeviceAddr4Buf.find(pPacket->pInfos[i].pGeometries[j].geometry.triangles.transformData.deviceAddress);
+                        VkDeviceAddress transformAddr = pPacket->pInfos[i].pGeometries[j].geometry.triangles.transformData.deviceAddress;
+                        it = traceDeviceAddrToReplayDeviceAddr4Buf.find(transformAddr);
                         if (it != traceDeviceAddrToReplayDeviceAddr4Buf.end()) {
                             const_cast<VkAccelerationStructureGeometryKHR*>(pPacket->pInfos[i].pGeometries)[j].geometry.triangles.transformData.deviceAddress = it->second.replayDeviceAddr;
                         } else {
-                            vktrace_LogError("Can't find the replay device address for transformData.");
+                            vktrace_LogWarning("Can't find the replay device address for transformData[%d][%d] = %p in packet = %d. Trying to find the closest address",
+                                    i, j, transformAddr, pPacket->header->global_packet_index);
+                            it = findClosestAddress(transformAddr);
+                            if (it != traceDeviceAddrToReplayDeviceAddr4Buf.end()) {
+                                vktrace_LogWarning("Found a closest one = %p. We'll try to use the offset = %d of it.", it->first, transformAddr - it->first);
+                                const_cast<VkAccelerationStructureGeometryKHR*>(pPacket->pInfos[i].pGeometries)[j].geometry.triangles.transformData.deviceAddress = it->second.replayDeviceAddr + (transformAddr - it->first);
+                            }
+                            else {
+                                vktrace_LogError("Can't find the replay device address for transformData[%d][%d] = %p in packet = %d", i, j, transformAddr, pPacket->header->global_packet_index);
+                            }
                         }
                     }
                     break;
                 case VK_GEOMETRY_TYPE_AABBS_KHR:
                     if (pPacket->pInfos[i].pGeometries[j].geometry.aabbs.data.deviceAddress != 0 && supportBufferCaptureReplay == false) {
-                        it = traceDeviceAddrToReplayDeviceAddr4Buf.find(pPacket->pInfos[i].pGeometries[j].geometry.aabbs.data.deviceAddress);
+                        VkDeviceAddress aabbAddr = pPacket->pInfos[i].pGeometries[j].geometry.aabbs.data.deviceAddress;
+                        it = traceDeviceAddrToReplayDeviceAddr4Buf.find(aabbAddr);
                         if (it != traceDeviceAddrToReplayDeviceAddr4Buf.end()) {
                             const_cast<VkAccelerationStructureGeometryKHR*>(pPacket->pInfos[i].pGeometries)[j].geometry.aabbs.data.deviceAddress = it->second.replayDeviceAddr;
                         } else {
-                            vktrace_LogError("Can't find the replay device address for aabbs data of acceleration structure.");
+                            vktrace_LogWarning("Can't find the replay device address for aabbData[%d][%d] = %p in packet = %d. Trying to find the closest address",
+                                    i, j, aabbAddr, pPacket->header->global_packet_index);
+                            it = findClosestAddress(aabbAddr);
+                            if (it != traceDeviceAddrToReplayDeviceAddr4Buf.end()) {
+                                vktrace_LogWarning("Found a closest one = %p. We'll try to use the offset = %d of it.", it->first, aabbAddr - it->first);
+                                const_cast<VkAccelerationStructureGeometryKHR*>(pPacket->pInfos[i].pGeometries)[j].geometry.aabbs.data.deviceAddress = it->second.replayDeviceAddr + (aabbAddr - it->first);
+                            }
+                            else {
+                                vktrace_LogError("Can't find the replay device address for aabbData[%d][%d] = %p in packet = %d", i, j, aabbAddr, pPacket->header->global_packet_index);
+                            }
                         }
                     }
                     break;
@@ -4074,9 +4217,28 @@ void vkReplay::manually_replay_vkCmdBuildAccelerationStructuresKHR(packet_vkCmdB
                     if (pPacket->pInfos[i].pGeometries[j].geometry.instances.data.deviceAddress != 0) {
                         VkDeviceMemory dataMemory = VK_NULL_HANDLE;
                         VkDevice remappedDevice = VK_NULL_HANDLE;
-                        it = traceDeviceAddrToReplayDeviceAddr4Buf.find(pPacket->pInfos[i].pGeometries[j].geometry.instances.data.deviceAddress);
+                        VkDeviceAddress instanceAddr = pPacket->pInfos[i].pGeometries[j].geometry.instances.data.deviceAddress;
+                        it = traceDeviceAddrToReplayDeviceAddr4Buf.find(instanceAddr);
+                        bool foundAddr = false;
+                        int offset = 0;
                         if (it != traceDeviceAddrToReplayDeviceAddr4Buf.end()) {
                             const_cast<VkAccelerationStructureGeometryKHR*>(pPacket->pInfos[i].pGeometries)[j].geometry.instances.data.deviceAddress = it->second.replayDeviceAddr;
+                            foundAddr = true;
+                        } else {
+                            vktrace_LogWarning("Can't find the replay device address for instanceData[%d][%d] = %p in packet = %d. Trying to find the closest address",
+                                    i, j, instanceAddr, pPacket->header->global_packet_index);
+                            it = findClosestAddress(instanceAddr);
+                            if (it != traceDeviceAddrToReplayDeviceAddr4Buf.end()) {
+                                vktrace_LogWarning("Found a closest one = %p. We'll try to use the offset = %d of it.", it->first, instanceAddr - it->first);
+                                offset = instanceAddr - it->first;
+                                const_cast<VkAccelerationStructureGeometryKHR*>(pPacket->pInfos[i].pGeometries)[j].geometry.instances.data.deviceAddress = it->second.replayDeviceAddr + (instanceAddr - it->first);
+                                foundAddr = true;
+                            }
+                            else {
+                                vktrace_LogError("Can't find the replay device address for instanceData[%d][%d] = %p in packet = %d", i, j, instanceAddr, pPacket->header->global_packet_index);
+                            }
+                        }
+                        if (foundAddr) {
                             VkBuffer traceBuffer = (VkBuffer)it->second.traceObjHandle;
                             auto itMem = traceBufferToReplayMemory.find(traceBuffer);
                             if (itMem != traceBufferToReplayMemory.end()) {
@@ -4090,8 +4252,6 @@ void vkReplay::manually_replay_vkCmdBuildAccelerationStructuresKHR(packet_vkCmdB
                             } else {
                                 vktrace_LogError("Can't find the device for instances data of acceleration structure.");
                             }
-                        } else {
-                            vktrace_LogError("Can't find the replay device address for instances data of acceleration structure.");
                         }
                         if (dataMemory == VK_NULL_HANDLE || remappedDevice == VK_NULL_HANDLE) {
                             vktrace_LogError("dataMemory is VK_NULL_HANDLE or remappedDevice is VK_NULL_HANDLE.");
@@ -4105,7 +4265,7 @@ void vkReplay::manually_replay_vkCmdBuildAccelerationStructuresKHR(packet_vkCmdB
                             } else {
                                 VkResult mapResult = m_vkDeviceFuncs.MapMemory(remappedDevice, dataMemory, 0, VK_WHOLE_SIZE, 0, (void**)&ppAsInstance);
                                 if (mapResult != VK_SUCCESS) {
-                                    vktrace_LogError("Map memory failed for instances data of acceleration structure, mapResult = %d.", mapResult);
+                                    vktrace_LogError("Map memory failed for ppAsInstance data of acceleration structure, mapResult = %d.", mapResult);
                                 }
                                 vktrace_LogAlways("NOTE: need implement.");
                                 m_vkDeviceFuncs.UnmapMemory(remappedDevice, dataMemory);
@@ -4120,10 +4280,11 @@ void vkReplay::manually_replay_vkCmdBuildAccelerationStructuresKHR(packet_vkCmdB
                             } else {
                                 mapResult = m_vkDeviceFuncs.MapMemory(remappedDevice, dataMemory, 0, VK_WHOLE_SIZE, 0, (void**)&pAsInstance);
                                 if (mapResult != VK_SUCCESS) {
-                                    vktrace_LogError("Map memory failed for instances data of acceleration structure, mapResult = %d.", mapResult);
+                                    vktrace_LogError("Map memory failed for pAsInstance data of acceleration structure, mapResult = %d.", mapResult);
                                 }
                             }
                             if (mapResult == VK_SUCCESS) {
+                                pAsInstance += offset / sizeof(VkAccelerationStructureInstanceKHR);
                                 for(uint32_t k = 0; supportASCaptureReplay == false && k < pPacket->ppBuildRangeInfos[i][j].primitiveCount; k++) {
                                     auto it0 = traceDeviceAddrToReplayDeviceAddr4AS.find((VkDeviceAddress)(pAsInstance[k].accelerationStructureReference));
                                     if (it0 != traceDeviceAddrToReplayDeviceAddr4AS.end()) {
@@ -4446,45 +4607,6 @@ void vkReplay::manually_replay_vkDestroyAccelerationStructureKHR(packet_vkDestro
             break;
         }
     }
-}
-
-VkResult vkReplay::manually_replay_vkCreateRayTracingPipelinesKHR(packet_vkCreateRayTracingPipelinesKHR *pPacket) {
-    VkResult replayResult = VK_SUCCESS;
-    VkPipeline local_pPipelines;
-    VkDevice remappeddevice = m_objMapper.remap_devices(pPacket->device);
-    if (pPacket->device != VK_NULL_HANDLE && remappeddevice == VK_NULL_HANDLE) {
-        vktrace_LogError("Error detected in CreateRayTracingPipelinesKHR() due to invalid remapped VkDevice.");
-        return VK_ERROR_VALIDATION_FAILED_EXT;
-    }
-    VkDeferredOperationKHR remappeddeferredOperation = m_objMapper.remap_deferredoperationkhrs(pPacket->deferredOperation);
-    if (pPacket->deferredOperation != VK_NULL_HANDLE && remappeddeferredOperation == VK_NULL_HANDLE) {
-        vktrace_LogError("Error detected in CreateRayTracingPipelinesKHR() due to invalid remapped VkDeferredOperationKHR.");
-        return VK_ERROR_VALIDATION_FAILED_EXT;
-    }
-    VkPipelineCache remappedpipelineCache = m_objMapper.remap_pipelinecaches(pPacket->pipelineCache);
-    if (pPacket->pipelineCache != VK_NULL_HANDLE && remappedpipelineCache == VK_NULL_HANDLE) {
-        vktrace_LogError("Error detected in CreateRayTracingPipelinesKHR() due to invalid remapped VkPipelineCache.");
-        return VK_ERROR_VALIDATION_FAILED_EXT;
-    }
-    for (uint32_t i = 0; i < pPacket->createInfoCount; i++) {
-        const_cast<VkRayTracingPipelineCreateInfoKHR*>(pPacket->pCreateInfos)[i].layout = m_objMapper.remap_pipelinelayouts(pPacket->pCreateInfos[i].layout);
-        for(uint32_t j = 0; j < pPacket->pCreateInfos[i].stageCount; j++) {
-            ((VkPipelineShaderStageCreateInfo*)(((VkRayTracingPipelineCreateInfoKHR*)(pPacket->pCreateInfos))[i].pStages))[j].module = m_objMapper.remap_shadermodules(pPacket->pCreateInfos[i].pStages[j].module);
-        }
-        if (pPacket->pCreateInfos[i].pLibraryInfo != nullptr) {
-            for (uint32_t j = 0; j < pPacket->pCreateInfos[i].pLibraryInfo->libraryCount; j++) {
-               ((VkPipeline*)(((VkPipelineLibraryCreateInfoKHR*)(((VkRayTracingPipelineCreateInfoKHR*)(pPacket->pCreateInfos))[i].pLibraryInfo))->pLibraries))[j] =  m_objMapper.remap_pipelines(pPacket->pCreateInfos[i].pLibraryInfo->pLibraries[j]);
-            }
-        }
-    }
-    // No need to remap createInfoCount
-    // No need to remap pAllocator
-    replayResult = m_vkDeviceFuncs.CreateRayTracingPipelinesKHR(remappeddevice, remappeddeferredOperation, remappedpipelineCache, pPacket->createInfoCount, pPacket->pCreateInfos, pPacket->pAllocator, &local_pPipelines);
-    if (replayResult == VK_SUCCESS) {
-        m_objMapper.add_to_pipelines_map(*(pPacket->pPipelines), local_pPipelines);
-        replayRayTracingPipelinesKHRToDevice[local_pPipelines] = remappeddevice;
-    }
-    return replayResult;
 }
 
 BOOL isvkFlushMappedMemoryRangesSpecial(PBYTE pOPTPackageData) {
@@ -4889,6 +5011,10 @@ void vkReplay::manually_replay_vkGetPhysicalDeviceProperties(packet_vkGetPhysica
     forceDisableCaptureReplayFeature();
 }
 
+void vkReplay::manually_replay_vkGetPhysicalDeviceProperties2(packet_vkGetPhysicalDeviceProperties2 *pPacket) {
+    manually_replay_vkGetPhysicalDeviceProperties2KHR((packet_vkGetPhysicalDeviceProperties2KHR *)pPacket);
+}
+
 void vkReplay::manually_replay_vkGetPhysicalDeviceProperties2KHR(packet_vkGetPhysicalDeviceProperties2KHR *pPacket) {
     VkPhysicalDevice remappedphysicalDevice = m_objMapper.remap_physicaldevices(pPacket->physicalDevice);
     if (pPacket->physicalDevice != VK_NULL_HANDLE && remappedphysicalDevice == VK_NULL_HANDLE) {
@@ -4897,8 +5023,27 @@ void vkReplay::manually_replay_vkGetPhysicalDeviceProperties2KHR(packet_vkGetPhy
     }
     char traceDeviceName[VK_MAX_PHYSICAL_DEVICE_NAME_SIZE] = "";
     memcpy(traceDeviceName, pPacket->pProperties->properties.deviceName, VK_MAX_PHYSICAL_DEVICE_NAME_SIZE);
-    // No need to remap pProperties
+
+    for (VkPhysicalDeviceRayTracingPipelinePropertiesKHR *p = (VkPhysicalDeviceRayTracingPipelinePropertiesKHR *)pPacket->pProperties->pNext;
+            p != NULL; p = (VkPhysicalDeviceRayTracingPipelinePropertiesKHR *)p->pNext) {
+        if (p->sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_PROPERTIES_KHR) {
+            RayTracingPipelineShaderInfo::physicalRtPropertiesTrace = *p;
+        }
+    }
     m_vkFuncs.GetPhysicalDeviceProperties2KHR(remappedphysicalDevice, pPacket->pProperties);
+    for (VkPhysicalDeviceRayTracingPipelinePropertiesKHR *p = (VkPhysicalDeviceRayTracingPipelinePropertiesKHR *)pPacket->pProperties->pNext;
+            p != NULL; p = (VkPhysicalDeviceRayTracingPipelinePropertiesKHR *)p->pNext) {
+        if (p->sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_PROPERTIES_KHR) {
+            if (RayTracingPipelineHandler::isEqual(RayTracingPipelineShaderInfo::physicalRtPropertiesTrace, *p)) {
+                RayTracingPipelineShaderInfo::physicalRtProperties = *p;
+            }
+            else {
+                vktrace_LogError("Now we require VkPhysicalDeviceRayTracingPipelinePropertiesKHR on trace platform is equal to that of replay platform. This trace file cannot be replayed.");
+                return;
+            }
+        }
+    }
+
     m_replay_gpu =
         ((uint64_t)pPacket->pProperties->properties.vendorID << 32) | (uint64_t)pPacket->pProperties->properties.deviceID;
     m_replay_drv_vers = (uint64_t)pPacket->pProperties->properties.driverVersion;
@@ -5239,6 +5384,7 @@ VkResult vkReplay::manually_replay_vkBindBufferMemory(packet_vkBindBufferMemory 
     if (g_hasAsApi) {
         replayBufferToReplayDeviceMemory[remappedbuffer] = remappedmemory;
     }
+    rtHandler->addSbtBufferMemory(pPacket->buffer, pPacket->memory);
     return replayResult;
 }
 
@@ -5399,28 +5545,14 @@ void vkReplay::manually_replay_vkGetBufferMemoryRequirements(packet_vkGetBufferM
         return;
     }
 
+    rtHandler->addSbtBufferSize(pPacket->buffer, pPacket->pMemoryRequirements->size);
     m_vkDeviceFuncs.GetBufferMemoryRequirements(remappedDevice, remappedBuffer, pPacket->pMemoryRequirements);
     replayGetBufferMemoryRequirements[remappedBuffer] = *(pPacket->pMemoryRequirements);
     return;
 }
 
 void vkReplay::manually_replay_vkGetBufferMemoryRequirements2(packet_vkGetBufferMemoryRequirements2 *pPacket) {
-    VkDevice remappedDevice = m_objMapper.remap_devices(pPacket->device);
-    if (remappedDevice == VK_NULL_HANDLE) {
-        vktrace_LogError("Error detected in vkGetBufferMemoryRequirements2() due to invalid remapped VkDevice.");
-        return;
-    }
-
-    VkBuffer remappedBuffer = m_objMapper.remap_buffers(pPacket->pInfo->buffer);
-    if ((pPacket->pInfo->buffer != VK_NULL_HANDLE) && (remappedBuffer == VK_NULL_HANDLE)) {
-        vktrace_LogError("Error detected in GetBufferMemoryRequirements2() due to invalid remapped VkBuffer.");
-        return;
-    }
-    *(const_cast<VkBuffer *>(&pPacket->pInfo->buffer)) = remappedBuffer;
-
-    m_vkDeviceFuncs.GetBufferMemoryRequirements2(remappedDevice, pPacket->pInfo, pPacket->pMemoryRequirements);
-    replayGetBufferMemoryRequirements[pPacket->pInfo->buffer] = pPacket->pMemoryRequirements->memoryRequirements;
-    return;
+    manually_replay_vkGetBufferMemoryRequirements2KHR((packet_vkGetBufferMemoryRequirements2KHR *)pPacket);
 }
 
 void vkReplay::manually_replay_vkGetBufferMemoryRequirements2KHR(packet_vkGetBufferMemoryRequirements2KHR *pPacket) {
@@ -5435,7 +5567,8 @@ void vkReplay::manually_replay_vkGetBufferMemoryRequirements2KHR(packet_vkGetBuf
         vktrace_LogError("Error detected in GetBufferMemoryRequirements2() due to invalid remapped VkBuffer.");
         return;
     }
-    *((VkBuffer *)(&pPacket->pInfo->buffer)) = remappedBuffer;
+    rtHandler->addSbtBufferSize(pPacket->pInfo->buffer, pPacket->pMemoryRequirements->memoryRequirements.size);
+    *(const_cast<VkBuffer *>(&pPacket->pInfo->buffer)) = remappedBuffer;
 
     vkreplay_process_pnext_structs(pPacket->header, (void *)pPacket->pInfo);
     m_vkDeviceFuncs.GetBufferMemoryRequirements2KHR(remappedDevice, pPacket->pInfo, pPacket->pMemoryRequirements);
@@ -5897,7 +6030,7 @@ VkResult vkReplay::manually_replay_vkGetSwapchainImagesKHR(packet_vkGetSwapchain
         }
     }
     if (numImages) {
-        vktrace_LogAlways("The swapchain image count = %d",numImages);
+        vktrace_LogAlways("The trace file swapchain image count = %d",numImages);
     }
     VkImage* pOldImage = nullptr;
     VkImage* pNewImage = nullptr;
@@ -6013,7 +6146,15 @@ VkResult vkReplay::manually_replay_vkQueuePresentKHR(packet_vkQueuePresentKHR *p
         if (pPacket->pPresentInfo->pResults != NULL) {
             present.pResults = pResults;
         }
-
+        if (g_pReplaySettings->finishBeforeSwap)  {
+            auto it = traceQueueToDevice.find(pPacket->queue);
+            if (it != traceQueueToDevice.end()) {
+                VkDevice remappeddevice = m_objMapper.remap_devices(it->second);
+                if (remappeddevice != VK_NULL_HANDLE) {
+                   m_vkDeviceFuncs.DeviceWaitIdle(remappeddevice);
+                }
+            }
+        }
         replayResult = m_vkDeviceFuncs.QueuePresentKHR(remappedQueue, &present);
 
         m_frameNumber++;
