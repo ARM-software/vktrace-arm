@@ -389,6 +389,81 @@ void ClampExtendedDevFeatures(const std::unordered_map<uint32_t, ExtendedFeature
                 }
             }
             break;
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGELESS_FRAMEBUFFER_FEATURES:
+            {
+                VkPhysicalDeviceImagelessFramebufferFeatures& dst = *reinterpret_cast<VkPhysicalDeviceImagelessFramebufferFeatures*>(pDummy);
+                if (features.find(pDummy->sType) != features.end()) {
+                    const VkPhysicalDeviceImagelessFramebufferFeatures& src = features.at(pDummy->sType).imageless_framebuffer_feature;
+                    CLAMP_BOOL_VALUE(imagelessFramebuffer)
+                }
+            }
+            break;
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TRANSFORM_FEEDBACK_FEATURES_EXT:
+            {
+                VkPhysicalDeviceTransformFeedbackFeaturesEXT& dst = *reinterpret_cast<VkPhysicalDeviceTransformFeedbackFeaturesEXT*>(pDummy);
+                if (features.find(pDummy->sType) != features.end()) {
+                    const VkPhysicalDeviceTransformFeedbackFeaturesEXT& src = features.at(pDummy->sType).transform_feedback_feature;
+                    CLAMP_BOOL_VALUE(transformFeedback)
+                    CLAMP_BOOL_VALUE(geometryStreams)
+                }
+            }
+            break;
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VERTEX_ATTRIBUTE_DIVISOR_FEATURES_EXT:
+            {
+                VkPhysicalDeviceVertexAttributeDivisorFeaturesEXT& dst = *reinterpret_cast<VkPhysicalDeviceVertexAttributeDivisorFeaturesEXT*>(pDummy);
+                if (features.find(pDummy->sType) != features.end()) {
+                    const VkPhysicalDeviceVertexAttributeDivisorFeaturesEXT& src = features.at(pDummy->sType).vertex_attribute_divisor_feature;
+                    CLAMP_BOOL_VALUE(vertexAttributeInstanceRateDivisor)
+                    CLAMP_BOOL_VALUE(vertexAttributeInstanceRateZeroDivisor)
+                }
+            }
+            break;
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES_KHR:
+            {
+                VkPhysicalDeviceTimelineSemaphoreFeaturesKHR& dst = *reinterpret_cast<VkPhysicalDeviceTimelineSemaphoreFeaturesKHR*>(pDummy);
+                if (features.find(pDummy->sType) != features.end()) {
+                    const VkPhysicalDeviceTimelineSemaphoreFeaturesKHR& src = features.at(pDummy->sType).timeline_semaphore_feature;
+                    CLAMP_BOOL_VALUE(timelineSemaphore)
+                }
+            }
+            break;
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TEXTURE_COMPRESSION_ASTC_HDR_FEATURES:
+            {
+                VkPhysicalDeviceTextureCompressionASTCHDRFeatures& dst = *reinterpret_cast<VkPhysicalDeviceTextureCompressionASTCHDRFeatures*>(pDummy);
+                if (features.find(pDummy->sType) != features.end()) {
+                    const VkPhysicalDeviceTextureCompressionASTCHDRFeatures& src = features.at(pDummy->sType).texture_compression_astc_hdr_feature;
+                    CLAMP_BOOL_VALUE(textureCompressionASTC_HDR)
+                }
+            }
+            break;
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES:
+            {
+                VkPhysicalDeviceDescriptorIndexingFeatures& dst = *reinterpret_cast<VkPhysicalDeviceDescriptorIndexingFeatures*>(pDummy);
+                if (features.find(pDummy->sType) != features.end()) {
+                    const VkPhysicalDeviceDescriptorIndexingFeatures& src = features.at(pDummy->sType).descriptor_indexing_feature;
+                    CLAMP_BOOL_VALUE(shaderInputAttachmentArrayDynamicIndexing)
+                    CLAMP_BOOL_VALUE(shaderUniformTexelBufferArrayDynamicIndexing)
+                    CLAMP_BOOL_VALUE(shaderStorageTexelBufferArrayDynamicIndexing)
+                    CLAMP_BOOL_VALUE(shaderUniformBufferArrayNonUniformIndexing)
+                    CLAMP_BOOL_VALUE(shaderSampledImageArrayNonUniformIndexing)
+                    CLAMP_BOOL_VALUE(shaderStorageBufferArrayNonUniformIndexing)
+                    CLAMP_BOOL_VALUE(shaderStorageImageArrayNonUniformIndexing)
+                    CLAMP_BOOL_VALUE(shaderInputAttachmentArrayNonUniformIndexing)
+                    CLAMP_BOOL_VALUE(shaderUniformTexelBufferArrayNonUniformIndexing)
+                    CLAMP_BOOL_VALUE(shaderStorageTexelBufferArrayNonUniformIndexing)
+                    CLAMP_BOOL_VALUE(descriptorBindingUniformBufferUpdateAfterBind)
+                    CLAMP_BOOL_VALUE(descriptorBindingSampledImageUpdateAfterBind)
+                    CLAMP_BOOL_VALUE(descriptorBindingStorageImageUpdateAfterBind)
+                    CLAMP_BOOL_VALUE(descriptorBindingStorageBufferUpdateAfterBind)
+                    CLAMP_BOOL_VALUE(descriptorBindingUniformTexelBufferUpdateAfterBind)
+                    CLAMP_BOOL_VALUE(descriptorBindingStorageTexelBufferUpdateAfterBind)
+                    CLAMP_BOOL_VALUE(descriptorBindingUpdateUnusedWhilePending)
+                    CLAMP_BOOL_VALUE(descriptorBindingPartiallyBound)
+                    CLAMP_BOOL_VALUE(descriptorBindingVariableDescriptorCount)
+                    CLAMP_BOOL_VALUE(runtimeDescriptorArray)
+                }
+            }
+            break;
         default:
             ErrorPrintf("Unhandled extension feature %d\n", pDummy->sType);
             break;
@@ -497,6 +572,102 @@ void ClampExtendedDevProperties(const std::unordered_map<uint32_t, ExtendedPrope
                     CLAMP_BOOL_VALUE(subsampledCoarseReconstructionEarlyAccess)
                     CLAMP_TO_SMALL_VALUE(maxSubsampledArrayLayers)
                     CLAMP_TO_SMALL_VALUE(maxDescriptorSetSubsampledSamplers)
+                }
+            }
+            break;
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MULTIVIEW_PROPERTIES:
+            {
+                VkPhysicalDeviceMultiviewProperties& dst = *reinterpret_cast<VkPhysicalDeviceMultiviewProperties*>(pDummy);
+                if (properties.find(pDummy->sType) != properties.end()) {
+                    const VkPhysicalDeviceMultiviewProperties& src = properties.at(pDummy->sType).multiview_prop;
+                    CLAMP_TO_SMALL_VALUE(maxMultiviewViewCount)
+                    CLAMP_TO_SMALL_VALUE(maxMultiviewInstanceIndex)
+                }
+            }
+            break;
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VERTEX_ATTRIBUTE_DIVISOR_PROPERTIES_EXT:
+            {
+                VkPhysicalDeviceVertexAttributeDivisorPropertiesEXT& dst = *reinterpret_cast<VkPhysicalDeviceVertexAttributeDivisorPropertiesEXT*>(pDummy);
+                if (properties.find(pDummy->sType) != properties.end()) {
+                    const VkPhysicalDeviceVertexAttributeDivisorPropertiesEXT& src = properties.at(pDummy->sType).vertex_attribute_divisor_prop;
+                    CLAMP_TO_SMALL_VALUE(maxVertexAttribDivisor)
+                }
+            }
+            break;
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_PROPERTIES_KHR:
+            {
+                VkPhysicalDeviceTimelineSemaphorePropertiesKHR& dst = *reinterpret_cast<VkPhysicalDeviceTimelineSemaphorePropertiesKHR*>(pDummy);
+                if (properties.find(pDummy->sType) != properties.end()) {
+                    const VkPhysicalDeviceTimelineSemaphorePropertiesKHR& src = properties.at(pDummy->sType).timeline_semaphore_prop;
+                    CLAMP_TO_SMALL_VALUE(maxTimelineSemaphoreValueDifference)
+                }
+            }
+            break;
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DEPTH_STENCIL_RESOLVE_PROPERTIES:
+            {
+                VkPhysicalDeviceDepthStencilResolveProperties& dst = *reinterpret_cast<VkPhysicalDeviceDepthStencilResolveProperties*>(pDummy);
+                if (properties.find(pDummy->sType) != properties.end()) {
+                    const VkPhysicalDeviceDepthStencilResolveProperties& src = properties.at(pDummy->sType).depth_stencil_resolve_prop;
+                    CLAMP_TO_SMALL_VALUE(supportedDepthResolveModes)
+                    CLAMP_TO_SMALL_VALUE(supportedStencilResolveModes)
+                    CLAMP_BOOL_VALUE(independentResolveNone)
+                    CLAMP_BOOL_VALUE(independentResolve)
+                }
+            }
+            break;
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FLOAT_CONTROLS_PROPERTIES_KHR:
+            {
+                VkPhysicalDeviceFloatControlsPropertiesKHR& dst = *reinterpret_cast<VkPhysicalDeviceFloatControlsPropertiesKHR*>(pDummy);
+                if (properties.find(pDummy->sType) != properties.end()) {
+                    const VkPhysicalDeviceFloatControlsPropertiesKHR& src = properties.at(pDummy->sType).float_controls_prop;
+                    CLAMP_TO_SMALL_VALUE(denormBehaviorIndependence)
+                    CLAMP_TO_SMALL_VALUE(roundingModeIndependence)
+                    CLAMP_BOOL_VALUE(shaderSignedZeroInfNanPreserveFloat16)
+                    CLAMP_BOOL_VALUE(shaderSignedZeroInfNanPreserveFloat32)
+                    CLAMP_BOOL_VALUE(shaderSignedZeroInfNanPreserveFloat64)
+                    CLAMP_BOOL_VALUE(shaderDenormPreserveFloat16)
+                    CLAMP_BOOL_VALUE(shaderDenormPreserveFloat32)
+                    CLAMP_BOOL_VALUE(shaderDenormPreserveFloat64)
+                    CLAMP_BOOL_VALUE(shaderDenormFlushToZeroFloat16)
+                    CLAMP_BOOL_VALUE(shaderDenormFlushToZeroFloat32)
+                    CLAMP_BOOL_VALUE(shaderDenormFlushToZeroFloat64)
+                    CLAMP_BOOL_VALUE(shaderRoundingModeRTEFloat16)
+                    CLAMP_BOOL_VALUE(shaderRoundingModeRTEFloat32)
+                    CLAMP_BOOL_VALUE(shaderRoundingModeRTEFloat64)
+                    CLAMP_BOOL_VALUE(shaderRoundingModeRTZFloat16)
+                    CLAMP_BOOL_VALUE(shaderRoundingModeRTZFloat32)
+                    CLAMP_BOOL_VALUE(shaderRoundingModeRTZFloat64)
+                }
+            }
+            break;
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_PROPERTIES:
+            {
+                VkPhysicalDeviceDescriptorIndexingProperties& dst = *reinterpret_cast<VkPhysicalDeviceDescriptorIndexingProperties*>(pDummy);
+                if (properties.find(pDummy->sType) != properties.end()) {
+                    const VkPhysicalDeviceDescriptorIndexingProperties& src = properties.at(pDummy->sType).descriptor_indexing_prop;
+                    CLAMP_TO_SMALL_VALUE(maxUpdateAfterBindDescriptorsInAllPools)
+                    CLAMP_BOOL_VALUE(shaderUniformBufferArrayNonUniformIndexingNative)
+                    CLAMP_BOOL_VALUE(shaderSampledImageArrayNonUniformIndexingNative)
+                    CLAMP_BOOL_VALUE(shaderStorageBufferArrayNonUniformIndexingNative)
+                    CLAMP_BOOL_VALUE(shaderStorageImageArrayNonUniformIndexingNative)
+                    CLAMP_BOOL_VALUE(shaderInputAttachmentArrayNonUniformIndexingNative)
+                    CLAMP_BOOL_VALUE(robustBufferAccessUpdateAfterBind)
+                    CLAMP_BOOL_VALUE(quadDivergentImplicitLod)
+                    CLAMP_TO_SMALL_VALUE(maxPerStageDescriptorUpdateAfterBindSamplers)
+                    CLAMP_TO_SMALL_VALUE(maxPerStageDescriptorUpdateAfterBindUniformBuffers)
+                    CLAMP_TO_SMALL_VALUE(maxPerStageDescriptorUpdateAfterBindStorageBuffers)
+                    CLAMP_TO_SMALL_VALUE(maxPerStageDescriptorUpdateAfterBindSampledImages)
+                    CLAMP_TO_SMALL_VALUE(maxPerStageDescriptorUpdateAfterBindStorageImages)
+                    CLAMP_TO_SMALL_VALUE(maxPerStageDescriptorUpdateAfterBindInputAttachments)
+                    CLAMP_TO_SMALL_VALUE(maxPerStageUpdateAfterBindResources)
+                    CLAMP_TO_SMALL_VALUE(maxDescriptorSetUpdateAfterBindSamplers)
+                    CLAMP_TO_SMALL_VALUE(maxDescriptorSetUpdateAfterBindUniformBuffers)
+                    CLAMP_TO_SMALL_VALUE(maxDescriptorSetUpdateAfterBindUniformBuffersDynamic)
+                    CLAMP_TO_SMALL_VALUE(maxDescriptorSetUpdateAfterBindStorageBuffers)
+                    CLAMP_TO_SMALL_VALUE(maxDescriptorSetUpdateAfterBindStorageBuffersDynamic)
+                    CLAMP_TO_SMALL_VALUE(maxDescriptorSetUpdateAfterBindSampledImages)
+                    CLAMP_TO_SMALL_VALUE(maxDescriptorSetUpdateAfterBindStorageImages)
+                    CLAMP_TO_SMALL_VALUE(maxDescriptorSetUpdateAfterBindInputAttachments)
                 }
             }
             break;

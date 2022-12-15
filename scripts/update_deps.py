@@ -435,19 +435,35 @@ class GoodRepo(object):
                     cmake_cmd.append("-DCMAKE_TOOLCHAIN_FILE={}/linux_arm.cmake".format(cmakedir))
                     cmake_cmd.append("-DBUILD_WSI_XCB_SUPPORT=OFF")
                     cmake_cmd.append("-DBUILD_WSI_XLIB_SUPPORT=OFF")
-                    cmake_cmd.append("-DBUILD_WSI_WAYLAND_SUPPORT=OFF")
+                    if self._args.window == 'wayland':
+                        print("BUILD WITH WSI WAYLAND SUPPORT")
+                        cmake_cmd.append("-DBUILD_WSI_WAYLAND_SUPPORT=ON")
+                    else:
+                        cmake_cmd.append("-DBUILD_WSI_WAYLAND_SUPPORT=OFF")
                 if "Vulkan-Tools" in self.build_dir:
                     cmake_cmd.append("-DBUILD_CUBE=OFF")
                     cmake_cmd.append("-DBUILD_VULKANINFO=OFF")
             elif self._args.arch == 'arm_64':
                 print("Building for arm_64")
+                if "Vulkan-Loader" in self.repo_dir:
+                    with open("{}/loader/CMakeLists.txt".format(self.repo_dir), 'r') as file1:
+                        data = file1.read()
+                        data = data.replace("set(CMAKE_TRY_COMPILE_TARGET_TYPE", "# set(CMAKE_TRY_COMPILE_TARGET_TYPE")
+
+                    with open("{}/loader/CMakeLists.txt".format(self.repo_dir), 'w') as file2:
+                        file2.write(data)
+
                 if "glslang" in self.build_dir:
                     cmake_cmd.append("-DCMAKE_TOOLCHAIN_FILE={}/linux_aarch64.cmake".format(cmakedir))
                 if "Vulkan-" in self.build_dir and "Headers" not in self.build_dir:
                     cmake_cmd.append("-DCMAKE_TOOLCHAIN_FILE={}/linux_aarch64.cmake".format(cmakedir))
                     cmake_cmd.append("-DBUILD_WSI_XCB_SUPPORT=OFF")
                     cmake_cmd.append("-DBUILD_WSI_XLIB_SUPPORT=OFF")
-                    cmake_cmd.append("-DBUILD_WSI_WAYLAND_SUPPORT=OFF")
+                    if self._args.window == 'wayland':
+                        print("BUILD WITH WSI WAYLAND SUPPORT")
+                        cmake_cmd.append("-DBUILD_WSI_WAYLAND_SUPPORT=ON")
+                    else:
+                        cmake_cmd.append("-DBUILD_WSI_WAYLAND_SUPPORT=OFF")
                 if "Vulkan-Tools" in self.build_dir:
                     cmake_cmd.append("-DBUILD_CUBE=OFF")
                     cmake_cmd.append("-DBUILD_VULKANINFO=OFF")
@@ -666,6 +682,12 @@ def main():
         type=str.lower,
         help="Set build files configuration",
         default='debug')
+    parser.add_argument(
+        '--window',
+        dest='window',
+        choices=['default', 'wayland'],
+        help="Set the building WSI window support",
+        default='default')
     parser.add_argument(
         '--generator',
         dest='generator',

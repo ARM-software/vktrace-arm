@@ -10,8 +10,7 @@ include_directories(
     ${SRC_DIR}/thirdparty
     ${CMAKE_BINARY_DIR}/vktrace
     ${Vulkan-ValidationLayers_INCLUDE_DIR}
-    ${SRC_DIR}/../submodules/lz4/lib/
-    ${SRC_DIR}/../submodules/snappy/
+    ${SRC_DIR}/../external/submodules/lz4/lib/
 )
 
 if (${CMAKE_SYSTEM_NAME} MATCHES "Linux")
@@ -28,36 +27,29 @@ set(SRC_LIST
     vktrace_tracelog.c
     vktrace_trace_packet_utils.c
     vktrace_pageguard_memorycopy.cpp
-    vulkan_device_util.cpp
-    ${SRC_DIR}/../submodules/zlib/adler32.c
-    ${SRC_DIR}/../submodules/zlib/crc32.c
-    ${SRC_DIR}/../submodules/zlib/deflate.c
-    ${SRC_DIR}/../submodules/zlib/gzclose.c
-    ${SRC_DIR}/../submodules/zlib/gzlib.c
-    ${SRC_DIR}/../submodules/zlib/gzread.c
-    ${SRC_DIR}/../submodules/zlib/gzwrite.c
-    ${SRC_DIR}/../submodules/zlib/inflate.c
-    ${SRC_DIR}/../submodules/zlib/infback.c
-    ${SRC_DIR}/../submodules/zlib/inftrees.c
-    ${SRC_DIR}/../submodules/zlib/inffast.c
-    ${SRC_DIR}/../submodules/zlib/trees.c
-    ${SRC_DIR}/../submodules/zlib/zutil.c
-    ${SRC_DIR}/../submodules/lz4/lib/lz4.c
+    ${SRC_DIR}/../external/submodules/zlib/adler32.c
+    ${SRC_DIR}/../external/submodules/zlib/crc32.c
+    ${SRC_DIR}/../external/submodules/zlib/deflate.c
+    ${SRC_DIR}/../external/submodules/zlib/gzclose.c
+    ${SRC_DIR}/../external/submodules/zlib/gzlib.c
+    ${SRC_DIR}/../external/submodules/zlib/gzread.c
+    ${SRC_DIR}/../external/submodules/zlib/gzwrite.c
+    ${SRC_DIR}/../external/submodules/zlib/inflate.c
+    ${SRC_DIR}/../external/submodules/zlib/infback.c
+    ${SRC_DIR}/../external/submodules/zlib/inftrees.c
+    ${SRC_DIR}/../external/submodules/zlib/inffast.c
+    ${SRC_DIR}/../external/submodules/zlib/trees.c
+    ${SRC_DIR}/../external/submodules/zlib/zutil.c
+    ${SRC_DIR}/../external/submodules/lz4/lib/lz4.c
 )
 
 set (CXX_SRC_LIST
      vktrace_pageguard_memorycopy.cpp
-     vulkan_device_util.cpp
      ${JSONCPP_SOURCE_DIR}/jsoncpp.cpp
      compression/compressor.cpp
      compression/decompressor.cpp
      compression/lz4compressor.cpp
      compression/lz4decompressor.cpp
-     compression/snpcompressor.cpp
-     compression/snpdecompressor.cpp
-     ${SRC_DIR}/../submodules/snappy/snappy-c.cc
-     ${SRC_DIR}/../submodules/snappy/snappy.cc
-     ${SRC_DIR}/../submodules/snappy/snappy-sinksource.cc
 )
 
 set_source_files_properties( ${SRC_LIST} PROPERTIES LANGUAGE C)

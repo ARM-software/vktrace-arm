@@ -86,13 +86,13 @@ typedef struct vkreplayer_settings {
     BOOL enablePipelineCache;
     char* pipelineCachePath;
     BOOL forceSyncImgIdx;
-    BOOL disableAsCaptureReplay;
-    BOOL disableBufferCaptureReplay;
+    unsigned int disableRQAndRTPCaptureReplay;
+    unsigned int specialPatternConfig;
     BOOL forceRayQuery;
     unsigned int triggerScript;
     char* pScriptPath;
     unsigned int perfMeasuringMode;
-    BOOL printCurrentGPI;
+    unsigned int printCurrentPacketIndex;
     BOOL enableSyncValidation;
     BOOL overrideCreateDeviceFeatures;
     unsigned int swapChainMinImageCount;
@@ -101,6 +101,9 @@ typedef struct vkreplayer_settings {
     unsigned int skipGetFenceStatus;
     char* skipFenceRanges;
     BOOL finishBeforeSwap;
+    char* forcePipelineShadingRate;
+    BOOL enableVirtualSwapchain;
+    BOOL enableVscPerfMode;
 } vkreplayer_settings;
 
 int vktrace_SettingGroup_init(vktrace_SettingGroup* pSettingGroup, FILE* pSettingsFile, int argc, char* argv[],

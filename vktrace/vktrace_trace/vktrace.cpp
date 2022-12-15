@@ -158,7 +158,7 @@ vktrace_SettingInfo g_settings_info[] = {
      {&g_settings.compressType},
      {&g_default_settings.compressType},
      TRUE,
-     "The compression library type. no, lz4 and snappy are supported for now.\n\
+     "The compression library type. no and lz4 are supported for now.\n\
                                         no for no compression and lz4 is the default value."},
     {"cth",
      "CompressThreshhold",
@@ -170,7 +170,7 @@ vktrace_SettingInfo g_settings_info[] = {
                                         Default value is 1024(1KB)."},
 };
 
-vktrace_SettingGroup g_settingGroup = {"vktrace", sizeof(g_settings_info) / sizeof(g_settings_info[0]), &g_settings_info[0]};
+vktrace_SettingGroup g_settingGroup = { "vktrace", sizeof(g_settings_info) / sizeof(g_settings_info[0]), &g_settings_info[0], nullptr };
 
 // ------------------------------------------------------------------------------------------------
 #if defined(WIN32)
@@ -362,18 +362,18 @@ uint32_t vktrace_appendDeviceFeatures(FILE* pTraceFile, const std::unordered_map
     Json::Reader reader;
     Json::Value metaRoot;
     Json::Value featuresRoot;
-    char device[16] = {0};
     for (auto e : deviceToFeatures) {
-        char deviceHandle[16] = {0};
+        char deviceHandle[32] = {0};
         sprintf(deviceHandle, "%p", e.first);
         Json::Value features;
         features["deviceHandle"] = Json::Value(deviceHandle);
         features["accelerationStructureCaptureReplay"] = Json::Value((e.second & PACKET_TAG_ASCAPTUREREPLAY) ? 1 : 0);
         features["bufferDeviceAddressCaptureReplay"] = Json::Value((e.second & PACKET_TAG_BUFFERCAPTUREREPLAY) ? 1 : 0);
+        features["rayTracingPipelineShaderGroupHandleCaptureReplay"] = Json::Value((e.second & PACKET_TAG_RTPSGHCAPTUREREPLAY) ? 1 : 0);
         featuresRoot["device"].append(features);
     }
-    FileLike fileLike = {.mMode = FileLike::File, .mFile = pTraceFile};
-    vktrace_trace_packet_header hdr = {0};
+    FileLike fileLike = { .mMode = FileLike::File, .mFile = pTraceFile, 0, nullptr };
+    vktrace_trace_packet_header hdr = {};
     uint32_t device_features_string_size = 0;
     if (vktrace_FileLike_SetCurrentPosition(&fileLike, meta_data_offset)
         && vktrace_FileLike_ReadRaw(&fileLike, &hdr, sizeof(hdr))
@@ -389,12 +389,18 @@ uint32_t vktrace_appendDeviceFeatures(FILE* pTraceFile, const std::unordered_map
         metaRoot["deviceFeatures"] = featuresRoot;
         delete[] meta_data_json_str;
         auto metaStr = metaRoot.toStyledString();
-        hdr.size = sizeof(hdr) + metaStr.size();
-        device_features_string_size = metaStr.size() - meta_data_json_str_size;
+        uint64_t metaDataStrSize = metaStr.size();
+        metaDataStrSize = ROUNDUP_TO_8(metaDataStrSize);
+        char* metaDataStr = new char[metaDataStrSize];
+        memset(metaDataStr, 0, metaDataStrSize);
+        memcpy(metaDataStr, metaStr.c_str(), metaStr.size());
+        hdr.size = sizeof(hdr) + metaDataStrSize;
+        device_features_string_size = metaDataStrSize - meta_data_json_str_size;
         vktrace_FileLike_SetCurrentPosition(&fileLike, meta_data_offset);
         if (1 == fwrite(&hdr, sizeof(hdr), 1, pTraceFile)) {
-            fwrite(metaStr.c_str(), sizeof(char), metaStr.size(), pTraceFile);
+            fwrite(metaDataStr, sizeof(char), metaDataStrSize, pTraceFile);
         }
+        delete[] metaDataStr;
         auto featureStr = featuresRoot.toStyledString();
         vktrace_LogVerbose("Device features: %s", featureStr.c_str());
     } else {

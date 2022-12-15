@@ -310,3 +310,9 @@ static uint32_t getAHardwareBufBPP(uint32_t fmt) {
 // to generate private packages in vkCmdPushConstants when tracing.
 // Its default value is false. Set it to non-zero values to enable this feature and to 0 to disable it.
 #define VKTRACE_ENABLE_VKCMDPUSHCONSTANTS_REMAP_ENV "VKTRACE_ENABLE_VKCMDPUSHCONSTANTS_REMAP"
+
+// VKTRACE_DISABLE_CAPTUREREPLAY_FEATURE env var is an option used to control capture replay feature whether
+// to get VkPhysicalDeviceBufferDeviceAddressFeatures, VkPhysicalDeviceAccelerationStructureFeaturesKHR and
+// VkPhysicalDeviceRayTracingPipelineFeaturesKHR when tracing.
+// Its default value is 0. Set it to non-zero values to disable this feature.
+#define VKTRACE_DISABLE_CAPTUREREPLAY_FEATURE_ENV "VKTRACE_DISABLE_CAPTUREREPLAY_FEATURE"

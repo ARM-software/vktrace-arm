@@ -56,13 +56,13 @@ static vkreplayer_settings s_defaultVkReplaySettings = {
                                                             .enablePipelineCache = FALSE,
                                                             .pipelineCachePath = NULL,
                                                             .forceSyncImgIdx = FALSE,
-                                                            .disableAsCaptureReplay = FALSE,
-                                                            .disableBufferCaptureReplay = FALSE,
+                                                            .disableRQAndRTPCaptureReplay = 0,
+                                                            .specialPatternConfig = 0,
                                                             .forceRayQuery = FALSE,
                                                             .triggerScript = UINT_MAX,
                                                             .pScriptPath = NULL,
                                                             .perfMeasuringMode = 0,
-                                                            .printCurrentGPI = FALSE,
+                                                            .printCurrentPacketIndex = 0,
                                                             .enableSyncValidation = FALSE,
                                                             .overrideCreateDeviceFeatures = FALSE,
                                                             .swapChainMinImageCount = 1,
@@ -71,6 +71,9 @@ static vkreplayer_settings s_defaultVkReplaySettings = {
                                                             .skipGetFenceStatus = 0,
                                                             .skipFenceRanges = NULL,
                                                             .finishBeforeSwap = FALSE,
+                                                            .forcePipelineShadingRate = NULL,
+                                                            .enableVirtualSwapchain = FALSE,
+                                                            .enableVscPerfMode = FALSE,
 
 };
 

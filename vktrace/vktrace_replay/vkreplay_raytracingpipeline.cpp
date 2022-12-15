@@ -40,19 +40,21 @@ VkResult vkReplay::manually_replay_vkCreateRayTracingPipelinesKHR(packet_vkCreat
         vktrace_LogError("Error detected in CreateRayTracingPipelinesKHR() due to invalid remapped VkPipelineCache.");
         return VK_ERROR_VALIDATION_FAILED_EXT;
     }
+    if (!RayTracingPipelineHandler::platformsCompatible()) {
+        vktrace_LogDebug("Now we require VkPhysicalDeviceRayTracingPipelinePropertiesKHR of trace platform be equal to that of replay platform. So this trace file cannot be replayed.");
+    }
 
-    if (replayPropertyFeatureInfo.find(remappeddevice) != replayPropertyFeatureInfo.end()) {
-        VulkanDevicePropertyFeatureInfo propertyFeatureInfo = replayPropertyFeatureInfo[remappeddevice];
-        if (propertyFeatureInfo.feature_rayTracingPipelineShaderGroupHandleCaptureReplay) {
-            std::vector<std::vector<VkRayTracingShaderGroupCreateInfoKHR>> modifiedGroups;
-            modifiedGroups.resize(pPacket->createInfoCount);
-            uint32_t shaderGroupHandleSize = 0;
-            std::vector<uint8_t> shaderGroupHandleData;
-            uint32_t lastDataSize = 0;
-
+    std::vector<std::vector<VkRayTracingShaderGroupCreateInfoKHR>> modifiedGroups;
+    modifiedGroups.resize(pPacket->createInfoCount);
+    uint32_t shaderGroupHandleSize = 0;
+    std::vector<uint8_t> shaderGroupHandleData;
+    uint32_t lastDataSize = 0;
+    if (replayDeviceToFeatureSupport.find(remappeddevice) != replayDeviceToFeatureSupport.end()) {
+        deviceFeatureSupport propertyFeatureInfo = replayDeviceToFeatureSupport[remappeddevice];
+        if (propertyFeatureInfo.rayTracingPipelineShaderGroupHandleCaptureReplay) {
             if (pPacket->pData) {
                 for (uint32_t i = 0; i < pPacket->createInfoCount; i++) {
-                    shaderGroupHandleSize += propertyFeatureInfo.property_shaderGroupHandleCaptureReplaySize * pPacket->pCreateInfos[i].groupCount;
+                    shaderGroupHandleSize += propertyFeatureInfo.propertyShaderGroupHandleCaptureReplaySize * pPacket->pCreateInfos[i].groupCount;
                 }
                 shaderGroupHandleData.resize(shaderGroupHandleSize);
                 shaderGroupHandleData.assign((uint8_t*)pPacket->pData, (uint8_t*)pPacket->pData + shaderGroupHandleSize);
@@ -70,14 +72,20 @@ VkResult vkReplay::manually_replay_vkCreateRayTracingPipelinesKHR(packet_vkCreat
                 for (uint32_t groupIdx = 0; groupIdx < groupCount; ++groupIdx) {
                     modifiedGroupInfos.push_back(modifiedCreateInfos[i].pGroups[groupIdx]);
 
-                    uint32_t byteOffset = propertyFeatureInfo.property_shaderGroupHandleCaptureReplaySize * groupIdx;
+                    uint32_t byteOffset = propertyFeatureInfo.propertyShaderGroupHandleCaptureReplaySize * groupIdx;
                     modifiedGroupInfos[groupIdx].pShaderGroupCaptureReplayHandle = shaderGroupHandleData.data() + lastDataSize + byteOffset;
                     vktrace_LogAlways("pShaderGroupCaptureReplayHandle allSize:%llu, dataOffset:%llu, groupOffset:%llu.", shaderGroupHandleSize, lastDataSize, byteOffset);
                 }
 
-                lastDataSize += propertyFeatureInfo.property_shaderGroupHandleCaptureReplaySize * groupCount;
+                lastDataSize += propertyFeatureInfo.propertyShaderGroupHandleCaptureReplaySize * groupCount;
                 // Use modified shader group infos.
                 modifiedCreateInfos[i].pGroups = modifiedGroupInfos.data();
+            }
+        } else {
+            VkRayTracingPipelineCreateInfoKHR* modifiedCreateInfos = (VkRayTracingPipelineCreateInfoKHR*)pPacket->pCreateInfos;
+            for (uint32_t i = 0; i < pPacket->createInfoCount; ++i) {
+                modifiedCreateInfos[i].flags &= ~VK_PIPELINE_CREATE_RAY_TRACING_SHADER_GROUP_HANDLE_CAPTURE_REPLAY_BIT_KHR;
+                vktrace_LogDebug("The device doesn't support rayTracingPipelineShaderGroupHandleCaptureReplay feature.");
             }
         }
     }
@@ -86,11 +94,6 @@ VkResult vkReplay::manually_replay_vkCreateRayTracingPipelinesKHR(packet_vkCreat
 }
 
 void vkReplay::manually_replay_vkCmdTraceRaysKHR(packet_vkCmdTraceRaysKHR *pPacket) {
-    VkCommandBuffer remappedcommandBuffer = m_objMapper.remap_commandbuffers(pPacket->commandBuffer);
-    if (pPacket->commandBuffer != VK_NULL_HANDLE && remappedcommandBuffer == VK_NULL_HANDLE) {
-        vktrace_LogError("Error detected in CmdTraceRaysKHR() due to invalid remapped VkCommandBuffer.");
-        return;
-    }
     return rtHandler->cmdTraceRaysKHR(pPacket);
 }
 
@@ -254,19 +257,19 @@ void RayTracingPipelineShaderInfo::writeSBT_GPU(VkCommandBuffer commandBuffer, S
 
 //==========================================================================================
 
-bool RayTracingPipelineHandler::isEqual(const VkPhysicalDeviceRayTracingPipelinePropertiesKHR &traceValue, const VkPhysicalDeviceRayTracingPipelinePropertiesKHR &replayValue) {
+bool RayTracingPipelineHandler::platformsCompatible() {
     bool result = true;
-    if (traceValue.shaderGroupHandleSize != replayValue.shaderGroupHandleSize) {
+    if (RayTracingPipelineShaderInfo::physicalRtPropertiesTrace.shaderGroupHandleSize != RayTracingPipelineShaderInfo::physicalRtProperties.shaderGroupHandleSize) {
         result = false;
-        vktrace_LogError("VkPhysicalDeviceRayTracingPipelinePropertiesKHR::shaderGroupHandleSize on trace platform is %d. However, it's %d on replay platform.", traceValue.shaderGroupHandleSize, replayValue.shaderGroupHandleSize);
+        vktrace_LogError("VkPhysicalDeviceRayTracingPipelinePropertiesKHR::shaderGroupHandleSize on trace platform is %d. However, it's %d on replay platform.", RayTracingPipelineShaderInfo::physicalRtPropertiesTrace.shaderGroupHandleSize, RayTracingPipelineShaderInfo::physicalRtProperties.shaderGroupHandleSize);
     }
-    if (traceValue.shaderGroupBaseAlignment != replayValue.shaderGroupBaseAlignment) {
+    if (RayTracingPipelineShaderInfo::physicalRtPropertiesTrace.shaderGroupBaseAlignment != RayTracingPipelineShaderInfo::physicalRtProperties.shaderGroupBaseAlignment) {
         result = false;
-        vktrace_LogError("VkPhysicalDeviceRayTracingPipelinePropertiesKHR::shaderGroupBaseAlignment on trace platform is %d. However, it's %d on replay platform.", traceValue.shaderGroupBaseAlignment, replayValue.shaderGroupBaseAlignment);
+        vktrace_LogError("VkPhysicalDeviceRayTracingPipelinePropertiesKHR::shaderGroupBaseAlignment on trace platform is %d. However, it's %d on replay platform.", RayTracingPipelineShaderInfo::physicalRtPropertiesTrace.shaderGroupBaseAlignment, RayTracingPipelineShaderInfo::physicalRtProperties.shaderGroupBaseAlignment);
     }
-    if (traceValue.shaderGroupHandleAlignment != replayValue.shaderGroupHandleAlignment) {
+    if (RayTracingPipelineShaderInfo::physicalRtPropertiesTrace.shaderGroupHandleAlignment != RayTracingPipelineShaderInfo::physicalRtProperties.shaderGroupHandleAlignment) {
         result = false;
-        vktrace_LogError("VkPhysicalDeviceRayTracingPipelinePropertiesKHR::shaderGroupHandleAlignment on trace platform is %d. However, it's %d on replay platform.", traceValue.shaderGroupHandleAlignment, replayValue.shaderGroupHandleAlignment);
+        vktrace_LogError("VkPhysicalDeviceRayTracingPipelinePropertiesKHR::shaderGroupHandleAlignment on trace platform is %d. However, it's %d on replay platform.", RayTracingPipelineShaderInfo::physicalRtPropertiesTrace.shaderGroupHandleAlignment, RayTracingPipelineShaderInfo::physicalRtProperties.shaderGroupHandleAlignment);
     }
     return result;
 }
@@ -519,6 +522,7 @@ void RayTracingPipelineHandlerVer1::cmdTraceRaysKHR(packet_vkCmdTraceRaysKHR *pP
     }
     if (!found) {
         vktrace_LogError("%llu, %s: Cannot find ray tracing pipeline.", pPacket->header->global_packet_index, "vkCmdTraceRays");
+        return;
     }
     it->second.rayGenSize = pPacket->pRaygenShaderBindingTable->size;
     it->second.rayGenStride = pPacket->pRaygenShaderBindingTable->stride;
@@ -545,7 +549,7 @@ void RayTracingPipelineHandlerVer1::cmdTraceRaysKHR(packet_vkCmdTraceRaysKHR *pP
         int offset = 0;
         auto it2 = sbtAddressToBuffer.find(pPacket->pMissShaderBindingTable->deviceAddress);
         if (it2 == sbtAddressToBuffer.end()) {
-            vktrace_LogWarning("Cannot find address for miss = %llu", pPacket->pMissShaderBindingTable->deviceAddress);
+            vktrace_LogDebug("Cannot find address for miss = %llu", pPacket->pMissShaderBindingTable->deviceAddress);
             it2 = findClosestAddress(pPacket->pMissShaderBindingTable->deviceAddress);
         }
         if (it2 == sbtAddressToBuffer.end()) {
@@ -563,7 +567,7 @@ void RayTracingPipelineHandlerVer1::cmdTraceRaysKHR(packet_vkCmdTraceRaysKHR *pP
         int offset = 0;
         auto it2 = sbtAddressToBuffer.find(pPacket->pHitShaderBindingTable->deviceAddress);
         if (it2 == sbtAddressToBuffer.end()) {
-            vktrace_LogWarning("Cannot find address for hit = %llu", pPacket->pHitShaderBindingTable->deviceAddress);
+            vktrace_LogDebug("Cannot find address for hit = %llu", pPacket->pHitShaderBindingTable->deviceAddress);
             it2 = findClosestAddress(pPacket->pHitShaderBindingTable->deviceAddress);
         }
         if (it2 == sbtAddressToBuffer.end()) {
@@ -581,7 +585,7 @@ void RayTracingPipelineHandlerVer1::cmdTraceRaysKHR(packet_vkCmdTraceRaysKHR *pP
         int offset = 0;
         auto it2 = sbtAddressToBuffer.find(pPacket->pCallableShaderBindingTable->deviceAddress);
         if (it2 == sbtAddressToBuffer.end()) {
-            vktrace_LogWarning("Cannot find address for callable = %llu", pPacket->pCallableShaderBindingTable->deviceAddress);
+            vktrace_LogDebug("Cannot find address for callable = %llu", pPacket->pCallableShaderBindingTable->deviceAddress);
             it2 = findClosestAddress(pPacket->pCallableShaderBindingTable->deviceAddress);
         }
         if (it2 == sbtAddressToBuffer.end()) {

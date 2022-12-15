@@ -4,11 +4,13 @@ set -e
 
 TARGET="x64"
 BUILD_TYPE="debug"
+BUILD_WINDOW_SUPPORT="default"
 
 print_help() {
     echo "Supported parameters are:"
     echo "    --target     <x86|x64|arm_32|arm_64>   (optional, default is x64)"
-    echo "    --build-type <debug|release> (optional, default is debug)"
+    echo "    --build-type <debug|release>           (optional, default is debug)"
+    echo "    --window     <default|wayland>         (optional, set to wayland to build with WSI wayland support (only for arm64/32 now))"
 }
 
 while [[ $# -gt 0 ]]
@@ -22,6 +24,10 @@ do
         --build-type)
             BUILD_TYPE=$2
             echo "Build type $BUILD_TYPE"
+            shift 2
+            ;;
+        --window)
+            BUILD_WINDOW_SUPPORT=$2
             shift 2
             ;;
         *)
@@ -47,6 +53,12 @@ fi
 
 BUILD_TYPE_OPTION=${BUILD_TYPE^}
 
+BUILD_WINDOW_SUPPORT_LIST="default wayland"
+if ! [[ ${BUILD_WINDOW_SUPPORT_LIST} =~ (^|[[:space:]])${BUILD_WINDOW_SUPPORT}($|[[:space:]]) ]]; then
+    echo "Unsupported --window option ${BUILD_WINDOW_SUPPORT}!"
+    exit 1
+fi
+
 if [[ $(uname) == "Linux" || $(uname) =~ "CYGWIN" || $(uname) =~ "MINGW" ]]; then
     CURRENT_DIR="$(dirname "$(readlink -f ${BASH_SOURCE[0]})")"
     CORE_COUNT=$(nproc || echo 4)
@@ -58,7 +70,7 @@ echo CURRENT_DIR=$CURRENT_DIR
 echo CORE_COUNT=$CORE_COUNT
 
 BUILDDIR=${CURRENT_DIR}
-BASEDIR="$BUILDDIR/submodules"
+BASEDIR="$BUILDDIR/external/submodules"
 
 git submodule update --init --recursive
 
@@ -69,5 +81,5 @@ python amalgamate.py
 mkdir -p $BUILDDIR/external
 
 cd ${BUILDDIR}
-python scripts/update_deps.py --config=${BUILD_TYPE_OPTION} --arch=${TARGET} --dir ${BUILDDIR}/external
+python scripts/update_deps.py --config=${BUILD_TYPE_OPTION} --arch=${TARGET} --dir ${BUILDDIR}/external --window ${BUILD_WINDOW_SUPPORT}
 

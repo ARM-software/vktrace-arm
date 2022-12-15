@@ -18,7 +18,6 @@
 
 #include "decompressor.h"
 #include "lz4decompressor.h"
-#include "snpdecompressor.h"
 
 decompressor::~decompressor() {
 
@@ -27,9 +26,6 @@ decompressor::~decompressor() {
 decompressor* create_decompressor(VKTRACE_COMPRESS_TYPE type) {
     if (type == VKTRACE_COMPRESS_TYPE_LZ4) {
         return new lz4decompressor;
-    }
-    else if (type == VKTRACE_COMPRESS_TYPE_SNAPPY) {
-        return new snpdecompressor;
     }
     return nullptr;
 }

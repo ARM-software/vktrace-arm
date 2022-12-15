@@ -50,6 +50,17 @@ class gpuMemory {
         mr.pData = (uint8_t *)pBuf;
     }
 
+    void* getMemoryDataAddr() {
+        if (m_mapRange.empty()) {
+            return NULL;
+        }
+        MapRange mr = m_mapRange.back();
+        if (mr.pData == NULL)
+            return NULL;
+        else
+            return mr.pData;
+    }
+
     // The copyMappingDataPageGuard method is used to copy data to mapped memory during playback. When vktrace
     // saves mapped memory to the trace file, only changed pages are saved. These changed pages are packed into
     // a big data package and saved to the trace file.

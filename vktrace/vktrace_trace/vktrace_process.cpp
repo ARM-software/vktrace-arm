@@ -51,7 +51,7 @@ extern "C" {
 #include <cstddef>
 
 const unsigned long kWatchDogPollTime = 250;
-
+static pthread_t traceid = 0;
 #if defined(WIN32)
 void SafeCloseHandle(HANDLE& _handle) {
     if (_handle) {
@@ -156,10 +156,11 @@ VKTRACE_THREAD_ROUTINE_RETURN_TYPE Process_RunWatchdogThread(LPVOID _procInfoPtr
     rval = 1;
     while (waitpid(pProcInfo->processId, &status, options) != -1) {
         if (WIFEXITED(status)) {
-            vktrace_LogVerbose("Child process exited.");
+            vktrace_linux_sync_wait_for_thread(&traceid);
             if (g_settings.program != NULL) {
                 exit(0);
             }
+            vktrace_LogVerbose("Child process exited.");
             rval = WEXITSTATUS(status);
             break;
         } else if (WCOREDUMP(status)) {
@@ -219,8 +220,6 @@ bool CreateAdditionalRecordTraceThread(vktrace_process_info* pInfo) {
 VKTRACE_COMPRESS_TYPE compressTypeConvert(const char *name) {
     if (strcmp(name, "lz4") == 0)
         return VKTRACE_COMPRESS_TYPE_LZ4;
-    else if (strcmp(name, "snappy") == 0)
-        return VKTRACE_COMPRESS_TYPE_SNAPPY;
     return VKTRACE_COMPRESS_TYPE_NONE;
 }
 
@@ -272,10 +271,7 @@ VKTRACE_THREAD_ROUTINE_RETURN_TYPE Process_RunRecordTraceThread(LPVOID _threadIn
     }
 
     compressor* g_compressor = NULL;
-    if (strcmp(g_settings.compressType, "snappy") == 0) {
-        g_compressor = create_compressor(VKTRACE_COMPRESS_TYPE_SNAPPY);
-    }
-    else if (strcmp(g_settings.compressType, "lz4") == 0) {
+    if (strcmp(g_settings.compressType, "lz4") == 0) {
         g_compressor = create_compressor(VKTRACE_COMPRESS_TYPE_LZ4);
     }
 
@@ -341,6 +337,7 @@ VKTRACE_THREAD_ROUTINE_RETURN_TYPE Process_RunRecordTraceThread(LPVOID _threadIn
     std::vector<uint64_t> injectedCalls;
     std::unordered_map<VkDevice, uint32_t> deviceToFeatures;
     uint64_t decompress_file_size = fileOffset;
+    traceid = pthread_self();
     while (!terminationSignalArrived && pInfo->serverRequestsTermination == FALSE) {
         // get a packet
         // vktrace_LogDebug("Waiting for a packet...");
@@ -422,7 +419,7 @@ VKTRACE_THREAD_ROUTINE_RETURN_TYPE Process_RunRecordTraceThread(LPVOID _threadIn
             if (pInfo->pTraceFile != NULL) {
                 decompress_file_size += pHeader->size;
                 vktrace_enter_critical_section(&pInfo->pProcessInfo->traceFileCriticalSection);
-                if ((strcmp(g_settings.compressType, "lz4") == 0 || strcmp(g_settings.compressType, "snappy") == 0) &&
+                if ((strcmp(g_settings.compressType, "lz4") == 0) &&
                         pHeader->size - sizeof(vktrace_trace_packet_header) > g_settings.compressThreshold) {
                     if (compress_packet(g_compressor, pHeader) != 0) {
                         vktrace_LogError("Failed to compress the packet for packet_id = %hu", pHeader->packet_id);
@@ -483,6 +480,7 @@ VKTRACE_THREAD_ROUTINE_RETURN_TYPE Process_RunRecordTraceThread(LPVOID _threadIn
         bytes_written = fwrite(&type, sizeof(uint16_t), 1, pInfo->pTraceFile);
     }
     fclose(pInfo->pTraceFile);
+    pInfo->pTraceFile = NULL;
     delete g_compressor;
 
     VKTRACE_DELETE(fileLikeSocket);

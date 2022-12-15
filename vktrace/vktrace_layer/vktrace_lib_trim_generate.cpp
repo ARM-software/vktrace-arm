@@ -297,6 +297,7 @@ vktrace_trace_packet_header *vkQueueSubmit(bool makeCall, VkQueue queue, uint32_
     uint32_t i = 0;
     for (i = 0; i < submitCount; ++i) {
         arrayByteCount += vk_size_vksubmitinfo(&pSubmits[i]);
+        arrayByteCount += get_struct_chain_size(&pSubmits[i]);
     }
     CREATE_TRACE_PACKET(vkQueueSubmit, arrayByteCount);
 
@@ -312,6 +313,7 @@ vktrace_trace_packet_header *vkQueueSubmit(bool makeCall, VkQueue queue, uint32_
     pPacket->result = result;
     vktrace_add_buffer_to_trace_packet(pHeader, (void **)&(pPacket->pSubmits), submitCount * sizeof(VkSubmitInfo), pSubmits);
     for (i = 0; i < submitCount; ++i) {
+        vktrace_add_pnext_structs_to_trace_packet(pHeader, (void*)(pPacket->pSubmits + i), pSubmits + i);
         vktrace_add_buffer_to_trace_packet(pHeader, (void **)&(pPacket->pSubmits[i].pCommandBuffers),
                                            pPacket->pSubmits[i].commandBufferCount * sizeof(VkCommandBuffer),
                                            pSubmits[i].pCommandBuffers);

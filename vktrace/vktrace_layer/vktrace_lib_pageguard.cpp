@@ -119,9 +119,11 @@ bool getPageGuardEnableFlag() {
                     if (env_target_range_size) {
                         VkDeviceSize rangesize;
                         if (sscanf(env_target_range_size, "%" PRIx64, &rangesize) == 1) {
+#if PAGEGUARD_PAGEGUARD_TARGET_RANGE_SIZE_MIN > 0
                             if (rangesize >= PAGEGUARD_PAGEGUARD_TARGET_RANGE_SIZE_MIN) {
                                 set_pageguard_target_range_size(rangesize);
                             }
+#endif
                         }
                     }
                 } else {

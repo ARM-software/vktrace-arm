@@ -138,15 +138,18 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
 
     if (BUILD_WSI_XCB_SUPPORT)
         find_package(XCB REQUIRED)
+        message(STATUS "BUILD WITH WSI XCB SUPPORT")
     endif()
 
     if (BUILD_WSI_XLIB_SUPPORT)
         find_package(X11 REQUIRED)
+        message(STATUS "BUILD WITH WSI XLIB SUPPORT")
     endif()
 
     if (BUILD_WSI_WAYLAND_SUPPORT)
         find_package(Wayland REQUIRED)
         include_directories(${WAYLAND_CLIENT_INCLUDE_DIR})
+        message(STATUS "BUILD WITH WSI WAYLAND SUPPORT")
     endif()
 elseif(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
     option(BUILD_MOLTENVK_SUPPORT "Build MoltenVK WSI support" ON)
@@ -156,7 +159,7 @@ endif()
 set (VULKAN_SDK $ENV{VULKAN_SDK})
 
 # NOTE: jsoncpp is located in SUBPROJECTS_DIR.
-set (SUBPROJECTS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/submodules)
+set (SUBPROJECTS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/external/submodules)
 
 set(VULKANTOOLS_SCRIPTS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/scripts)
 

@@ -47,7 +47,7 @@ uint64_t get_arch();
 uint64_t get_os();
 
 char* find_available_filename(const char* originalFilename, BOOL bForceOverwrite);
-deviceFeatureSupport query_device_feature(PFN_vkGetPhysicalDeviceFeatures2KHR GetPhysicalDeviceFeatures, VkPhysicalDevice physicalDevice, const VkDeviceCreateInfo *pCreateInfo);
+deviceFeatureSupport query_device_feature(PFN_vkGetPhysicalDeviceFeatures2KHR GetPhysicalDeviceFeatures, PFN_vkGetPhysicalDeviceProperties2KHR GetPhysicalDeviceProperties, VkPhysicalDevice physicalDevice, const VkDeviceCreateInfo *pCreateInfo);
 static FILE* vktrace_open_trace_file(vktrace_process_capture_trace_thread_info* trace_thread_info) {
     FILE* tracefp = NULL;
     assert(trace_thread_info != NULL);
@@ -82,7 +82,8 @@ static FILE* vktrace_open_trace_file(vktrace_process_capture_trace_thread_info* 
 typedef enum packet_tag {
     PACKET_TAG__INJECTED = 0x1,
     PACKET_TAG_ASCAPTUREREPLAY = 0x2,
-    PACKET_TAG_BUFFERCAPTUREREPLAY = 0x4
+    PACKET_TAG_BUFFERCAPTUREREPLAY = 0x4,
+    PACKET_TAG_RTPSGHCAPTUREREPLAY = 0x8
 } packet_tag;
 
 enum TripleValue

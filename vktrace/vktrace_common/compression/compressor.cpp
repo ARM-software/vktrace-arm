@@ -18,7 +18,6 @@
 
 #include "compressor.h"
 #include "lz4compressor.h"
-#include "snpcompressor.h"
 
 compressor::~compressor() {
 
@@ -27,9 +26,6 @@ compressor::~compressor() {
 compressor* create_compressor(VKTRACE_COMPRESS_TYPE type) {
     if (type == VKTRACE_COMPRESS_TYPE_LZ4) {
         return new lz4compressor;
-    }
-    else if (type == VKTRACE_COMPRESS_TYPE_SNAPPY) {
-        return new snpcompressor;
     }
 
     return nullptr;
@@ -51,7 +47,7 @@ int compress_packet(compressor *g_compressor, vktrace_trace_packet_header* &pPac
         return -1;
     }
     else if (compressed_data_size >= orig_data_size) {
-        vktrace_LogWarning("The data after compression becomes even larger (%d bytes to %d bytes), so it won't be compressed.\n", orig_data_size, compressed_data_size);
+        vktrace_LogDebug("The data after compression becomes even larger (%d bytes to %d bytes), so it won't be compressed.\n", orig_data_size, compressed_data_size);
         return 0;
     }
     else {

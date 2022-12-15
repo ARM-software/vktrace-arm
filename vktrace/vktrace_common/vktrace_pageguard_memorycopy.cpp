@@ -58,7 +58,7 @@ void vktrace_sem_delete(vktrace_sem_id sid) {
 #if defined(WIN32)
     CloseHandle(sid);
 #else
-    sem_close(sid);
+    sem_destroy(sid);
     delete (sem_t *)sid;
 #endif
 #endif  // USE_PAGEGUARD_SPEEDUP

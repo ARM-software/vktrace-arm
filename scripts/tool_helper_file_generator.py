@@ -492,7 +492,7 @@ class ToolHelperFileOutputGenerator(OutputGenerator):
                                 star = '*'
                             if 'vksubpassdescription2' == item.name.lower():
                                 struct_size_funcs += '        if (struct_ptr->%s != NULL && struct_ptr->%s->pNext) {\n' % (member.name, member.name)
-                                struct_size_funcs += '            struct_size += get_struct_chain_size(&struct_ptr->%s->pNext);\n' % member.name
+                                struct_size_funcs += '            struct_size += get_struct_chain_size(struct_ptr->%s->pNext);\n' % member.name
                                 struct_size_funcs += '        }\n'
                             if 'vkraytracingpipelinecreateinfokhr' == lower_case_name:
                                 struct_size_funcs += '        if (struct_ptr->%s != NULL) {\n' % member.name

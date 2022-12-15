@@ -252,20 +252,20 @@ vktrace_SettingInfo g_settings_info[] = {
      {&replaySettings.forceSyncImgIdx},
      TRUE,
      "Force sync the acquire next image index."},
-    {"dascr",
-     "disableAsCaptureReplay",
-     VKTRACE_SETTING_BOOL,
-     {&replaySettings.disableAsCaptureReplay},
-     {&replaySettings.disableAsCaptureReplay},
+    {"drcr",
+     "disableRQAndRTPCaptureReplay",
+     VKTRACE_SETTING_UINT,
+     {&replaySettings.disableRQAndRTPCaptureReplay},
+     {&replaySettings.disableRQAndRTPCaptureReplay},
      TRUE,
-     "Disable acceleration structure capture replay feature."},
-    {"dbcr",
-     "disableBufferCaptureReplay",
-     VKTRACE_SETTING_BOOL,
-     {&replaySettings.disableBufferCaptureReplay},
-     {&replaySettings.disableBufferCaptureReplay},
+     "Disable ray query and ray tracing capture replay feature,these three values can be combined to use: accelerationStructureCaptureReplay :0x01, bufferDeviceAddressCaptureReplay :0x02, rayTracingPipelineShaderGroupHandleCaptureReplay :0x04."},
+    {"spc",
+     "specialPatternConfig",
+     VKTRACE_SETTING_UINT,
+     {&replaySettings.specialPatternConfig},
+     {&replaySettings.specialPatternConfig},
      TRUE,
-     "Disable buffer capture replay feature."},
+     "Special Pattern Config: 0:None, 1:PatternA, other reserve."},
     {"frq",
      "forceRayQuery",
      VKTRACE_SETTING_BOOL,
@@ -294,15 +294,13 @@ vktrace_SettingInfo g_settings_info[] = {
      {&replaySettings.perfMeasuringMode},
      TRUE,
      "Set the performance measuring mode, 0 - off, 1 - on."},
-#if defined(_DEBUG)
-    {"pcgpi",
-     "printCurrentGPI",
-     VKTRACE_SETTING_BOOL,
-     {&replaySettings.printCurrentGPI},
-     {&replaySettings.printCurrentGPI},
+    {"pc",
+     "printCurrentPacketIndex",
+     VKTRACE_SETTING_UINT,
+     {&replaySettings.printCurrentPacketIndex},
+     {&replaySettings.printCurrentPacketIndex},
      TRUE,
-     "Print current GPI that is about to be replayed."},
-#endif
+     "Print current replayed packet index: 0 - off, 1 - only print all frames, 2 - print all calls and frames, > 10 print every N calls and frames."},
     {"esv",
      "enableSyncValidation",
      VKTRACE_SETTING_BOOL,
@@ -351,7 +349,30 @@ vktrace_SettingInfo g_settings_info[] = {
      {&replaySettings.finishBeforeSwap},
      {&replaySettings.finishBeforeSwap},
      TRUE,
-     "inject the vkDeviceWaitIdle function before vkQueuePresent."}
+     "inject the vkDeviceWaitIdle function before vkQueuePresent."},
+    {"fpsr",
+     "forcePipelineShadingRate",
+     VKTRACE_SETTING_STRING,
+     {&replaySettings.forcePipelineShadingRate},
+     {&replaySettings.forcePipelineShadingRate},
+     TRUE,
+     "Force enable pipeline shading rate and set fragment size with [width,height], other types of VRS will be overriden."},
+    {"evsc",
+     "enableVirtualSwapchain",
+     VKTRACE_SETTING_BOOL,
+     {&replaySettings.enableVirtualSwapchain},
+     {&replaySettings.enableVirtualSwapchain},
+     TRUE,
+     "Enable virtual swapchain."},
+    {"vscpm",
+     "enableVscPerfMode",
+     VKTRACE_SETTING_BOOL,
+     {&replaySettings.enableVscPerfMode},
+     {&replaySettings.enableVscPerfMode},
+     TRUE,
+     "Enable virtual swapchain performance mode."
+    }
+
 };
 
 vktrace_SettingGroup g_replaySettingGroup = {"vkreplay", sizeof(g_settings_info) / sizeof(g_settings_info[0]), &g_settings_info[0], nullptr};
@@ -516,9 +537,17 @@ int main_loop(vktrace_replay::ReplayDisplay display, Sequencer& seq, vktrace_tra
             packet = seq.get_next_packet();
             if (!packet) break;
 
-            if (replaySettings.printCurrentGPI)
-            {
-                vktrace_LogDebug("Replaying GPI %lu", packet->global_packet_index);
+            uint32_t printIndex = replaySettings.printCurrentPacketIndex;
+            if ((printIndex == 2) || (printIndex > 10 && packet->global_packet_index % printIndex == 0)) {
+                vktrace_LogAlways("Replaying packet_index: %llu, api_name:%s", packet->global_packet_index,
+                                  vktrace_vk_packet_id_name((VKTRACE_TRACE_PACKET_ID_VK)packet->packet_id));
+            }
+
+            if (packet->packet_id == VKTRACE_TPI_VK_vkQueuePresentKHR && g_replayer_interface != NULL) {
+                uint32_t printFrameNumber = g_replayer_interface->GetFrameNumber();
+                if (printIndex == 1 || printIndex == 2 || (printIndex > 10 && printFrameNumber % printIndex == 0)) {
+                    vktrace_LogAlways("Replaying at frame: %u", printFrameNumber);
+                }
             }
 
             switch (packet->packet_id) {
@@ -880,11 +909,17 @@ static void readMetaData(vktrace_trace_file_header* pFileHeader) {
 
                 if (meda_data_json.isMember("deviceFeatures")) {
                     Json::Value device = meda_data_json["deviceFeatures"];
-                    int deviceCount = device["device"].size();
+                    unsigned deviceCount = device["device"].size();
                     extern std::unordered_map<VkDevice, deviceFeatureSupport> g_TraceDeviceToDeviceFeatures;
-                    for(unsigned int i = 0; i < deviceCount; i++){
+                    for (unsigned i = 0; i < deviceCount; i++) {
                         VkDevice traceDevice = (VkDevice)std::strtoul(device["device"][i]["deviceHandle"].asCString(), 0, 16);
-                        deviceFeatureSupport deviceFeatures = {device["device"][i]["accelerationStructureCaptureReplay"].asUInt(), device["device"][i]["bufferDeviceAddressCaptureReplay"].asUInt()};
+                        deviceFeatureSupport deviceFeatures = {
+                            64,
+                            device["device"][i]["rayTracingPipelineShaderGroupHandleCaptureReplay"].asUInt(),
+                            device["device"][i]["accelerationStructureCaptureReplay"].asUInt(),
+                            device["device"][i]["bufferDeviceAddressCaptureReplay"].asUInt(),
+                            false
+                        };
                         g_TraceDeviceToDeviceFeatures[traceDevice] = deviceFeatures;
                     }
                 }

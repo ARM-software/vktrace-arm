@@ -125,34 +125,24 @@ static std::unordered_map<const void *, VkAllocationCallbacks> s_trimAllocatorMa
 static std::unordered_map<VkDevice, VkCommandBuffer> s_deviceToCommandBufferMap;
 
 //=========================================================================
-VkDeviceSize calculateImageSubResourceSize(VkDevice device, VkImageCreateInfo imageCreateInfo,
-                                           const VkAllocationCallbacks *pAllocator, uint32_t subresourceIndex) {
-    VkDeviceSize imageSubResourceSize = 0;
-    VkImage image;
-    imageCreateInfo.mipLevels = 1;
-    imageCreateInfo.extent.depth = std::max(static_cast<uint32_t>(1), imageCreateInfo.extent.depth >> subresourceIndex);
-    imageCreateInfo.extent.height = std::max(static_cast<uint32_t>(1), imageCreateInfo.extent.height >> subresourceIndex);
-    imageCreateInfo.extent.width = std::max(static_cast<uint32_t>(1), imageCreateInfo.extent.width >> subresourceIndex);
-
-    VkResult result = mdd(device)->devTable.CreateImage(device, &imageCreateInfo, NULL, &image);
-    assert(result == VK_SUCCESS);
-
-    if (result == VK_SUCCESS) {
-        VkMemoryRequirements memoryRequirements;
-
-        mdd(device)->devTable.GetImageMemoryRequirements(device, image, &memoryRequirements);
-        imageSubResourceSize = memoryRequirements.size;
-    }
-    mdd(device)->devTable.DestroyImage(device, image, pAllocator);
-    return imageSubResourceSize;
+VkDeviceSize calculateImageSubResourceSize(VkDevice device, VkImage image, VkImageCreateInfo imageCreateInfo,
+                                           uint32_t subresourceIndex) {
+    VkDeviceSize mipSize;
+    VkImageAspectFlags aspectFlag = getImageAspectFromFormat(imageCreateInfo.format);
+    VkImageSubresource subResource {aspectFlag, subresourceIndex, 0};
+    VkSubresourceLayout subResourceLayout;
+    mdd(device)->devTable.GetImageSubresourceLayout(device, image, &subResource, &subResourceLayout);
+    // Assume that each layer of images has the same size
+    mipSize = subResourceLayout.size * imageCreateInfo.arrayLayers;
+    return mipSize;
 }
 
-bool calculateImageAllSubResourceSize(VkDevice device, VkImageCreateInfo imageCreateInfo, const VkAllocationCallbacks *pAllocator,
+bool calculateImageAllSubResourceSize(VkDevice device, VkImage image, VkImageCreateInfo imageCreateInfo,
                                       std::vector<VkDeviceSize> &subResourceSizes) {
     uint32_t wholeSize = 0;
     subResourceSizes.push_back(0);
     for (uint32_t i = 0; i < imageCreateInfo.mipLevels; i++) {
-        subResourceSizes.push_back(calculateImageSubResourceSize(device, imageCreateInfo, pAllocator, i));
+        subResourceSizes.push_back(calculateImageSubResourceSize(device, image, imageCreateInfo, i));
         wholeSize += subResourceSizes[i + 1];
     }
     subResourceSizes[0] = wholeSize;
@@ -338,6 +328,7 @@ xcb_connection_t *get_keyboard_connection() { return keyboardConnection; }
 //=========================================================================
 enum_key_state GetAsyncKeyState(int keyCode) {
     enum_key_state keyState = enum_key_state::Released;
+#if defined VK_USE_PLATFORM_XCB_KHR
     xcb_connection_t *connection = get_keyboard_connection();
     xcb_key_symbols_t *hotKeySymbols = xcb_key_symbols_alloc(connection);
     if (hotKeySymbols) {
@@ -353,7 +344,9 @@ enum_key_state GetAsyncKeyState(int keyCode) {
         }
         xcb_key_symbols_free(hotKeySymbols);
     }
-
+#else
+    vktrace_LogWarning("Invalid operation! XCB is not supported!");
+#endif
     return keyState;
 }
 
@@ -368,6 +361,7 @@ enum_key_state GetAsyncKeyState(int keyCode) {
 //=========================================================================
 enum_key_state key_state_platform_specific(char *pHotkeyString) {
     enum_key_state KeyState = enum_key_state::Released;
+#if defined VK_USE_PLATFORM_XLIB_KHR
     static std::unordered_map<std::string, int> KeyCodeMap = {{"F1", XK_F1},
                                                               {"F2", XK_F2},
                                                               {"F3", XK_F3},
@@ -390,6 +384,9 @@ enum_key_state key_state_platform_specific(char *pHotkeyString) {
         int keyCode = iteratorKeyCode->second;
         KeyState = GetAsyncKeyState(keyCode);
     }
+#else
+    vktrace_LogWarning("Invalid operation! XLIB is not supported!");
+#endif
     return KeyState;
 }
 #endif  // ANDROID
@@ -1209,6 +1206,56 @@ void delete_redundant_package(StateTracker &stateTracker) {
                         bDelete = false;
                     }
                 } else {
+                    packet++;
+                }
+                break;
+            case VKTRACE_TPI_VK_vkCmdPipelineBarrier:
+                if (bDelete) {
+                    vktrace_delete_trace_packet(&pHeader);
+                    packet = packet_list.erase(packet);
+                } else {
+                    const VkBufferMemoryBarrier *pBufferMemoryBarriers =
+                        (const VkBufferMemoryBarrier *)vktrace_trace_packet_interpret_buffer_pointer(
+                            pHeader, (intptr_t)((packet_vkCmdPipelineBarrier*)pHeader->pBody)->pBufferMemoryBarriers);
+                    if (pBufferMemoryBarriers != NULL) {
+                        for (uint32_t i = 0; i < ((packet_vkCmdPipelineBarrier*)pHeader->pBody)->bufferMemoryBarrierCount; i++) {
+                            trim::ObjectInfo* bufferInfo = nullptr;
+                            if (pBufferMemoryBarriers[i].buffer != VK_NULL_HANDLE) {
+                                bufferInfo = trim::get_Buffer_objectInfo(pBufferMemoryBarriers[i].buffer);
+                            }
+
+                            if (bufferInfo == nullptr) {
+                                vktrace_delete_trace_packet(&pHeader);
+                                packet = packet_list.erase(packet);
+                                ObjectInfo *cmdbufferInfo = get_CommandBuffer_objectInfo(cmdBuffer.first);
+                                cb_delete_packet[cmdBuffer.first] = cmdbufferInfo;
+                                bDelete = true;
+                                delBeginPktId = VKTRACE_TPI_VK_vkCmdBeginRenderPass;
+                                break;
+                            }
+                        }
+                    }
+                    const VkImageMemoryBarrier *pImageMemoryBarriers =
+                        (const VkImageMemoryBarrier *)vktrace_trace_packet_interpret_buffer_pointer(
+                            pHeader, (intptr_t)((packet_vkCmdPipelineBarrier*)pHeader->pBody)->pImageMemoryBarriers);
+                    if (pImageMemoryBarriers != NULL) {
+                        for (uint32_t i = 0; i < ((packet_vkCmdPipelineBarrier*)pHeader->pBody)->imageMemoryBarrierCount; i++) {
+                            trim::ObjectInfo* imageInfo = nullptr;
+                            if (pImageMemoryBarriers[i].image != VK_NULL_HANDLE) {
+                                imageInfo = trim::get_Image_objectInfo(pImageMemoryBarriers[i].image);
+                            }
+
+                            if (imageInfo == nullptr) {
+                                vktrace_delete_trace_packet(&pHeader);
+                                packet = packet_list.erase(packet);
+                                ObjectInfo *cmdbufferInfo = get_CommandBuffer_objectInfo(cmdBuffer.first);
+                                cb_delete_packet[cmdBuffer.first] = cmdbufferInfo;
+                                bDelete = true;
+                                delBeginPktId = VKTRACE_TPI_VK_vkCmdBeginRenderPass;
+                                break;
+                            }
+                        }
+                    }
                     packet++;
                 }
                 break;
@@ -3389,7 +3436,7 @@ bool isValidDescriptorIndex(const VkWriteDescriptorSet *pDescriptorWrites, uint3
             case VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR: {
                 if (pDescriptorWrites->pNext != nullptr) {
                     VkWriteDescriptorSetAccelerationStructureKHR* pWriteDSAS = (VkWriteDescriptorSetAccelerationStructureKHR*)(pDescriptorWrites->pNext);
-                    for (int i = 0; i < pWriteDSAS->accelerationStructureCount; i++){
+                    for (unsigned i = 0; i < pWriteDSAS->accelerationStructureCount; i++){
                         ObjectInfo *objectInfo = trim::get_AccelerationStructure_objectInfo(pWriteDSAS->pAccelerationStructures[i]);
                         if (objectInfo == nullptr) {
                             isValidDescriptor = false;
@@ -5044,13 +5091,31 @@ void recreate_signalled_semaphores(StateTracker &stateTracker) {
     VkSemaphore *pSignalSemaphores = VKTRACE_NEW_ARRAY(VkSemaphore, maxSemaphores);
     for (auto obj = stateTracker.createdSemaphores.begin(); obj != stateTracker.createdSemaphores.end(); obj++) {
         VkQueue queue = obj->second.ObjectInfo.Semaphore.signaledOnQueue;
+        int8_t semaphoreType = obj->second.ObjectInfo.Semaphore.semaphoreType;
         if (queue != VK_NULL_HANDLE) {
             VkSemaphore semaphore = obj->first;
             pSignalSemaphores[signalSemaphoreCount++] = semaphore;
 
             VkSubmitInfo submit_info;
             submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-            submit_info.pNext = NULL;
+            if(semaphoreType == -1){
+                submit_info.pNext = NULL;
+            }
+            else if(semaphoreType == VK_SEMAPHORE_TYPE_TIMELINE){
+                // according to the spec:
+                // If any element of pWaitSemaphores or pSignalSemaphores was created with a VkSemaphoreType of VK_SEMAPHORE_TYPE_TIMELINE, 
+                // then the pNext chain must include a VkTimelineSemaphoreSubmitInfo structure
+                VkTimelineSemaphoreSubmitInfo timelineSemaphoreSubmit_info;
+                timelineSemaphoreSubmit_info.sType = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO;
+                timelineSemaphoreSubmit_info.pNext = NULL;
+                timelineSemaphoreSubmit_info.waitSemaphoreValueCount = 0;
+                timelineSemaphoreSubmit_info.pWaitSemaphoreValues = NULL;
+                timelineSemaphoreSubmit_info.signalSemaphoreValueCount = 1;
+                // temporary value 1, may be adjusted later
+                const uint64_t pSignalSemaphoreValues[1] = {1};
+                timelineSemaphoreSubmit_info.pSignalSemaphoreValues = pSignalSemaphoreValues;
+                submit_info.pNext = (const void*)&timelineSemaphoreSubmit_info;
+            }
             submit_info.waitSemaphoreCount = 0;
             submit_info.pWaitSemaphores = NULL;
             submit_info.pWaitDstStageMask = NULL;
@@ -5392,7 +5457,7 @@ void write_all_referenced_object_calls() {
                                         case VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR: {
                                             assert(pDescriptorWrites[i].pNext != nullptr);
                                             VkWriteDescriptorSetAccelerationStructureKHR *pWriteDSAS = (VkWriteDescriptorSetAccelerationStructureKHR*)(pDescriptorWrites[i].pNext);
-                                            for(int asi = 0; asi < pWriteDSAS->accelerationStructureCount; asi++) {
+                                            for (unsigned asi = 0; asi < pWriteDSAS->accelerationStructureCount; asi++) {
                                                 trim::mark_AccelerationStructure_reference(pWriteDSAS->pAccelerationStructures[asi]);
                                             }
                                         } break;

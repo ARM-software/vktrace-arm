@@ -652,7 +652,7 @@ vktrace_trace_packet_header* preload_get_next_packet()
         vktrace_LogError("This is a wrong packetage !");
     }
     cur_chunk->current_address += pHeader->size;
-    if(replaySettings.printCurrentGPI) {
+    if(replaySettings.printCurrentPacketIndex > 1) {
         vktrace_LogDebug("Chunk (%llu), pHeader: %p,id %llu, size: %llu, boundary_addr: %p",
             g_preload_context.using_idx, pHeader, pHeader->global_packet_index, pHeader->size, boundary_addr);
     }
@@ -673,7 +673,7 @@ vktrace_trace_packet_header* preload_get_next_packet()
         vktrace_LogDebug("Chunk %llu is unlocked when preloading !", g_preload_context.using_idx);
 
         if(update_tmp_address == true) {
-            vktrace_LogDebug("Chunk %llu ~ %llu are used by the packet(id: %llu, size: %llu) when preloading ! %llu chunks are occupied,", 
+            vktrace_LogDebug("Chunk %llu ~ %llu are used by the packet(id: %llu, size: %llu) when preloading ! %llu chunks are occupied,",
                 g_preload_context.using_idx, g_preload_context.using_idx + chunks_occupied -1, pHeader->global_packet_index, pHeader->size, chunks_occupied);
             for(uint32_t chunk_idx = g_preload_context.using_idx + 1; chunk_idx < g_preload_context.using_idx + chunks_occupied; ++chunk_idx){
                 mem_chunk_info* tmp_chunk = &g_preload_context.chunks[chunk_idx];

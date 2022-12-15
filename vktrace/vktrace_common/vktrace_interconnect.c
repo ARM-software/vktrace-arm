@@ -434,6 +434,8 @@ BOOL vktrace_MessageStream_Recv(MessageStream* pStream, void* _out, uint64_t _le
                 return FALSE;
             }
         } else if (dataRead == 0) {
+            if (attempts > 200)     // When entering this branch for the 1st time, attempts might be already greater than 200. Reset it.
+                attempts = 0;
             // From recv(2): "When  a  stream  socket  peer  has  performed  an orderly shutdown, the return value will be 0"
             // Try 100 times before sleeping for a while. When we have tried 200 times, give up.
             if (attempts == 100) {

@@ -26,7 +26,10 @@ extern "C" {
 __attribute__((visibility("default"))) vkDisplayWayland *CreateVkDisplayWayland() { return new vkDisplayWayland(); }
 }
 
-vkDisplayWayland::vkDisplayWayland() : m_windowWidth(0), m_windowHeight(0) {
+vkDisplayWayland::vkDisplayWayland() :
+    m_display(nullptr), m_compositor(nullptr), m_shell(nullptr), m_wl_surface(nullptr), m_shell_surface(nullptr), m_seat(nullptr), \
+    m_pointer(nullptr), m_keyboard(nullptr), m_output(nullptr), \
+    m_windowWidth(0), m_windowHeight(0) {
     memset(&m_surface, 0, sizeof(VkIcdSurfaceWayland));
 
     shell_surface_listener.ping = handle_ping;

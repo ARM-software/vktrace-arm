@@ -297,6 +297,7 @@ typedef struct _Trim_ObjectInfo {
                                                  // and vkQueuePresentKHR also wait or signal semaphore,
                                                  // so it's also needed to track the state change caused
                                                  // by them.
+            int8_t semaphoreType;                // Record semaphore type
         } Semaphore;
         struct _Fence {  // VkFence
             const VkAllocationCallbacks *pAllocator;

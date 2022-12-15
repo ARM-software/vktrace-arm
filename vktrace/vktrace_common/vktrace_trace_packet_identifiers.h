@@ -510,6 +510,32 @@ typedef enum _VKTRACE_TRACE_PACKET_ID_VK {
     VKTRACE_TPI_VK_vkGetPrivateDataEXT = 425,
     VKTRACE_TPI_VK_vkGetPhysicalDeviceToolProperties = 426,
     VKTRACE_TPI_VK_vkCreatePrivateDataSlot = 427,
+    VKTRACE_TPI_VK_vkQueueSubmit2KHR = 428,
+    VKTRACE_TPI_VK_vkCmdDispatchBaseKHR = 429,
+    VKTRACE_TPI_VK_vkCmdDrawIndexedIndirectCountKHR = 430,
+    VKTRACE_TPI_VK_vkCmdDrawIndirectCountKHR = 431,
+    VKTRACE_TPI_VK_vkCmdResetEvent2KHR = 432,
+    VKTRACE_TPI_VK_vkCmdSetDeviceMaskKHR = 433,
+    VKTRACE_TPI_VK_vkCmdSetEvent2KHR = 434,
+    VKTRACE_TPI_VK_vkEnumeratePhysicalDeviceGroupsKHR = 435,
+    VKTRACE_TPI_VK_vkGetDeviceGroupPeerMemoryFeaturesKHR = 436,
+    VKTRACE_TPI_VK_vkGetSemaphoreCounterValueKHR = 437,
+    VKTRACE_TPI_VK_vkGetDeviceBufferMemoryRequirementsKHR = 438,
+    VKTRACE_TPI_VK_vkGetDeviceImageMemoryRequirementsKHR = 439,
+    VKTRACE_TPI_VK_vkGetDeviceImageSparseMemoryRequirementsKHR = 440,
+    VKTRACE_TPI_VK_vkCmdPipelineBarrier2KHR = 441,
+    VKTRACE_TPI_VK_vkCmdResolveImage2KHR = 442,
+    VKTRACE_TPI_VK_vkCmdWaitEvents2KHR = 443,
+    VKTRACE_TPI_VK_vkCmdWriteTimestamp2KHR = 444,
+    VKTRACE_TPI_VK_vkSignalSemaphoreKHR = 445,
+    VKTRACE_TPI_VK_vkWaitForPresentKHR = 446,
+    VKTRACE_TPI_VK_vkWaitSemaphoresKHR = 447,
+    VKTRACE_TPI_VK_vkCmdBlitImage2KHR = 448,
+    VKTRACE_TPI_VK_vkCmdCopyBuffer2KHR = 449,
+    VKTRACE_TPI_VK_vkCmdCopyBufferToImage2KHR = 450,
+    VKTRACE_TPI_VK_vkCmdCopyImage2KHR = 451,
+    VKTRACE_TPI_VK_vkCmdCopyImageToBuffer2KHR = 452,
+
     VKTRACE_TPI_VK_vkCmdPushConstantsRemap = 0xFFEC,            // non-standard API derived from vkCmdPushConstants
     VKTRACE_TPI_VK_vkFlushMappedMemoryRangesRemap = 0xFFED,     // non-standard API derived from vkFlushMappedMemoryRanges
     VKTRACE_TPI_VK_vkCmdCopyBufferRemapBuffer = 0xFFEE,         // non-standard API derived from vkCmdCopyBuffer
@@ -549,7 +575,6 @@ typedef struct {
 typedef enum VKTRACE_COMPRESS_TYPE {
     VKTRACE_COMPRESS_TYPE_NONE   = 0,
     VKTRACE_COMPRESS_TYPE_LZ4    = 1,
-    VKTRACE_COMPRESS_TYPE_SNAPPY = 2, // deprecated and unsupported now
 } VKTRACE_COMPRESS_TYPE;
 
 typedef enum VKTRACE_TRACER_FEATURE {
@@ -563,6 +588,8 @@ typedef enum VKTRACE_FILE_HEADER_FLAG {
 } VKTRACE_FILE_HEADER_FLAG;
 
 typedef struct _deviceFeatureSupport{
+    uint32_t propertyShaderGroupHandleCaptureReplaySize;
+    VkBool32 rayTracingPipelineShaderGroupHandleCaptureReplay;
     VkBool32 accelerationStructureCaptureReplay;
     VkBool32 bufferDeviceAddressCaptureReplay;
     VkBool32 accelerationStructureHostCommands;

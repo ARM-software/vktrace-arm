@@ -37,7 +37,7 @@ LAYER_BUILD_DIR=$PWD
 echo LAYER_BUILD_DIR="${LAYER_BUILD_DIR}"
 
 # libcollector path
-LIBCOLLECTOR_LAYER_DIR=${LAYER_BUILD_DIR}/../submodules/libcollector
+LIBCOLLECTOR_LAYER_DIR=${LAYER_BUILD_DIR}/../external/submodules/libcollector
 
 function create_APK() {
     aapt package -f -M AndroidManifest.xml -I "$ANDROID_SDK_HOME/platforms/android-23/android.jar" -S res -F bin/$1-unaligned.apk bin/libs
@@ -60,6 +60,9 @@ do
     cp $LAYER_BUILD_DIR/libs/${abi}/libVkLayer_monitor.so $LAYER_BUILD_DIR/vkreplay/bin/libs/lib/${abi}/libVkLayer_monitor.so
     cp $LAYER_BUILD_DIR/libs/${abi}/libVkLayer_offscreenrender.so $LAYER_BUILD_DIR/vkreplay/bin/libs/lib/${abi}/libVkLayer_offscreenrender.so
     cp $LAYER_BUILD_DIR/libs/${abi}/libVkLayer_api_cost.so $LAYER_BUILD_DIR/vkreplay/bin/libs/lib/${abi}/libVkLayer_api_cost.so
+    cp $LAYER_BUILD_DIR/libs/${abi}/libVkLayer_device_simulation.so $LAYER_BUILD_DIR/vkreplay/bin/libs/lib/${abi}/libVkLayer_device_simulation.so
+    cp $LAYER_BUILD_DIR/libs/${abi}/libVkLayer_vktrace_layer.so $LAYER_BUILD_DIR/vkreplay/bin/libs/lib/${abi}/libVkLayer_vktrace_layer.so
+    cp $LAYER_BUILD_DIR/libs/${abi}/libVkLayer_api_dump.so $LAYER_BUILD_DIR/vkreplay/bin/libs/lib/${abi}/libVkLayer_hwcprofiler.so
     cp $LAYER_BUILD_DIR/libs/${abi}/libVkLayer_api_dump.so $LAYER_BUILD_DIR/vkreplay/bin/libs/lib/${abi}/libVkLayer_api_dump.so
     cp $LAYER_BUILD_DIR/libs/${abi}/libVkLayer_systrace.so $LAYER_BUILD_DIR/vkreplay/bin/libs/lib/${abi}/libVkLayer_systrace.so
     cp $LAYER_BUILD_DIR/libs/${abi}/libVkLayer_emptydriver.so $LAYER_BUILD_DIR/vkreplay/bin/libs/lib/${abi}/libVkLayer_emptydriver.so
@@ -83,6 +86,9 @@ cp $LAYER_BUILD_DIR/libs/${abi}/libVkLayer_screenshot.so $LAYER_BUILD_DIR/vkrepl
 cp $LAYER_BUILD_DIR/libs/${abi}/libVkLayer_monitor.so $LAYER_BUILD_DIR/vkreplay/bin/libs/lib/${abi}/libVkLayer_monitor.so
 cp $LAYER_BUILD_DIR/libs/${abi}/libVkLayer_offscreenrender.so $LAYER_BUILD_DIR/vkreplay/bin/libs/lib/${abi}/libVkLayer_offscreenrender.so
 cp $LAYER_BUILD_DIR/libs/${abi}/libVkLayer_api_cost.so $LAYER_BUILD_DIR/vkreplay/bin/libs/lib/${abi}/libVkLayer_api_cost.so
+cp $LAYER_BUILD_DIR/libs/${abi}/libVkLayer_device_simulation.so $LAYER_BUILD_DIR/vkreplay/bin/libs/lib/${abi}/libVkLayer_device_simulation.so
+cp $LAYER_BUILD_DIR/libs/${abi}/libVkLayer_vktrace_layer.so $LAYER_BUILD_DIR/vkreplay/bin/libs/lib/${abi}/libVkLayer_vktrace_layer.so
+cp $LAYER_BUILD_DIR/libs/${abi}/libVkLayer_api_dump.so $LAYER_BUILD_DIR/vkreplay/bin/libs/lib/${abi}/libVkLayer_hwcprofiler.so
 cp $LAYER_BUILD_DIR/libs/${abi}/libVkLayer_api_dump.so $LAYER_BUILD_DIR/vkreplay/bin/libs/lib/${abi}/libVkLayer_api_dump.so
 cp $LAYER_BUILD_DIR/libs/${abi}/libVkLayer_systrace.so $LAYER_BUILD_DIR/vkreplay/bin/libs/lib/${abi}/libVkLayer_systrace.so
 cp $LAYER_BUILD_DIR/libs/${abi}/libVkLayer_emptydriver.so $LAYER_BUILD_DIR/vkreplay/bin/libs/lib/${abi}/libVkLayer_emptydriver.so

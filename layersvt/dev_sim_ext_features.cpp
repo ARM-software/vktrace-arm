@@ -23,6 +23,7 @@
 #include "dev_sim_ext_features.h"
 
 extern void ErrorPrintf(const char *fmt, ...);
+extern void WarningPrintf(const char *fmt, ...);
 extern void DebugPrintf(const char *fmt, ...);
 
 #define UNKNOWN_FEATURE(extension) ErrorPrintf("Unknown feature %s for extension %s\n", value["name"].asCString(), extension)
@@ -53,12 +54,19 @@ VkStructureType ext_feature_name_to_stype(const std::string& ext_feat_name) {
         s_feature_name_to_stype_map["VK_KHR_ray_query"] = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR;
         s_feature_name_to_stype_map["VK_EXT_fragment_density_map"] = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_DENSITY_MAP_FEATURES_EXT;
         s_feature_name_to_stype_map["VK_EXT_fragment_density_map2"] = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_DENSITY_MAP_2_FEATURES_EXT;
+        s_feature_name_to_stype_map["VK_KHR_multiview"] = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MULTIVIEW_FEATURES;
+        s_feature_name_to_stype_map["VK_KHR_imageless_framebuffer"] = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGELESS_FRAMEBUFFER_FEATURES;
+        s_feature_name_to_stype_map["VK_EXT_transform_feedback"] = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TRANSFORM_FEEDBACK_FEATURES_EXT;
+        s_feature_name_to_stype_map["VK_EXT_vertex_attribute_divisor"] = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VERTEX_ATTRIBUTE_DIVISOR_FEATURES_EXT;
+        s_feature_name_to_stype_map["VK_KHR_timeline_semaphore"] = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES_KHR;
+        s_feature_name_to_stype_map["VK_EXT_texture_compression_astc_hdr"] = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TEXTURE_COMPRESSION_ASTC_HDR_FEATURES;
+        s_feature_name_to_stype_map["VK_EXT_descriptor_indexing"] = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES;
     }
 
     if (s_feature_name_to_stype_map.find(ext_feat_name) != s_feature_name_to_stype_map.end()) {
         stype = s_feature_name_to_stype_map[ext_feat_name];
     } else {
-        ErrorPrintf("Unhandled extended feature: %s\n", ext_feat_name.c_str());
+        WarningPrintf("Unhandled extended feature: %s\n", ext_feat_name.c_str());
     }
 
     return stype;
@@ -205,10 +213,106 @@ void get_extension_feature(VkStructureType stype, const Json::Value& value, Exte
         break;
     case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_DENSITY_MAP_2_FEATURES_EXT:
         {
-            if (strcmp(value["name"].asCString(), "fragmentDensityMapNonSubsampledImages") == 0) {
+            if (strcmp(value["name"].asCString(), "fragmentDensityMapDeferred") == 0) {
                 feature.fragment_density_map2_feature.fragmentDensityMapDeferred = value["supported"].asBool();
             } else {
                 UNKNOWN_FEATURE("VK_EXT_fragment_density_map2");
+            }
+        }
+        break;
+    case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGELESS_FRAMEBUFFER_FEATURES:
+        {
+            if (strcmp(value["name"].asCString(), "imagelessFramebuffer") == 0) {
+                feature.imageless_framebuffer_feature.imagelessFramebuffer = value["supported"].asBool();
+            } else {
+                UNKNOWN_FEATURE("VK_KHR_imageless_framebuffer");
+            }
+        }
+        break;
+    case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TRANSFORM_FEEDBACK_FEATURES_EXT:
+        {
+            if (strcmp(value["name"].asCString(), "transformFeedback") == 0) {
+                feature.transform_feedback_feature.transformFeedback = value["supported"].asBool();
+            } else if (strcmp(value["name"].asCString(), "geometryStreams") == 0) {
+                feature.transform_feedback_feature.geometryStreams = value["supported"].asBool();
+            } else {
+                UNKNOWN_FEATURE("VK_EXT_transform_feedback");
+            }
+        }
+        break;
+    case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VERTEX_ATTRIBUTE_DIVISOR_FEATURES_EXT:
+        {
+            if (strcmp(value["name"].asCString(), "vertexAttributeInstanceRateDivisor") == 0) {
+                feature.vertex_attribute_divisor_feature.vertexAttributeInstanceRateDivisor = value["supported"].asBool();
+            } else if (strcmp(value["name"].asCString(), "vertexAttributeInstanceRateZeroDivisor") == 0) {
+                feature.vertex_attribute_divisor_feature.vertexAttributeInstanceRateZeroDivisor = value["supported"].asBool();
+            } else {
+                UNKNOWN_FEATURE("VK_EXT_vertex_attribute_divisor");
+            }
+        }
+        break;
+    case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES_KHR:
+        {
+            if (strcmp(value["name"].asCString(), "timelineSemaphore") == 0) {
+                feature.timeline_semaphore_feature.timelineSemaphore = value["supported"].asBool();
+            } else {
+                UNKNOWN_FEATURE("VK_KHR_timeline_semaphore");
+            }
+        }
+        break;
+    case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TEXTURE_COMPRESSION_ASTC_HDR_FEATURES:
+        {
+            if (strcmp(value["name"].asCString(), "textureCompressionASTC_HDR") == 0) {
+                feature.texture_compression_astc_hdr_feature.textureCompressionASTC_HDR = value["supported"].asBool();
+            } else {
+                UNKNOWN_FEATURE("VK_EXT_texture_compression_astc_hdr");
+            }
+        }
+        break;
+    case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES:
+        {
+            if (strcmp(value["name"].asCString(), "shaderInputAttachmentArrayDynamicIndexing") == 0) {
+                feature.descriptor_indexing_feature.shaderInputAttachmentArrayDynamicIndexing = value["supported"].asBool();
+            } else if (strcmp(value["name"].asCString(), "shaderUniformTexelBufferArrayDynamicIndexing") == 0) {
+                feature.descriptor_indexing_feature.shaderUniformTexelBufferArrayDynamicIndexing = value["supported"].asBool();
+            } else if (strcmp(value["name"].asCString(), "shaderStorageTexelBufferArrayDynamicIndexing") == 0) {
+                feature.descriptor_indexing_feature.shaderStorageTexelBufferArrayDynamicIndexing = value["supported"].asBool();
+            } else if (strcmp(value["name"].asCString(), "shaderUniformBufferArrayNonUniformIndexing") == 0) {
+                feature.descriptor_indexing_feature.shaderUniformBufferArrayNonUniformIndexing = value["supported"].asBool();
+            } else if (strcmp(value["name"].asCString(), "shaderSampledImageArrayNonUniformIndexing") == 0) {
+                feature.descriptor_indexing_feature.shaderSampledImageArrayNonUniformIndexing = value["supported"].asBool();
+            } else if (strcmp(value["name"].asCString(), "shaderStorageBufferArrayNonUniformIndexing") == 0) {
+                feature.descriptor_indexing_feature.shaderStorageBufferArrayNonUniformIndexing = value["supported"].asBool();
+            } else if (strcmp(value["name"].asCString(), "shaderStorageImageArrayNonUniformIndexing") == 0) {
+                feature.descriptor_indexing_feature.shaderStorageImageArrayNonUniformIndexing = value["supported"].asBool();
+            } else if (strcmp(value["name"].asCString(), "shaderInputAttachmentArrayNonUniformIndexing") == 0) {
+                feature.descriptor_indexing_feature.shaderInputAttachmentArrayNonUniformIndexing = value["supported"].asBool();
+            } else if (strcmp(value["name"].asCString(), "shaderUniformTexelBufferArrayNonUniformIndexing") == 0) {
+                feature.descriptor_indexing_feature.shaderUniformTexelBufferArrayNonUniformIndexing = value["supported"].asBool();
+            } else if (strcmp(value["name"].asCString(), "shaderStorageTexelBufferArrayNonUniformIndexing") == 0) {
+                feature.descriptor_indexing_feature.shaderStorageTexelBufferArrayNonUniformIndexing = value["supported"].asBool();
+            } else if (strcmp(value["name"].asCString(), "descriptorBindingUniformBufferUpdateAfterBind") == 0) {
+                feature.descriptor_indexing_feature.descriptorBindingUniformBufferUpdateAfterBind = value["supported"].asBool();
+            } else if (strcmp(value["name"].asCString(), "descriptorBindingSampledImageUpdateAfterBind") == 0) {
+                feature.descriptor_indexing_feature.descriptorBindingSampledImageUpdateAfterBind = value["supported"].asBool();
+            } else if (strcmp(value["name"].asCString(), "descriptorBindingStorageImageUpdateAfterBind") == 0) {
+                feature.descriptor_indexing_feature.descriptorBindingStorageImageUpdateAfterBind = value["supported"].asBool();
+            } else if (strcmp(value["name"].asCString(), "descriptorBindingStorageBufferUpdateAfterBind") == 0) {
+                feature.descriptor_indexing_feature.descriptorBindingStorageBufferUpdateAfterBind = value["supported"].asBool();
+            } else if (strcmp(value["name"].asCString(), "descriptorBindingUniformTexelBufferUpdateAfterBind") == 0) {
+                feature.descriptor_indexing_feature.descriptorBindingUniformTexelBufferUpdateAfterBind = value["supported"].asBool();
+            } else if (strcmp(value["name"].asCString(), "descriptorBindingStorageTexelBufferUpdateAfterBind") == 0) {
+                feature.descriptor_indexing_feature.descriptorBindingStorageTexelBufferUpdateAfterBind = value["supported"].asBool();
+            } else if (strcmp(value["name"].asCString(), "descriptorBindingUpdateUnusedWhilePending") == 0) {
+                feature.descriptor_indexing_feature.descriptorBindingUpdateUnusedWhilePending = value["supported"].asBool();
+            } else if (strcmp(value["name"].asCString(), "descriptorBindingPartiallyBound") == 0) {
+                feature.descriptor_indexing_feature.descriptorBindingPartiallyBound = value["supported"].asBool();
+            } else if (strcmp(value["name"].asCString(), "descriptorBindingVariableDescriptorCount") == 0) {
+                feature.descriptor_indexing_feature.descriptorBindingVariableDescriptorCount = value["supported"].asBool();
+            } else if (strcmp(value["name"].asCString(), "runtimeDescriptorArray") == 0) {
+                feature.descriptor_indexing_feature.runtimeDescriptorArray = value["supported"].asBool();
+            } else {
+                UNKNOWN_FEATURE("VK_EXT_descriptor_indexing");
             }
         }
         break;
@@ -231,12 +335,19 @@ VkStructureType ext_property_name_to_stype(const std::string& ext_prop_name) {
         s_prop_name_to_stype_map["VK_KHR_ray_tracing_pipeline"] = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_PROPERTIES_KHR;
         s_prop_name_to_stype_map["VK_EXT_fragment_density_map"] = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_DENSITY_MAP_PROPERTIES_EXT;
         s_prop_name_to_stype_map["VK_EXT_fragment_density_map2"] = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_DENSITY_MAP_2_PROPERTIES_EXT;
+        s_prop_name_to_stype_map["VK_KHR_multiview"] = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MULTIVIEW_PROPERTIES;
+        s_prop_name_to_stype_map["VK_EXT_vertex_attribute_divisor"] = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VERTEX_ATTRIBUTE_DIVISOR_PROPERTIES_EXT;
+        s_prop_name_to_stype_map["VK_KHR_timeline_semaphore"] = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_PROPERTIES_KHR;
+        s_prop_name_to_stype_map["VK_KHR_depth_stencil_resolve"] = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DEPTH_STENCIL_RESOLVE_PROPERTIES;
+        s_prop_name_to_stype_map["VK_KHR_maintenance3"] = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_3_PROPERTIES;
+        s_prop_name_to_stype_map["VK_KHR_shader_float_controls"] = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FLOAT_CONTROLS_PROPERTIES_KHR;
+        s_prop_name_to_stype_map["VK_EXT_descriptor_indexing"] = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_PROPERTIES;
     }
 
     if (s_prop_name_to_stype_map.find(ext_prop_name) != s_prop_name_to_stype_map.end()) {
         stype = s_prop_name_to_stype_map[ext_prop_name];
     } else {
-        ErrorPrintf("Unhandled extended property: %s\n", ext_prop_name.c_str());
+        WarningPrintf("Unhandled extended property: %s\n", ext_prop_name.c_str());
     }
 
     return stype;
@@ -364,6 +475,183 @@ void get_extension_property(VkStructureType stype, const Json::Value& value, Ext
                 property.fragment_density_map2_prop.maxDescriptorSetSubsampledSamplers = std::stoul(value["value"].asString());
             } else {
                 UNKNOWN_PROPERTY("VK_EXT_fragment_density_map2");
+            }
+        }
+        break;
+    case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MULTIVIEW_PROPERTIES:
+        {
+            if (strcmp(value["name"].asCString(), "maxMultiviewViewCount") == 0) {
+                property.multiview_prop.maxMultiviewViewCount = std::stoul(value["value"].asString());
+            } else if (strcmp(value["name"].asCString(), "maxMultiviewInstanceIndex") == 0) {
+                property.multiview_prop.maxMultiviewInstanceIndex = std::stoul(value["value"].asString());
+            } else {
+                UNKNOWN_PROPERTY("VK_KHR_multiview");
+            }
+        }
+        break;
+    case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VERTEX_ATTRIBUTE_DIVISOR_PROPERTIES_EXT:
+        {
+            if (strcmp(value["name"].asCString(), "maxVertexAttribDivisor") == 0) {
+                property.vertex_attribute_divisor_prop.maxVertexAttribDivisor = std::stoul(value["value"].asString());
+            } else {
+                UNKNOWN_PROPERTY("VK_EXT_vertex_attribute_divisor");
+            }
+        }
+        break;
+    case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_PROPERTIES_KHR:
+        {
+            if (strcmp(value["name"].asCString(), "maxTimelineSemaphoreValueDifference") == 0) {
+                property.timeline_semaphore_prop.maxTimelineSemaphoreValueDifference = std::stoul(value["value"].asString());
+            } else {
+                UNKNOWN_PROPERTY("VK_KHR_timeline_semaphore");
+            }
+        }
+        break;
+    case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DEPTH_STENCIL_RESOLVE_PROPERTIES:
+        {
+            if (strcmp(value["name"].asCString(), "supportedDepthResolveModes") == 0) {
+                property.depth_stencil_resolve_prop.supportedDepthResolveModes = (VkResolveModeFlags)std::stoul(value["value"].asString());
+            } else if (strcmp(value["name"].asCString(), "supportedStencilResolveModes") == 0) {
+                property.depth_stencil_resolve_prop.supportedStencilResolveModes = (VkResolveModeFlags)std::stoul(value["value"].asString());
+            } else if (strcmp(value["name"].asCString(), "independentResolveNone") == 0) {
+                bool ret = false;
+                std::istringstream(value["value"].asString()) >> std::boolalpha >> ret;
+                property.depth_stencil_resolve_prop.independentResolveNone = ret;
+            } else if (strcmp(value["name"].asCString(), "independentResolve") == 0) {
+                bool ret = false;
+                std::istringstream(value["value"].asString()) >> std::boolalpha >> ret;
+                property.depth_stencil_resolve_prop.independentResolve = ret;
+            } else {
+                UNKNOWN_PROPERTY("VK_KHR_depth_stencil_resolve");
+            }
+        }
+        break;
+    case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_3_PROPERTIES:
+        {
+            if (strcmp(value["name"].asCString(), "maxPerSetDescriptors") == 0) {
+                property.maintenance3_prop.maxPerSetDescriptors = std::stoul(value["value"].asString());
+            } else if (strcmp(value["name"].asCString(), "maxMemoryAllocationSize") == 0) {
+                property.maintenance3_prop.maxMemoryAllocationSize = std::stoul(value["value"].asString());
+            } else {
+                UNKNOWN_PROPERTY("VK_KHR_maintenance3");
+            }
+        }
+        break;
+    case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FLOAT_CONTROLS_PROPERTIES_KHR:
+        {
+            bool ret = false;
+            if (strcmp(value["name"].asCString(), "denormBehaviorIndependence") == 0) {
+                property.float_controls_prop.denormBehaviorIndependence = (VkShaderFloatControlsIndependence)std::stoul(value["value"].asString());
+            } else if (strcmp(value["name"].asCString(), "roundingModeIndependence") == 0) {
+                property.float_controls_prop.roundingModeIndependence = (VkShaderFloatControlsIndependence)std::stoul(value["value"].asString());
+            } else if (strcmp(value["name"].asCString(), "shaderSignedZeroInfNanPreserveFloat16") == 0) {
+                std::istringstream(value["value"].asString()) >> std::boolalpha >> ret;
+                property.float_controls_prop.shaderSignedZeroInfNanPreserveFloat16 = ret;
+            } else if (strcmp(value["name"].asCString(), "shaderSignedZeroInfNanPreserveFloat32") == 0) {
+                std::istringstream(value["value"].asString()) >> std::boolalpha >> ret;
+                property.float_controls_prop.shaderSignedZeroInfNanPreserveFloat32 = ret;
+            } else if (strcmp(value["name"].asCString(), "shaderSignedZeroInfNanPreserveFloat64") == 0) {
+                std::istringstream(value["value"].asString()) >> std::boolalpha >> ret;
+                property.float_controls_prop.shaderSignedZeroInfNanPreserveFloat64 = ret;
+            } else if (strcmp(value["name"].asCString(), "shaderDenormPreserveFloat16") == 0) {
+                std::istringstream(value["value"].asString()) >> std::boolalpha >> ret;
+                property.float_controls_prop.shaderDenormPreserveFloat16 = ret;
+            } else if (strcmp(value["name"].asCString(), "shaderDenormPreserveFloat32") == 0) {
+                std::istringstream(value["value"].asString()) >> std::boolalpha >> ret;
+                property.float_controls_prop.shaderDenormPreserveFloat32 = ret;
+            } else if (strcmp(value["name"].asCString(), "shaderDenormPreserveFloat64") == 0) {
+                std::istringstream(value["value"].asString()) >> std::boolalpha >> ret;
+                property.float_controls_prop.shaderDenormPreserveFloat64 = ret;
+            } else if (strcmp(value["name"].asCString(), "shaderDenormFlushToZeroFloat16") == 0) {
+                std::istringstream(value["value"].asString()) >> std::boolalpha >> ret;
+                property.float_controls_prop.shaderDenormFlushToZeroFloat16 = ret;
+            } else if (strcmp(value["name"].asCString(), "shaderDenormFlushToZeroFloat32") == 0) {
+                std::istringstream(value["value"].asString()) >> std::boolalpha >> ret;
+                property.float_controls_prop.shaderDenormFlushToZeroFloat32 = ret;
+            } else if (strcmp(value["name"].asCString(), "shaderDenormFlushToZeroFloat64") == 0) {
+                std::istringstream(value["value"].asString()) >> std::boolalpha >> ret;
+                property.float_controls_prop.shaderDenormFlushToZeroFloat64 = ret;
+            } else if (strcmp(value["name"].asCString(), "shaderRoundingModeRTEFloat16") == 0) {
+                std::istringstream(value["value"].asString()) >> std::boolalpha >> ret;
+                property.float_controls_prop.shaderRoundingModeRTEFloat16 = ret;
+            } else if (strcmp(value["name"].asCString(), "shaderRoundingModeRTEFloat32") == 0) {
+                std::istringstream(value["value"].asString()) >> std::boolalpha >> ret;
+                property.float_controls_prop.shaderRoundingModeRTEFloat32 = ret;
+            } else if (strcmp(value["name"].asCString(), "shaderRoundingModeRTEFloat64") == 0) {
+                std::istringstream(value["value"].asString()) >> std::boolalpha >> ret;
+                property.float_controls_prop.shaderRoundingModeRTEFloat64 = ret;
+            } else if (strcmp(value["name"].asCString(), "shaderRoundingModeRTZFloat16") == 0) {
+                std::istringstream(value["value"].asString()) >> std::boolalpha >> ret;
+                property.float_controls_prop.shaderRoundingModeRTZFloat16 = ret;
+            } else if (strcmp(value["name"].asCString(), "shaderRoundingModeRTZFloat32") == 0) {
+                std::istringstream(value["value"].asString()) >> std::boolalpha >> ret;
+                property.float_controls_prop.shaderRoundingModeRTZFloat32 = ret;
+            } else if (strcmp(value["name"].asCString(), "shaderRoundingModeRTZFloat64") == 0) {
+                std::istringstream(value["value"].asString()) >> std::boolalpha >> ret;
+                property.float_controls_prop.shaderRoundingModeRTZFloat64 = ret;
+            } else {
+                UNKNOWN_PROPERTY("VK_KHR_shader_float_controls");
+            }
+        }
+        break;
+    case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_PROPERTIES:
+        {
+            bool ret = false;
+            if (strcmp(value["name"].asCString(), "maxUpdateAfterBindDescriptorsInAllPools") == 0) {
+                property.descriptor_indexing_prop.maxUpdateAfterBindDescriptorsInAllPools = std::stoul(value["value"].asString());
+            } else if (strcmp(value["name"].asCString(), "maxPerStageDescriptorUpdateAfterBindSamplers") == 0) {
+                property.descriptor_indexing_prop.maxPerStageDescriptorUpdateAfterBindSamplers = std::stoul(value["value"].asString());
+            } else if (strcmp(value["name"].asCString(), "maxPerStageDescriptorUpdateAfterBindUniformBuffers") == 0) {
+                property.descriptor_indexing_prop.maxPerStageDescriptorUpdateAfterBindUniformBuffers = std::stoul(value["value"].asString());
+            } else if (strcmp(value["name"].asCString(), "maxPerStageDescriptorUpdateAfterBindStorageBuffers") == 0) {
+                property.descriptor_indexing_prop.maxPerStageDescriptorUpdateAfterBindStorageBuffers = std::stoul(value["value"].asString());
+            } else if (strcmp(value["name"].asCString(), "maxPerStageDescriptorUpdateAfterBindSampledImages") == 0) {
+                property.descriptor_indexing_prop.maxPerStageDescriptorUpdateAfterBindSampledImages = std::stoul(value["value"].asString());
+            } else if (strcmp(value["name"].asCString(), "maxPerStageDescriptorUpdateAfterBindStorageImages") == 0) {
+                property.descriptor_indexing_prop.maxPerStageDescriptorUpdateAfterBindStorageImages = std::stoul(value["value"].asString());
+            } else if (strcmp(value["name"].asCString(), "maxPerStageDescriptorUpdateAfterBindInputAttachments") == 0) {
+                property.descriptor_indexing_prop.maxPerStageDescriptorUpdateAfterBindInputAttachments = std::stoul(value["value"].asString());
+            } else if (strcmp(value["name"].asCString(), "maxPerStageUpdateAfterBindResources") == 0) {
+                property.descriptor_indexing_prop.maxPerStageUpdateAfterBindResources = std::stoul(value["value"].asString());
+            } else if (strcmp(value["name"].asCString(), "maxDescriptorSetUpdateAfterBindSamplers") == 0) {
+                property.descriptor_indexing_prop.maxDescriptorSetUpdateAfterBindSamplers = std::stoul(value["value"].asString());
+            } else if (strcmp(value["name"].asCString(), "maxDescriptorSetUpdateAfterBindUniformBuffers") == 0) {
+                property.descriptor_indexing_prop.maxDescriptorSetUpdateAfterBindUniformBuffers = std::stoul(value["value"].asString());
+            } else if (strcmp(value["name"].asCString(), "maxDescriptorSetUpdateAfterBindUniformBuffersDynamic") == 0) {
+                property.descriptor_indexing_prop.maxDescriptorSetUpdateAfterBindUniformBuffersDynamic = std::stoul(value["value"].asString());
+            } else if (strcmp(value["name"].asCString(), "maxDescriptorSetUpdateAfterBindStorageBuffers") == 0) {
+                property.descriptor_indexing_prop.maxDescriptorSetUpdateAfterBindStorageBuffers = std::stoul(value["value"].asString());
+            } else if (strcmp(value["name"].asCString(), "maxDescriptorSetUpdateAfterBindStorageBuffersDynamic") == 0) {
+                property.descriptor_indexing_prop.maxDescriptorSetUpdateAfterBindStorageBuffersDynamic = std::stoul(value["value"].asString());
+            } else if (strcmp(value["name"].asCString(), "maxDescriptorSetUpdateAfterBindSampledImages") == 0) {
+                property.descriptor_indexing_prop.maxDescriptorSetUpdateAfterBindSampledImages = std::stoul(value["value"].asString());
+            } else if (strcmp(value["name"].asCString(), "maxDescriptorSetUpdateAfterBindStorageImages") == 0) {
+                property.descriptor_indexing_prop.maxDescriptorSetUpdateAfterBindStorageImages = std::stoul(value["value"].asString());
+            } else if (strcmp(value["name"].asCString(), "maxDescriptorSetUpdateAfterBindInputAttachments") == 0) {
+                property.descriptor_indexing_prop.maxDescriptorSetUpdateAfterBindInputAttachments = std::stoul(value["value"].asString());
+            } else if (strcmp(value["name"].asCString(), "shaderUniformBufferArrayNonUniformIndexingNative") == 0) {
+                std::istringstream(value["value"].asString()) >> std::boolalpha >> ret;
+                property.descriptor_indexing_prop.shaderUniformBufferArrayNonUniformIndexingNative = ret;
+            } else if (strcmp(value["name"].asCString(), "shaderSampledImageArrayNonUniformIndexingNative") == 0) {
+                std::istringstream(value["value"].asString()) >> std::boolalpha >> ret;
+                property.descriptor_indexing_prop.shaderSampledImageArrayNonUniformIndexingNative = ret;
+            } else if (strcmp(value["name"].asCString(), "shaderStorageBufferArrayNonUniformIndexingNative") == 0) {
+                std::istringstream(value["value"].asString()) >> std::boolalpha >> ret;
+                property.descriptor_indexing_prop.shaderStorageBufferArrayNonUniformIndexingNative = ret;
+            } else if (strcmp(value["name"].asCString(), "shaderStorageImageArrayNonUniformIndexingNative") == 0) {
+                std::istringstream(value["value"].asString()) >> std::boolalpha >> ret;
+                property.descriptor_indexing_prop.shaderStorageImageArrayNonUniformIndexingNative = ret;
+            } else if (strcmp(value["name"].asCString(), "shaderInputAttachmentArrayNonUniformIndexingNative") == 0) {
+                std::istringstream(value["value"].asString()) >> std::boolalpha >> ret;
+                property.descriptor_indexing_prop.shaderInputAttachmentArrayNonUniformIndexingNative = ret;
+            } else if (strcmp(value["name"].asCString(), "robustBufferAccessUpdateAfterBind") == 0) {
+                std::istringstream(value["value"].asString()) >> std::boolalpha >> ret;
+                property.descriptor_indexing_prop.robustBufferAccessUpdateAfterBind = ret;
+            } else if (strcmp(value["name"].asCString(), "quadDivergentImplicitLod") == 0) {
+                std::istringstream(value["value"].asString()) >> std::boolalpha >> ret;
+                property.descriptor_indexing_prop.quadDivergentImplicitLod = ret;
+            } else {
+                UNKNOWN_PROPERTY("VK_EXT_descriptor_indexing");
             }
         }
         break;

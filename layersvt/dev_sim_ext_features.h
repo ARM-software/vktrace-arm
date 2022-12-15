@@ -42,6 +42,12 @@ typedef union {
     VkPhysicalDeviceBufferDeviceAddressFeatures      buffer_device_address_feature;
     VkPhysicalDeviceFragmentDensityMapFeaturesEXT    fragment_density_map_feature;
     VkPhysicalDeviceFragmentDensityMap2FeaturesEXT   fragment_density_map2_feature;
+    VkPhysicalDeviceImagelessFramebufferFeatures     imageless_framebuffer_feature;
+    VkPhysicalDeviceTransformFeedbackFeaturesEXT     transform_feedback_feature;
+    VkPhysicalDeviceVertexAttributeDivisorFeaturesEXT vertex_attribute_divisor_feature;
+    VkPhysicalDeviceTimelineSemaphoreFeaturesKHR     timeline_semaphore_feature;
+    VkPhysicalDeviceTextureCompressionASTCHDRFeatures texture_compression_astc_hdr_feature;
+    VkPhysicalDeviceDescriptorIndexingFeatures       descriptor_indexing_feature;
     // Todo: Add more extended features here
 } ExtendedFeature;
 
@@ -57,6 +63,13 @@ typedef union {
     VkPhysicalDeviceRayTracingPipelinePropertiesKHR     ray_tracing_pipeline_prop;
     VkPhysicalDeviceFragmentDensityMapPropertiesEXT     fragment_density_map_prop;
     VkPhysicalDeviceFragmentDensityMap2PropertiesEXT    fragment_density_map2_prop;
+    VkPhysicalDeviceMultiviewProperties                 multiview_prop;
+    VkPhysicalDeviceVertexAttributeDivisorPropertiesEXT  vertex_attribute_divisor_prop;
+    VkPhysicalDeviceTimelineSemaphorePropertiesKHR      timeline_semaphore_prop;
+    VkPhysicalDeviceDepthStencilResolveProperties       depth_stencil_resolve_prop;
+    VkPhysicalDeviceMaintenance3Properties              maintenance3_prop;
+    VkPhysicalDeviceFloatControlsPropertiesKHR          float_controls_prop;
+    VkPhysicalDeviceDescriptorIndexingProperties        descriptor_indexing_prop;
     // Todo: Add more extended properties here
 } ExtendedProperty;
 

@@ -49,6 +49,8 @@ set_target_properties(generate_api_cpp generate_api_h generate_api_html_h PROPER
 add_custom_target( generate_api_json_h DEPENDS api_dump_json.h )
 set_target_properties(generate_api_cpp generate_api_h generate_api_json_h PROPERTIES FOLDER ${VULKANTOOLS_TARGET_FOLDER})
 
+set(SRC_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../")
+
 if (NOT APPLE)
     set(TARGET_NAMES
         VkLayer_api_dump
@@ -65,6 +67,13 @@ else()
         VkLayer_api_dump
         )
 endif ()
+
+if (ARCH STREQUAL "arm" OR ARCH STREQUAL "aarch64")
+    set(TARGET_NAMES
+        ${TARGET_NAMES}
+        VkLayer_hwcprofiler
+    )
+endif()
 
 if (WIN32)
     macro(add_vk_layer target)
@@ -106,6 +115,11 @@ else ()
         ${CMAKE_BINARY_DIR}
         ${Vulkan-ValidationLayers_INCLUDE_DIR}
         ${JSONCPP_INCLUDE_DIR}
+        ${SRC_DIR}/layersvt/hwc_profiler
+        ${SRC_DIR}/external/submodules/HWCPipe
+        ${SRC_DIR}/external/submodules/HWCPipe/third_party
+        ${SRC_DIR}/external/submodules/HWCPipe/vendor/arm/mali
+        ${SRC_DIR}/external/submodules/HWCPipe/vendor/arm/pmu
     )
 endif()
 
@@ -130,6 +144,9 @@ if (NOT APPLE)
     add_vk_layer(monitor monitor.cpp vk_layer_table.cpp)
     add_vk_layer(screenshot screenshot.cpp screenshot_parsing.h screenshot_parsing.cpp vk_layer_table.cpp)
     add_vk_layer(device_simulation dev_sim_ext_features.cpp device_simulation.cpp dev_sim_compatmode.cpp vk_layer_table.cpp ${JSONCPP_SOURCE_DIR}/jsoncpp.cpp)
+    if (ARCH STREQUAL "arm" OR ARCH STREQUAL "aarch64")
+    add_vk_layer(hwcprofiler hwc_profiler/hwcProfiler.cpp vk_layer_table.cpp ${SRC_DIR}/external/submodules/HWCPipe/hwcpipe.cpp ${SRC_DIR}/external/submodules/HWCPipe/vendor/arm/mali/mali_profiler.cpp ${SRC_DIR}/external/submodules/HWCPipe/vendor/arm/pmu/pmu_counter.cpp ${SRC_DIR}/external/submodules/HWCPipe/vendor/arm/pmu/pmu_profiler.cpp ${JSONCPP_SOURCE_DIR}/jsoncpp.cpp)
+    endif()
 endif ()
 
 add_vk_layer(api_dump api_dump.cpp vk_layer_table.cpp)

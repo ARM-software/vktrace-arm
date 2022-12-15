@@ -47,6 +47,9 @@
 #include "vk_struct_size_helper.c"
 #include "vktrace_pageguard_memorycopy.h"
 
+// We occasionally need to inject out-of-enum values for experimental features, so do not warn about this.
+#pragma GCC diagnostic ignored "-Wswitch"
+
 vkreplayer_settings *g_pReplaySettings = NULL;
 static VKTRACE_CRITICAL_SECTION s_packet_index_lock;
 static VKTRACE_CRITICAL_SECTION s_trace_lock;
@@ -208,7 +211,7 @@ char* find_available_filename(const char* originalFilename, BOOL bForceOverwrite
             const char* pExtension = strrchr(originalFilename, '.');
             char* basename = vktrace_allocate_and_copy_n(
                 originalFilename,
-                (int)((pExtension == NULL) ? strlen(originalFilename) : pExtension - originalFilename));
+                (int)((pExtension == NULL) ? (int)strlen(originalFilename) : pExtension - originalFilename));
             pOutputFilename = append_index_to_filename(basename, s_fileIndex, pExtension);
             vktrace_free(basename);
         }
@@ -217,7 +220,7 @@ char* find_available_filename(const char* originalFilename, BOOL bForceOverwrite
         const char* pExtension = strrchr(originalFilename, '.');
         char* basename = vktrace_allocate_and_copy_n(
             originalFilename,
-            (int)((pExtension == NULL) ? strlen(originalFilename) : pExtension - originalFilename));
+            (int)((pExtension == NULL) ? (int)strlen(originalFilename) : pExtension - originalFilename));
         pOutputFilename = vktrace_allocate_and_copy(originalFilename);
         FILE* pFile = NULL;
         while ((pFile = fopen(pOutputFilename, "rb")) != NULL) {
@@ -235,7 +238,9 @@ char* find_available_filename(const char* originalFilename, BOOL bForceOverwrite
     return pOutputFilename;
 }
 
-deviceFeatureSupport query_device_feature(PFN_vkGetPhysicalDeviceFeatures2KHR GetPhysicalDeviceFeatures, VkPhysicalDevice physicalDevice, const VkDeviceCreateInfo *pCreateInfo) {
+deviceFeatureSupport query_device_feature(PFN_vkGetPhysicalDeviceFeatures2KHR GetPhysicalDeviceFeatures,
+                                          PFN_vkGetPhysicalDeviceProperties2KHR GetPhysicalDeviceProperties,
+                                          VkPhysicalDevice physicalDevice, const VkDeviceCreateInfo *pCreateInfo) {
     deviceFeatureSupport dfs;
     memset(&dfs, 0, sizeof(dfs));
     if (GetPhysicalDeviceFeatures == NULL) {
@@ -257,6 +262,10 @@ deviceFeatureSupport query_device_feature(PFN_vkGetPhysicalDeviceFeatures2KHR Ge
     memset(&pdasf, 0, sizeof(pdasf));
     pdasf.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR;
     pdf2.pNext = &pdasf;
+    VkPhysicalDeviceRayTracingPipelineFeaturesKHR pdrtpf;
+    memset(&pdrtpf, 0, sizeof(pdrtpf));
+    pdrtpf.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR;
+    pdasf.pNext = &pdrtpf;
     bool supportVk12 = false;
     VkApplicationInfo* pNext = (VkApplicationInfo*)(pCreateInfo->pNext);
     while (pNext != NULL) {
@@ -277,19 +286,39 @@ deviceFeatureSupport query_device_feature(PFN_vkGetPhysicalDeviceFeatures2KHR Ge
             default:
                 break;
         }
-        if (pdf2.pNext && (pdvf12.pNext || pdasf.pNext)) {
+
+        if (pdf2.pNext && (pdvf12.pNext || pdrtpf.pNext)) {
             break;
         }
         pNext = (VkApplicationInfo*)(pNext->pNext);
     }
+
     GetPhysicalDeviceFeatures(physicalDevice, &pdf2);
     dfs.accelerationStructureCaptureReplay = pdasf.accelerationStructureCaptureReplay;
     dfs.accelerationStructureHostCommands = pdasf.accelerationStructureHostCommands;
+    dfs.rayTracingPipelineShaderGroupHandleCaptureReplay = pdrtpf.rayTracingPipelineShaderGroupHandleCaptureReplay;
     if (supportVk12) {
         dfs.bufferDeviceAddressCaptureReplay = pdvf12.bufferDeviceAddressCaptureReplay;
     } else {
         dfs.bufferDeviceAddressCaptureReplay = pdbf.bufferDeviceAddressCaptureReplay;
     }
+
+    if (dfs.rayTracingPipelineShaderGroupHandleCaptureReplay) {
+        VkPhysicalDeviceRayTracingPipelinePropertiesKHR rtpProperties;
+        memset(&rtpProperties, 0, sizeof(rtpProperties));
+        rtpProperties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_PROPERTIES_KHR;
+        VkPhysicalDeviceProperties2 pdp2;
+        memset(&pdp2, 0, sizeof(pdp2));
+        pdp2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+        pdp2.pNext = &rtpProperties;
+        GetPhysicalDeviceProperties(physicalDevice, &pdp2);
+        dfs.propertyShaderGroupHandleCaptureReplaySize = rtpProperties.shaderGroupHandleCaptureReplaySize;
+    }
+
+    vktrace_LogAlways("Device CaptureReplay: BDA %d, AS %d, RTPSGH %d, SGHSize %llu",
+                      dfs.bufferDeviceAddressCaptureReplay, dfs.accelerationStructureCaptureReplay,
+                      dfs.rayTracingPipelineShaderGroupHandleCaptureReplay,
+                      dfs.propertyShaderGroupHandleCaptureReplaySize);
     return dfs;
 }
 
@@ -698,7 +727,7 @@ void add_VkAccelerationStructureBuildGeometryInfoKHR_to_packet(vktrace_trace_pac
             else if (pInStruct->pGeometries[i].geometryType == VK_GEOMETRY_TYPE_TRIANGLES_KHR && pBuildRangeInfos != NULL && hostAddr) {
                 if (geometryDataBit[i] & AS_GEOMETRY_TRIANGLES_VERTEXDATA_BIT) {
                     int vbOffset = pBuildRangeInfos[i].primitiveOffset + pSrc->triangles.vertexStride * pBuildRangeInfos[i].firstVertex;
-                    int vbUsedSize = pSrc->triangles.vertexStride * pSrc->triangles.maxVertex;
+                    int vbUsedSize = pSrc->triangles.vertexStride * (pSrc->triangles.maxVertex + 1);
                     vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pDst->triangles.vertexData.hostAddress), vbUsedSize, ((char*)pSrc->triangles.vertexData.hostAddress) + vbOffset);
                     vktrace_finalize_buffer_address(pHeader, (void**)&(pDst->triangles.vertexData.hostAddress));
                 }

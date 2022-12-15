@@ -26,6 +26,7 @@ BUILD_TYPE_OPTION=""
 BINARY_SUFFIX=""
 EXTRA_CMAKE_OPTION=""
 NEED_PACKAGE="true"
+BUILD_WINDOW_SUPPORT="default"
 
 print_help() {
     echo "Supported parameters are:"
@@ -34,6 +35,7 @@ print_help() {
     echo "    --build-type      <debug|release>                 (optional, default is debug)"
     echo "    --update-external <true|false>                    (optional, set to true to force update external directories, default is false)"
     echo "    --package         <true|false>                    (optional, set to true to package build outputs to vktrace_<TARGET>_<BUILD_TYPE>.tgz, default is true)"
+    echo "    --window          <default|wayland>               (optional, set to wayland to build with WSI wayland support (only for arm64/32 now))"
 }
 
 while [[ $# -gt 0 ]]
@@ -57,6 +59,10 @@ do
             ;;
         --package)
             NEED_PACKAGE=$2
+            shift 2
+            ;;
+        --window)
+            BUILD_WINDOW_SUPPORT=$2
             shift 2
             ;;
         *)
@@ -97,6 +103,11 @@ if ! [[ ${BOOL_LIST} =~ (^|[[:space:]])${NEED_PACKAGE}($|[[:space:]]) ]]; then
     exit 1
 fi
 
+BUILD_WINDOW_SUPPORT_LIST="default wayland"
+if ! [[ ${BUILD_WINDOW_SUPPORT_LIST} =~ (^|[[:space:]])${BUILD_WINDOW_SUPPORT}($|[[:space:]]) ]]; then
+    echo "Unsupported --window option ${BUILD_WINDOW_SUPPORT}!"
+    exit 1
+fi
 if [ ${TARGET} == "android" ]; then
     if [ ${RELEASE_TYPE} == "release" ]; then
         RELEASE_TYPE_OPTION="--release"
@@ -131,26 +142,25 @@ else
     elif [ ${TARGET} == "arm_32" ]; then
         BINARY_SUFFIX="32"
         EXTRA_CMAKE_OPTION="-DCMAKE_TOOLCHAIN_FILE=cmake/linux_arm.cmake"
+        if [ ${BUILD_WINDOW_SUPPORT} == "wayland" ]; then
+            export CMAKE_INCLUDE_PATH=${dir}/arm_wayland/include/
+            export CMAKE_LIBRARY_PATH=${dir}/arm_wayland/lib_arm32/
+            EXTRA_CMAKE_OPTION=${EXTRA_CMAKE_OPTION}" -DBUILD_WSI_WAYLAND_SUPPORT=ON"
+        fi
     elif [ ${TARGET} == "arm_64" ]; then
         EXTRA_CMAKE_OPTION="-DCMAKE_TOOLCHAIN_FILE=cmake/linux_aarch64.cmake"
+        if [ ${BUILD_WINDOW_SUPPORT} == "wayland" ]; then
+            export CMAKE_INCLUDE_PATH=${dir}/arm_wayland/include/
+            export CMAKE_LIBRARY_PATH=${dir}/arm_wayland/lib_arm64/
+            EXTRA_CMAKE_OPTION=${EXTRA_CMAKE_OPTION}" -DBUILD_WSI_WAYLAND_SUPPORT=ON"
+        fi
     fi
 
     if [ ${UPDATE_EXTERNAL} == "true" ]; then
-        rm -rf ${dir}/external
+        rm -rf ${dir}/external/Vulkan*
     fi
     rm -rf ${dir}/dbuild_${TARGET}
 fi
-
-cd submodules/snappy
-git clean -fdx
-if [ ${TARGET} == "android" ]; then
-NDK=`which ndk-build`
-NDK=${NDK}/../
-cmake -DCMAKE_TOOLCHAIN_FILE=$NDK/build/cmake/android.toolchain.cmake -DANDROID_ABI=armeabi-v7a -DANDROID_NATIVE_API_LEVEL=27 .
-else
-cmake .
-fi
-cd -
 
 if [ ${TARGET} == "android" ]; then
     cd ${dir}/build-android
@@ -160,8 +170,8 @@ if [ ${TARGET} == "android" ]; then
     fi
     ./android-generate.sh ${RELEASE_TYPE_OPTION} ${BUILD_TYPE_OPTION}
     ndk-build -j $(nproc)
-    if [ -d $dir/submodules/libcollector ]; then
-        cd $dir/submodules/libcollector/android/gradle
+    if [ -d $dir/external/submodules/libcollector ]; then
+        cd $dir/external/submodules/libcollector/android/gradle
         git clean -fdx
         ANDROID_HOME=${ANDROID_SDK_HOME} ./gradlew assembleRelease
         cd -
@@ -169,7 +179,7 @@ if [ ${TARGET} == "android" ]; then
     ./build_vkreplay.sh
 else
     if [ ${UPDATE_EXTERNAL} == "true" ] || [ ! -d ${dir}/external ]; then
-        ./update_external_sources.sh --build-type ${BUILD_TYPE} --target ${TARGET#rhe6_}
+        ./update_external_sources.sh --build-type ${BUILD_TYPE} --window ${BUILD_WINDOW_SUPPORT} --target ${TARGET#rhe6_}
     fi
     cmake -H. -Bdbuild_${TARGET} -DCMAKE_BUILD_TYPE=${BUILD_TYPE_OPTION} ${RELEASE_TYPE_OPTION} ${EXTRA_CMAKE_OPTION}
     cd ${dir}/dbuild_${TARGET}
@@ -196,17 +206,26 @@ if [ ${NEED_PACKAGE} == "true" ]; then
         cp -a libs/arm64-v8a/libVkLayer_device_simulation.so ${TARGET}/trace_layer/arm64-v8a/
         cp -a libs/arm64-v8a/libVkLayer_offscreenrender.so ${TARGET}/trace_layer/arm64-v8a/
     else
+        if [ ${BUILD_WINDOW_SUPPORT} == "wayland" ]; then
+            TARGET="${TARGET}_wayland"
+        fi
         mkdir -p ${TARGET}/bin
         cp -a vktrace/vktracedump${BINARY_SUFFIX} ${TARGET}/bin/vktracedump
         cp -a vktrace/vkreplay${BINARY_SUFFIX} ${TARGET}/bin/vkreplay
+        if [ -e "vktrace/vktraceviewer${BINARY_SUFFIX}" ]; then
+            cp -a vktrace/vktraceviewer${BINARY_SUFFIX} ${TARGET}/bin/vktraceviewer
+        fi
         cp -a vktrace/vktrace${BINARY_SUFFIX} ${TARGET}/bin/vktrace
         cp -a vktrace/vktrace_layer/staging-json/VkLayer_vktrace_layer.json ${TARGET}/bin/
         cp -a layersvt/staging-json/VkLayer_screenshot.json ${TARGET}/bin/
         cp -a layersvt/libVkLayer_screenshot.so ${TARGET}/bin/
         cp -a vktrace/libVkLayer_vktrace_layer${BINARY_SUFFIX}.so ${TARGET}/bin/libVkLayer_vktrace_layer.so
-        if [ ${TARGET} != "arm_64" ] && [ ${TARGET} != "arm_32" ]; then
+        if [ ${TARGET} == "android" ] || [ ${TARGET} == "x86" ] || [ ${TARGET} == "x64" ]; then
             cp -a vktrace/libvkdisplay_wayland${BINARY_SUFFIX}.so ${TARGET}/bin/libvkdisplay_wayland.so
             cp -a vktrace/libvkdisplay_xcb${BINARY_SUFFIX}.so ${TARGET}/bin/libvkdisplay_xcb.so
+        fi
+        if [ ${BUILD_WINDOW_SUPPORT} == "wayland" ]; then
+            cp -a vktrace/libvkdisplay_wayland${BINARY_SUFFIX}.so ${TARGET}/bin/libvkdisplay_wayland.so
         fi
     fi
 

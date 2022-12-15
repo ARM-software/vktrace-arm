@@ -44,7 +44,6 @@
 #include "vkreplay_window.h"
 #include "vkreplay_factory.h"
 #include "vktrace_trace_packet_identifiers.h"
-#include "vulkan_device_util.h"
 #include "vkreplay_raytracingpipeline.h"
 #include <unordered_map>
 #include <unordered_set>
@@ -295,10 +294,14 @@ class vkReplay {
     VkResult manually_replay_vkInvalidateMappedMemoryRanges(packet_vkInvalidateMappedMemoryRanges* pPacket);
     void manually_replay_vkGetPhysicalDeviceMemoryProperties(packet_vkGetPhysicalDeviceMemoryProperties* pPacket);
     void manually_replay_vkGetPhysicalDeviceMemoryProperties2KHR(packet_vkGetPhysicalDeviceMemoryProperties2KHR* pPacket);
+    void manually_replay_vkGetPhysicalDeviceMemoryProperties2(packet_vkGetPhysicalDeviceMemoryProperties2* pPacket);
     void manually_replay_vkGetPhysicalDeviceQueueFamilyProperties(packet_vkGetPhysicalDeviceQueueFamilyProperties* pPacket);
+    void manually_replay_vkGetPhysicalDeviceQueueFamilyProperties2(packet_vkGetPhysicalDeviceQueueFamilyProperties2* pPacket);
     void manually_replay_vkGetPhysicalDeviceQueueFamilyProperties2KHR(packet_vkGetPhysicalDeviceQueueFamilyProperties2KHR* pPacket);
     void manually_replay_vkGetPhysicalDeviceSparseImageFormatProperties(
         packet_vkGetPhysicalDeviceSparseImageFormatProperties* pPacket);
+    void manually_replay_vkGetPhysicalDeviceSparseImageFormatProperties2(
+        packet_vkGetPhysicalDeviceSparseImageFormatProperties2* pPacket);
     void manually_replay_vkGetPhysicalDeviceSparseImageFormatProperties2KHR(
         packet_vkGetPhysicalDeviceSparseImageFormatProperties2KHR* pPacket);
     void manually_replay_vkGetImageMemoryRequirements(packet_vkGetImageMemoryRequirements* pPacket);
@@ -345,6 +348,7 @@ class vkReplay {
     VkResult manually_replay_vkBindImageMemory2KHR(packet_vkBindImageMemory2KHR* pPacket);
     VkResult manually_replay_vkBindBufferMemory2(packet_vkBindBufferMemory2* pPacket);
     VkResult manually_replay_vkBindImageMemory2(packet_vkBindImageMemory2* pPacket);
+    void manually_replay_vkCmdSetFragmentShadingRateKHR(packet_vkCmdSetFragmentShadingRateKHR* pPacket);
     VkResult manually_replay_vkGetDisplayPlaneSupportedDisplaysKHR(packet_vkGetDisplayPlaneSupportedDisplaysKHR* pPacket);
     VkResult manually_replay_vkEnumerateDeviceExtensionProperties(packet_vkEnumerateDeviceExtensionProperties* pPacket);
     VkResult manually_replay_vkRegisterDeviceEventEXT(packet_vkRegisterDeviceEventEXT* pPacket);
@@ -442,6 +446,14 @@ class vkReplay {
 
     // Map VkSwapchainKHR to vector of VkImage, so we can unmap swapchain images at vkDestroySwapchainKHR
     std::unordered_map<VkSwapchainKHR, std::vector<VkImage>> traceSwapchainToImages;
+    std::unordered_map<VkSwapchainKHR, std::vector<VkImage>> traceSwapchainToReplayImages;
+    std::unordered_map<VkImage, VkImage> traceRealImageToVirtualImage;
+    std::unordered_map<VkImage, VkDeviceMemory> virtualImageToVirtualMemory;
+    std::unordered_map<VkImage, VkFence>  virtualImageToVirtualFence;
+    std::unordered_map<VkImage, VkSemaphore>  virtualImageToVirtualSemaphore;
+    std::unordered_map<VkImage, VkCommandPool>  virtualImageToVirtualCommandPool;
+    std::unordered_map<VkImage, VkCommandBuffer>  virtualImageToVirtualCommandBuffer;
+    std::unordered_map<VkSwapchainKHR, VkImageCopy>  traceSwapchainToVirtualImageCopyRegion;
 
     // Map VkPhysicalDevice to VkPhysicalDeviceMemoryProperites
     std::unordered_map<VkPhysicalDevice, VkPhysicalDeviceMemoryProperties> traceMemoryProperties;
@@ -467,14 +479,16 @@ class vkReplay {
         }
     };
     std::unordered_map<VkSwapchainKHR, SwapchainImageState> swapchainImageStates;
+    std::unordered_map<VkSwapchainKHR, VkSwapchainCreateInfoKHR> traceSwapchainToCreateInfo;
     VkSwapchainKHR curSwapchainHandle;
 
     std::stack<SwapchainImageState> savedSwapchainImgStates;
     std::unordered_map< VkSwapchainKHR, std::vector<bool> > swapchainImageAcquireStatus;
-    std::unordered_map< uint32_t, VkSemaphore > swapchainImgIdxToAcquireSemaphore;
+    std::unordered_map< uint32_t, std::pair<VkSemaphore, VkFence> > swapchainImgIdxToAcquireSemaphoreAndFence;
     std::unordered_map< VkSemaphore, VkSemaphore > acquireSemaphoreToFSIISemaphore;
+    std::unordered_map< VkFence, VkFence > acquireFenceToFSIIFence;
     std::unordered_map< VkQueue, VkDevice > traceQueueToDevice;
-    std::queue<VkSemaphore> fsiiSemaphores;
+    std::queue< std::pair<VkSemaphore, VkFence> > fsiiSemaphoresAndFences;
 
     // Map VkImage to VkMemoryRequirements
     std::unordered_map<VkImage, VkMemoryRequirements> replayGetImageMemoryRequirements;
@@ -512,11 +526,23 @@ class vkReplay {
         uint64_t traceObjHandle = 0;
     }objDeviceAddr;
 
+    typedef struct _objInstanceMemInfo{
+        uint64_t offset = 0;
+        uint64_t primitiveCount = 0;
+        VkBool32 arrayOfPointers = VK_FALSE;
+    }objInstanceMemInfo;
+
+    typedef struct _virtualFence{
+        VkDevice device;
+        VkFence fence;
+    }virtualFence;
+
     RayTracingPipelineHandler *rtHandler;
 
     std::unordered_map<VkDeviceAddress, objDeviceAddr> traceDeviceAddrToReplayDeviceAddr4Buf;
     std::unordered_map<VkDeviceAddress, objDeviceAddr> traceDeviceAddrToReplayDeviceAddr4AS;
     std::unordered_map<VkBuffer, VkDeviceMemory> traceBufferToReplayMemory;
+    std::unordered_map<VkBuffer, std::vector<VkBuffer>> traceBufferToCopyBuffer;
     std::unordered_map<VkAccelerationStructureKHR, void*> replayASToCopyAddress;
     std::unordered_map<void*, traceMemoryMapInfo> traceAddressToTraceMemoryMapInfo;
     std::unordered_map<VkBuffer, VkDeviceSize> replayBufferToASBuildSizes;
@@ -529,16 +555,18 @@ class vkReplay {
     std::unordered_map<VkDevice, deviceFeatureSupport> replayDeviceToFeatureSupport;
     std::unordered_map<VkCommandBuffer, VkDevice> replayCommandBufferToReplayDevice;
     std::unordered_map<VkBuffer, VkDeviceMemory> replayBufferToReplayDeviceMemory;
+    std::unordered_map<VkBuffer, VkDeviceSize> replayBufferToReplayDeviceMemoryOffset;
     std::unordered_map<VkDeviceAddress, objDeviceAddr>::iterator findClosestAddress(VkDeviceAddress addr);
+    std::unordered_map<VkBuffer, objInstanceMemInfo> traceInstanceBufferToMemInfo;
+    std::unordered_map<VkImage, virtualFence> virtualImageToDeviceFence;
+    void remapReplayPatternBufferDeviceAddresss(VkDevice remappedDevice, VkDeviceMemory traceBufMemory, void* pData);
+    void remapReplayInstanceBufferDeviceAddresss(VkDevice remappedDevice, VkDeviceMemory dataMemory, VkDeviceSize size, uint64_t offset, VkBool32 arrayOfPointers);
+    void remapInstanceBufferMemoryDeviceAddress(VkBuffer traceBuffer, objInstanceMemInfo instanceMemInfo);
 
     uint32_t swapchainRefCount = 0;
     uint32_t surfRefCount = 0;
 
     uint32_t m_instCount = 0;
-
-    // for ray tracing capture replay info
-    uint32_t replayInstanceApiVersion = 0;
-    std::unordered_map<VkDevice, VulkanDevicePropertyFeatureInfo> replayPropertyFeatureInfo;
 
     void forceDisableCaptureReplayFeature();
     void* fromTraceAddr2ReplayAddr(VkDevice replayDevice, const void* traceAddress);
@@ -552,6 +580,10 @@ class vkReplay {
     void remapHandlesInDescriptorSetWithTemplateData(VkDescriptorUpdateTemplateKHR remappedDescriptorUpdateTemplate, char* pData);
     bool findImageFromOtherSwapchain(VkSwapchainKHR swapchain);
     void checkDeviceExtendFeatures(const VkBaseOutStructure *pNext, VkPhysicalDevice physicalDevice);
+    bool createVirtualObject(VkDevice traceDevice, VkSwapchainKHR traceSwapchain, VkImage* pRealImages, uint32_t traceImageCount);
+    VkImage getVirtualSwapchainImage(VkImage traceImage);
+    VkResult copyFromVirtualImageToReplayImage(VkQueue traceQueue, VkImage virtualImage, VkImage replayImage, VkImageCopy* pCopyReg, uint32_t queueFamilyIndex, std::vector<VkSemaphore>& semaphores);
+    void deleteVirtualObject(VkDevice remappeddevice, VkImage image);
     vktrace_replay::PipelineCacheAccessor::Ptr    m_pipelinecache_accessor;
 
     std::unordered_map<VkQueryPool, VkQueryType>  m_querypool_type;
@@ -559,4 +591,10 @@ class vkReplay {
     friend RayTracingPipelineShaderInfo;
     friend RayTracingPipelineHandler;
     friend RayTracingPipelineHandlerVer1;
+
+    // for forcing pipeline shading rate
+    struct _fragmentSize {
+        uint32_t width;
+        uint32_t height;
+    } fragmentSize;
 };

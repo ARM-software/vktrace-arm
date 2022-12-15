@@ -30,7 +30,7 @@
 #if defined(ANDROID)
 // TODO
 #else
-#if defined(VK_USE_PLATFORM_XCB_KHR) || defined(VK_USE_PLATFORM_WAYLAND_KHR) || defined(VK_USE_PLATFORM_XLIB_KHR)
+#if defined(VK_USE_PLATFORM_XCB_KHR) ||  defined(VK_USE_PLATFORM_XLIB_KHR)
 #include <xcb/xcb.h>
 #include <X11/Xlib.h>
 #include <X11/keysym.h>
@@ -146,9 +146,9 @@ enum enum_key_state {
 // return if hotkey triggered;
 bool is_hotkey_trim_triggered();
 
-VkDeviceSize calculateImageSubResourceSize(VkDevice device, VkImageCreateInfo imageCreateInfo,
-                                           const VkAllocationCallbacks *pAllocator, uint32_t subresourceIndex);
-bool calculateImageAllSubResourceSize(VkDevice device, VkImageCreateInfo imageCreateInfo, const VkAllocationCallbacks *pAllocator,
+VkDeviceSize calculateImageSubResourceSize(VkDevice device, VkImage image, VkImageCreateInfo imageCreateInfo,
+                                           uint32_t subresourceIndex);
+bool calculateImageAllSubResourceSize(VkDevice device, VkImage image, VkImageCreateInfo imageCreateInfo,
                                       std::vector<VkDeviceSize> &subResourceSizes);
 
 void addImageSubResourceSizes(VkImage image, std::vector<VkDeviceSize> subResourceSizes);

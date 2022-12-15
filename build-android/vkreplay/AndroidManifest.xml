@@ -1,5 +1,5 @@
 <?xml version="1.0"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example.vkreplay" android:versionCode="1" android:versionName="3.3 dev unofficial">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example.vkreplay" android:versionCode="1" android:versionName="3.4 dev unofficial">
 
     <!-- This is the platform API where NativeActivity was introduced. -->
     <uses-sdk android:minSdkVersion="23" android:targetSdkVersion="23"/>

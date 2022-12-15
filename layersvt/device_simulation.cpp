@@ -141,6 +141,9 @@ void AndroidPrintf(VkLogLevel level, const char *fmt, va_list args) {
         case VK_LOG_DEBUG:
             __android_log_print(ANDROID_LOG_DEBUG, "devsim", "%s", message);
             break;
+        case VK_LOG_WARNING:
+            __android_log_print(ANDROID_LOG_WARN, "devsim", "%s", message);
+            break;
         case VK_LOG_ERROR:
             __android_log_print(ANDROID_LOG_ERROR, "devsim", "%s", message);
             break;
@@ -191,6 +194,20 @@ void ErrorPrintf(const char *fmt, ...) {
 #endif
         exit(1);
     }
+}
+
+void WarningPrintf(const char *fmt, ...) {
+#if !defined(__ANDROID__)
+    fprintf(stderr, "\tWARN devsim ");
+#endif
+    va_list args;
+    va_start(args, fmt);
+#if defined(__ANDROID__)
+    AndroidPrintf(VK_LOG_WARNING, fmt, args);
+#else
+    vfprintf(stderr, fmt, args);
+#endif
+    va_end(args);
 }
 
 namespace {
@@ -1564,6 +1581,8 @@ VKAPI_ATTR void VKAPI_CALL GetPhysicalDeviceMemoryProperties(VkPhysicalDevice ph
                                                              VkPhysicalDeviceMemoryProperties *pMemoryProperties) {
     std::lock_guard<std::mutex> lock(global_lock);
     const auto dt = instance_dispatch_table(physicalDevice);
+    dt->GetPhysicalDeviceMemoryProperties(physicalDevice, pMemoryProperties);
+    return;
 
     // Are there JSON overrides, or should we call down to return the original values?
     PhysicalDeviceData *pdd = PhysicalDeviceData::Find(physicalDevice);

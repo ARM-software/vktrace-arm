@@ -108,8 +108,7 @@ protected:
     void createSBT(RayTracingPipelineShaderInfo &shaderInfo, const VkCommandBuffer &remappedcommandBuffer, RayTracingPipelineShaderInfo::ShaderType shaderType);
 public:
     virtual ~RayTracingPipelineHandler() {}
-    static bool isEqual(const VkPhysicalDeviceRayTracingPipelinePropertiesKHR &traceValue,
-                        const VkPhysicalDeviceRayTracingPipelinePropertiesKHR &replayValue);
+    static bool platformsCompatible();
     VkPipeline getCurrentRayTracingPipeline();
     void setCurrentRayTracingPipeline(VkPipeline pipeline);
     virtual void addSbtBufferFlag(VkBufferUsageFlags &usage) = 0;
