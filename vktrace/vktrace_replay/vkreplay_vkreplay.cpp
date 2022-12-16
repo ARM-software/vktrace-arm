@@ -1439,6 +1439,7 @@ VkResult vkReplay::manually_replay_vkCreateBuffer(packet_vkCreateBuffer *pPacket
     auto it1 = traceASSizeToReplayASBuildSizes.end();
     auto it2 = traceUpdateSizeToReplayASBuildSizes.end();
     auto it3 = traceBuildSizeToReplayASBuildSizes.end();
+    auto it4 = traceASCompactSizeToReplayASCompactSize.end();
     if (pPacket->pCreateInfo->usage & VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR) {
         VkDeviceSize createInfoSize = pPacket->pCreateInfo->size;
         it1 = traceASSizeToReplayASBuildSizes.find(createInfoSize);
@@ -1453,7 +1454,11 @@ VkResult vkReplay::manually_replay_vkCreateBuffer(packet_vkCreateBuffer *pPacket
         if (it3 != traceBuildSizeToReplayASBuildSizes.end()) {
             const_cast<VkBufferCreateInfo*>(pPacket->pCreateInfo)->size = std::max(it3->second.buildScratchSize, pPacket->pCreateInfo->size);
         }
-        if (it1 == traceASSizeToReplayASBuildSizes.end() && it2 == traceUpdateSizeToReplayASBuildSizes.end() && it3 == traceBuildSizeToReplayASBuildSizes.end()) {
+        it4 = traceASCompactSizeToReplayASCompactSize.find(createInfoSize);
+        if (it4 != traceASCompactSizeToReplayASCompactSize.end()) {
+            const_cast<VkBufferCreateInfo*>(pPacket->pCreateInfo)->size = std::max(it4->second, pPacket->pCreateInfo->size);
+        }
+        if (it1 == traceASSizeToReplayASBuildSizes.end() && it2 == traceUpdateSizeToReplayASBuildSizes.end() && it3 == traceBuildSizeToReplayASBuildSizes.end() && it4 == traceASCompactSizeToReplayASCompactSize.end()) {
             vktrace_LogWarning("vkCreateBuffer: Cannot find matched AS or scratch buffer size.");
         }
     } else if (traceScratchSizeToReplayScratchSize.size() > 0 && ((pPacket->pCreateInfo->usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT)
@@ -4134,6 +4139,110 @@ VkResult vkReplay::manually_replay_vkCreateAccelerationStructureKHR(packet_vkCre
             replayASToASBuildSizes[local_pAccelerationStructure] = it->second;
         }
     }
+    return replayResult;
+}
+
+void vkReplay::manually_replay_vkCmdWriteAccelerationStructuresPropertiesKHR(packet_vkCmdWriteAccelerationStructuresPropertiesKHR *pPacket) {
+    VkCommandBuffer remappedcommandBuffer = m_objMapper.remap_commandbuffers(pPacket->commandBuffer);
+    if (pPacket->commandBuffer != VK_NULL_HANDLE && remappedcommandBuffer == VK_NULL_HANDLE) {
+        vktrace_LogError("Error detected in CmdWriteAccelerationStructuresPropertiesKHR() due to invalid remapped VkCommandBuffer.");
+        return;
+    }
+    // No need to remap accelerationStructureCount
+    VkAccelerationStructureKHR *remappedpAccelerationStructures = new VkAccelerationStructureKHR[pPacket->accelerationStructureCount];
+    for (uint32_t i = 0; i < pPacket->accelerationStructureCount; i++) {
+        remappedpAccelerationStructures[i] = m_objMapper.remap_accelerationstructurekhrs(pPacket->pAccelerationStructures[i]);
+        if (pPacket->pAccelerationStructures[i] != VK_NULL_HANDLE && remappedpAccelerationStructures[i] == VK_NULL_HANDLE) {
+            vktrace_LogError("Error detected in CmdWriteAccelerationStructuresPropertiesKHR() due to invalid remapped VkAccelerationStructureKHR.");
+            delete []remappedpAccelerationStructures;
+            return;
+        }
+    }
+    // No need to remap queryType
+    VkQueryPool remappedqueryPool = m_objMapper.remap_querypools(pPacket->queryPool);
+    if (pPacket->queryPool != VK_NULL_HANDLE && remappedqueryPool == VK_NULL_HANDLE) {
+        vktrace_LogError("Error detected in CmdWriteAccelerationStructuresPropertiesKHR() due to invalid remapped VkQueryPool.");
+        delete []remappedpAccelerationStructures;
+        return;
+    }
+    // No need to remap firstQuery
+    m_vkDeviceFuncs.CmdWriteAccelerationStructuresPropertiesKHR(remappedcommandBuffer, pPacket->accelerationStructureCount, remappedpAccelerationStructures, pPacket->queryType, remappedqueryPool, pPacket->firstQuery);
+
+    if (pPacket->queryType == VK_QUERY_TYPE_ACCELERATION_STRUCTURE_COMPACTED_SIZE_KHR) {
+        for (int i = 0; i < pPacket->accelerationStructureCount; ++i)
+            replayQueryPoolASCompactSize[remappedqueryPool].insert(pPacket->firstQuery + i);
+    }
+    delete []remappedpAccelerationStructures;
+}
+
+VkResult vkReplay::manually_replay_vkGetQueryPoolResults(packet_vkGetQueryPoolResults *pPacket) {
+    VkResult replayResult = VK_ERROR_VALIDATION_FAILED_EXT;
+    if (callFailedDuringTrace(pPacket->result, pPacket->header->packet_id)) {
+        return replayResult;
+    }
+    VkDevice remappeddevice = m_objMapper.remap_devices(pPacket->device);
+    if (pPacket->device != VK_NULL_HANDLE && remappeddevice == VK_NULL_HANDLE) {
+        vktrace_LogError("Error detected in GetQueryPoolResults() due to invalid remapped VkDevice.");
+        return replayResult;
+    }
+    VkQueryPool remappedqueryPool = m_objMapper.remap_querypools(pPacket->queryPool);
+    if (pPacket->queryPool != VK_NULL_HANDLE && remappedqueryPool == VK_NULL_HANDLE) {
+        vktrace_LogError("Error detected in GetQueryPoolResults() due to invalid remapped VkQueryPool.");
+        return replayResult;
+    }
+    // No need to remap firstQuery
+    // No need to remap queryCount
+    // No need to remap dataSize
+    // No need to remap pData
+    char *pData = new char[pPacket->dataSize];
+    // No need to remap stride
+    // No need to remap flags
+    uint32_t call_id = m_inFrameRange ? VKTRACE_TPI_VK_vkGetQueryPoolResults : 0;
+    uint32_t retryCnt = 0;
+    VkQueryType queryType = m_querypool_type[pPacket->queryPool];
+    do {
+    replayResult = m_vkDeviceFuncs.GetQueryPoolResults(remappeddevice, remappedqueryPool, pPacket->firstQuery, pPacket->queryCount, pPacket->dataSize, pData, pPacket->stride, pPacket->flags);
+        m_CallStats[call_id].total++;
+        m_CallStats[call_id].injectedCallCount++;
+        if (call_id && replaySettings.perfMeasuringMode > 0) {
+            VkPresentInfoKHR PresentInfo = {};
+            PresentInfo.sType = VK_STRUCTURE_TYPE_MAX_ENUM;
+            PresentInfo.waitSemaphoreCount = 1;
+            m_vkDeviceFuncs.QueuePresentKHR(VK_NULL_HANDLE, &PresentInfo);
+        }
+        if (replayResult != VK_SUCCESS && replayResult != VK_NOT_READY) {
+            if (retryCnt > 16) {
+                break;
+            }
+            retryCnt++;
+        }
+    } while (pPacket->result == VK_SUCCESS && (pPacket->flags & VK_QUERY_RESULT_WAIT_BIT || queryType == VK_QUERY_TYPE_OCCLUSION) && replayResult != pPacket->result);
+    m_CallStats[call_id].injectedCallCount--;
+    if (call_id && replaySettings.perfMeasuringMode > 0) {
+        VkPresentInfoKHR PresentInfo = {};
+        PresentInfo.sType = VK_STRUCTURE_TYPE_MAX_ENUM;
+        PresentInfo.waitSemaphoreCount = 0;
+        m_vkDeviceFuncs.QueuePresentKHR(VK_NULL_HANDLE, &PresentInfo);
+    }
+    auto it = replayQueryPoolASCompactSize.find(remappedqueryPool);
+    if (it != replayQueryPoolASCompactSize.end()) { // This query pool contains compacted acceleration structure sizes
+        for (int i = pPacket->firstQuery; i < pPacket->firstQuery + pPacket->queryCount; ++i) {
+            if (it->second.find(i) != it->second.end()) {
+                int offset = i * pPacket->stride;
+                if (pPacket->flags & VK_QUERY_RESULT_64_BIT) {
+                    VkDeviceSize traceASCompactSize = *((uint64_t*)((char*)pPacket->pData + offset));
+                    VkDeviceSize replayASCompactSize = *((u_int64_t*)(pData + offset));
+                    traceASCompactSizeToReplayASCompactSize[traceASCompactSize] = replayASCompactSize;
+                }
+                else {
+                    VkDeviceSize traceASCompactSize = *((int*)((char*)pPacket->pData + offset));
+                    VkDeviceSize replayASCompactSize = *((int*)(pData + offset));
+                    traceASCompactSizeToReplayASCompactSize[traceASCompactSize] = replayASCompactSize;
+                }
+            }
+        }
+    }
+    delete []pData;
     return replayResult;
 }
 

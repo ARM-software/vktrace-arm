@@ -1166,6 +1166,8 @@ class VkTraceFileOutputGenerator(OutputGenerator):
                                  'GetRayTracingShaderGroupHandlesKHR',
                                  'CmdTraceRaysKHR',
                                  'CmdBeginRenderingKHR',
+                                 'CmdWriteAccelerationStructuresPropertiesKHR',
+                                 'GetQueryPoolResults'
                                  ]
         # Map APIs to functions if body is fully custom
         custom_body_dict = {'CreateInstance': self.GenReplayCreateInstance,
@@ -1648,6 +1650,10 @@ class VkTraceFileOutputGenerator(OutputGenerator):
                     replay_gen_source += '                curSwapchainImgStat.traceImageIndexToImageViews[curSwapchainImgStat.traceImageViewToImageIndex[pPacket->imageView]].erase(pPacket->imageView);\n'
                     replay_gen_source += '                curSwapchainImgStat.traceImageViewToImageIndex.erase(pPacket->imageView);\n'
                     replay_gen_source += '            }\n'
+                elif cmdname == 'DestroyQueryPool':
+                    replay_gen_source += '            auto it = replayQueryPoolASCompactSize.find(remappedqueryPool);\n'
+                    replay_gen_source += '            if (it != replayQueryPoolASCompactSize.end())\n'
+                    replay_gen_source += '                replayQueryPoolASCompactSize.erase(it);\n'
                 # Print the enumerated instance extensions and layers
                 if cmdname == 'EnumerateInstanceExtensionProperties':
                     replay_gen_source += '            vktrace_LogAlways("Num of extensions enumerated: %u", *(pPacket->pPropertyCount));\n'

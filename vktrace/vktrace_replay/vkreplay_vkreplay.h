@@ -375,6 +375,8 @@ class vkReplay {
     VkResult manually_replay_vkCopyMemoryToAccelerationStructureKHR(packet_vkCopyMemoryToAccelerationStructureKHR *pPacket);
     VkResult manually_replay_vkCreateRayTracingPipelinesKHR(packet_vkCreateRayTracingPipelinesKHR *pPacket);
     VkResult manually_replay_vkGetRayTracingShaderGroupHandlesKHR(packet_vkGetRayTracingShaderGroupHandlesKHR *pPacket);
+    void manually_replay_vkCmdWriteAccelerationStructuresPropertiesKHR(packet_vkCmdWriteAccelerationStructuresPropertiesKHR *pPacket);
+    VkResult manually_replay_vkGetQueryPoolResults(packet_vkGetQueryPoolResults *pPacket);
     void manually_replay_vkCmdTraceRaysKHR(packet_vkCmdTraceRaysKHR *pPacket);
     void manually_replay_vkCmdCopyBufferRemap(packet_vkCmdCopyBuffer *pPacket);
     void process_screenshot_list(const char* list) {
@@ -440,6 +442,7 @@ class vkReplay {
     std::unordered_map<VkDeferredOperationKHR, VkDevice> replayDeferredOperationKHRToDevice;
     std::unordered_map<VkAccelerationStructureKHR, VkDevice> replayAccelerationStructureKHRToDevice;
     std::unordered_map<VkAccelerationStructureNV, VkDevice> replayAccelerationStructureNVToDevice;
+    std::unordered_map<VkQueryPool, std::unordered_set<int> > replayQueryPoolASCompactSize;
     std::unordered_map<VkPipeline, VkDevice> replayRayTracingPipelinesNVToDevice;
     std::unordered_map<VkPrivateDataSlot, VkDevice> replayPrivateDataSlotToDevice;
     std::unordered_map<VkPrivateDataSlotEXT, VkDevice> replayPrivateDataSlotEXTToDevice;
@@ -551,6 +554,7 @@ class vkReplay {
     std::unordered_map<VkDeviceSize, VkAccelerationStructureBuildSizesInfoKHR> traceUpdateSizeToReplayASBuildSizes;
     std::unordered_map<VkDeviceSize, VkAccelerationStructureBuildSizesInfoKHR> traceBuildSizeToReplayASBuildSizes;
     std::unordered_map<VkDeviceSize, VkDeviceSize> traceScratchSizeToReplayScratchSize;
+    std::unordered_map<VkDeviceSize, VkDeviceSize> traceASCompactSizeToReplayASCompactSize;
     std::unordered_map<VkDeviceMemory, void*> replayMemoryToMapAddress;
     std::unordered_map<VkDevice, deviceFeatureSupport> replayDeviceToFeatureSupport;
     std::unordered_map<VkCommandBuffer, VkDevice> replayCommandBufferToReplayDevice;

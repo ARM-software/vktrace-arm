@@ -108,6 +108,7 @@ if ! [[ ${BUILD_WINDOW_SUPPORT_LIST} =~ (^|[[:space:]])${BUILD_WINDOW_SUPPORT}($
     echo "Unsupported --window option ${BUILD_WINDOW_SUPPORT}!"
     exit 1
 fi
+regenerate=false
 if [ ${TARGET} == "android" ]; then
     if [ ${RELEASE_TYPE} == "release" ]; then
         RELEASE_TYPE_OPTION="--release"
@@ -118,7 +119,30 @@ if [ ${TARGET} == "android" ]; then
     if [ ! -f ~/.android/debug.keystore ]; then
         keytool -genkey -v -keystore ~/.android/debug.keystore -storepass android -alias androiddebugkey -keypass android -dname "CN=Android Debug,O=Android,C=US"
     fi
-    rm -rf ${dir}/build-android/generated
+
+    compile_time=0
+    for file in ${dir}/build-android/generated/include/*
+    do
+    if [ -f "$file" ]
+    then
+        compile_time=$(stat -c %Y ${file})
+        break;
+    fi
+    done
+
+    for file in ${dir}/scripts/*
+    do
+    if [ -f "$file" ]
+    then
+        modify_time=$(stat -c %Y ${file})
+        if [ $compile_time -lt $modify_time ]
+        then
+            rm -rf ${dir}/build-android/generated
+            regenerate=true
+            break;
+        fi
+    fi
+    done
     rm -rf ${dir}/build-android/obj
     rm -rf ${dir}/build-android/libs
     rm -rf ${dir}/build-android/vkreplay/bin
@@ -167,8 +191,13 @@ if [ ${TARGET} == "android" ]; then
     if [ ${UPDATE_EXTERNAL} == "true" ] || [ ! -d ${dir}/build-android/third_party ]; then
         rm -rf third_party
         ./update_external_sources_android.sh
+        rm -rf ${dir}/build-android/generated
+        regenerate=true
     fi
-    ./android-generate.sh ${RELEASE_TYPE_OPTION} ${BUILD_TYPE_OPTION}
+    if $regenerate; then
+        echo "generating files:"
+        ./android-generate.sh ${RELEASE_TYPE_OPTION} ${BUILD_TYPE_OPTION}
+    fi
     ndk-build -j $(nproc)
     if [ -d $dir/external/submodules/libcollector ]; then
         cd $dir/external/submodules/libcollector/android/gradle

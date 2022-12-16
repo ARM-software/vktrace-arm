@@ -1200,6 +1200,11 @@ int vkreplay_main(int argc, char** argv, vktrace_replay::ReplayDisplayImp* pDisp
         g_hasAsApi = true;
     }
 
+    // print virtual swapchain related parameters
+    std::string bEVsc   = replaySettings.enableVirtualSwapchain? "true " : "false";
+    std::string bVscpm  = replaySettings.enableVscPerfMode? "true " : "false";
+    vktrace_LogAlways("Current evsc is %s, vscpm is %s", bEVsc.c_str(), bVscpm.c_str());
+
     // read portability table if it exists
     if (pFileHeader->portability_table_valid)
         vktrace_LogAlways("Portability table exists.");

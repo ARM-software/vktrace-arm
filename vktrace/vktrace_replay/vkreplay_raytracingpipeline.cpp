@@ -211,7 +211,37 @@ void RayTracingPipelineShaderInfo::copySBT_GPU(const VkCommandBuffer &remappedCo
         pRegions.size = hitSize;
     else if (shaderType == RayTracingPipelineShaderInfo::CALLABLE)
         pRegions.size = callableSize;
+
+    VkBufferMemoryBarrier bufferMemoryBarrier {
+            VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+            NULL,
+            VK_ACCESS_SHADER_READ_BIT,
+            VK_ACCESS_TRANSFER_WRITE_BIT,
+            0,
+            0,
+            shaderBindingTableBuffer[shaderType],
+            0,
+            VK_WHOLE_SIZE
+    };
+    g_replay->m_vkDeviceFuncs.CmdPipelineBarrier(remappedCommandBuffer,
+                                                 VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
+                                                 VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                                 VK_DEPENDENCY_DEVICE_GROUP_BIT,
+                                                 0, NULL,
+                                                 1, &bufferMemoryBarrier,
+                                                 0, NULL);
+
     vkCmdCopyBuffer(remappedCommandBuffer, local_buffer, shaderBindingTableBuffer[shaderType], 1, &pRegions);
+
+    bufferMemoryBarrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    bufferMemoryBarrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    g_replay->m_vkDeviceFuncs.CmdPipelineBarrier(remappedCommandBuffer,
+                                                 VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                                 VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                                 VK_DEPENDENCY_DEVICE_GROUP_BIT,
+                                                 0, NULL,
+                                                 1, &bufferMemoryBarrier,
+                                                 0, NULL);
 
     writeSBT_GPU(remappedCommandBuffer, shaderType);
 }
@@ -253,6 +283,24 @@ void RayTracingPipelineShaderInfo::writeSBT_GPU(VkCommandBuffer commandBuffer, S
         }
         vkCmdCopyBuffer(commandBuffer, handleDataBuffer, shaderBindingTableBuffer[shaderType], 1, &pRegions);
     }
+    VkBufferMemoryBarrier bufferMemoryBarrier {
+            VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+            NULL,
+            VK_ACCESS_TRANSFER_WRITE_BIT,
+            VK_ACCESS_SHADER_READ_BIT,
+            0,
+            0,
+            shaderBindingTableBuffer[shaderType],
+            0,
+            VK_WHOLE_SIZE
+    };
+    g_replay->m_vkDeviceFuncs.CmdPipelineBarrier(commandBuffer,
+                                                 VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                                 VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
+                                                 VK_DEPENDENCY_DEVICE_GROUP_BIT,
+                                                 0, NULL,
+                                                 1, &bufferMemoryBarrier,
+                                                 0, NULL);
 }
 
 //==========================================================================================
