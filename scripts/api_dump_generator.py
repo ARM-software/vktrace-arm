@@ -1533,6 +1533,22 @@ std::ostream& dump_json_{sctName}(const {sctName}& object, const ApiDumpSettings
 std::ostream& dump_json_{unName}(const {unName}& object, const ApiDumpSettings& settings, int indents);
 @end union
 
+template <typename T, typename... Args>
+inline int dump_json_double_pointer(const T *const* pointer, size_t len, const ApiDumpSettings &settings, const char *type_string, const char *name,
+                              int indents) {{
+    if (len == 0 || pointer == NULL) {{
+        settings.stream() << settings.indentation(indents) << "{{\\n";
+        settings.stream() << settings.indentation(indents + 1) << "\\"type\\" : \\"" << type_string << "\\",\\n";
+        settings.stream() << settings.indentation(indents + 1) << "\\"name\\" : \\"" << name << "\\",\\n";
+        settings.stream() << settings.indentation(indents + 1) << "\\"address\\" : ";
+        OutputAddress(settings, pointer, true);
+        settings.stream() << "\\n";
+        settings.stream() << settings.indentation(indents) << "}}";
+        return 0;
+    }}
+    return 1;
+}}
+
 //============================= typedefs ==============================//
 
 // Functions for dumping typedef types that the codegen scripting can't handle
@@ -1775,6 +1791,31 @@ std::ostream& dump_json_{sctName}(const {sctName}& object, const ApiDumpSettings
     @if(not ('{memLength}'[0].isdigit() or '{memLength}'[0].isupper()))
     dump_json_array<const {memBaseType}>(object.{memName}, object.{memLength}, settings, "{memType}", "{memChildType}", "{memName}", indents + 1, dump_json_{memTypeID}{memInheritedConditions}); // JQA
     @end if
+    @end if
+    @if({memPtrLevel} == 2 and '{memLength}' != 'None' and '{memBaseType}' == 'VkAccelerationStructureGeometryKHR')
+    int ret = dump_json_double_pointer<const {memBaseType}>(object.{memName}, object.{memLength}, settings, "{memType}", "{memName}", indents + 1);
+    if(ret) {{
+            settings.stream() << settings.indentation(indents) << "{{\\n";
+            if (object.{memLength}> 0 && object.{memName} != NULL) {{
+                settings.stream() << settings.indentation(indents + 1) << "\\"type\\" : \\"" << "{memType}" << "\\",\\n";
+                settings.stream() << settings.indentation(indents + 1) << "\\"name\\" : \\"" << "{memName}" << "\\",\\n";
+                settings.stream() << settings.indentation(indents + 1) << "\\"address\\" : ";
+                OutputAddress(settings, object.{memName}, true);
+                settings.stream() << ",\\n";
+                settings.stream() << settings.indentation(indents + 1) << "\\"elements\\" :\\n";
+                settings.stream() << settings.indentation(indents + 1) << "[\\n";
+                for (size_t i = 0; i < object.{memLength} && object.{memName} != NULL; ++i) {{
+                    std::stringstream stream;
+                    stream << "[" << i << "]";
+                    std::string indexName = stream.str();
+                    dump_json_array<const {memBaseType}>(object.{memName}[i], object.{memLength}, settings, "{memType}", "{memChildType}", "{memName}", indents + 2, dump_json_{memTypeID}{memInheritedConditions}); // PQA
+                    if (i < object.{memLength} - 1) settings.stream() << ',';
+                    settings.stream() << "\\n";
+                }}
+                settings.stream() << settings.indentation(indents + 1) << "]";
+            }}
+            settings.stream() << "\\n" << settings.indentation(indents) << "}}";
+        }}
     @end if
 
     @if('{sctName}' == 'VkShaderModuleCreateInfo')
@@ -2025,6 +2066,31 @@ std::ostream& dump_json_body_{funcName}(ApiDumpInstance& dump_inst, {funcTypedPa
         @end if
         @if({prmPtrLevel} == 1 and '{prmLength}' != 'None')
         dump_json_array<const {prmBaseType}>({prmName}, {prmLength}, settings, "{prmType}", "{prmChildType}", "{prmName}", 4, dump_json_{prmTypeID}{prmInheritedConditions}); // PQA
+        @end if
+        @if({prmPtrLevel} == 2 and '{prmLength}' != 'None')
+        int ret = dump_json_double_pointer<const {prmBaseType}>({prmName}, {prmLength}, settings, "{prmType}", "{prmName}", 4);
+        if(ret) {{
+            settings.stream() << settings.indentation(4) << "{{\\n";
+            if ({prmLength} > 0 && {prmName} != NULL) {{
+                settings.stream() << settings.indentation(4 + 1) << "\\"type\\" : \\"" << "{prmType}" << "\\",\\n";
+                settings.stream() << settings.indentation(4 + 1) << "\\"name\\" : \\"" << "{prmName}" << "\\",\\n";
+                settings.stream() << settings.indentation(4 + 1) << "\\"address\\" : ";
+                OutputAddress(settings, {prmName}, true);
+                settings.stream() << ",\\n";
+                settings.stream() << settings.indentation(4 + 1) << "\\"elements\\" :\\n";
+                settings.stream() << settings.indentation(4 + 1) << "[\\n";
+                for (size_t i = 0; i < {prmLength} && {prmName} != NULL; ++i) {{
+                    std::stringstream stream;
+                    stream << "[" << i << "]";
+                    std::string indexName = stream.str();
+                    dump_json_array<const {prmBaseType}>({prmName}[i], {prmLength}, settings, "{prmType}", "{prmChildType}", "{prmName}", 4 + 2, dump_json_{prmTypeID}{prmInheritedConditions}); // PQA
+                    if (i < {prmLength} - 1) settings.stream() << ',';
+                    settings.stream() << "\\n";
+                }}
+                settings.stream() << settings.indentation(4 + 1) << "]";
+            }}
+            settings.stream() << "\\n" << settings.indentation(4) << "}}";
+        }}
         @end if
         needParameterComma = true;
         @end parameter

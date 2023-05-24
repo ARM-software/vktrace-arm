@@ -53,10 +53,6 @@
 #error VKTRACE_VERSION not defined!
 #endif
 
-#if !defined(STRINGIFY)
-#define STRINGIFY(x) #x
-#endif
-
 #if defined(WIN32)
 
 #define VKTRACER_EXPORT __declspec(dllexport)
@@ -118,6 +114,18 @@ static const vulkan_struct_header* find_ext_struct(const vulkan_struct_header* f
     const vulkan_struct_header* entry = first;
     while (entry && entry->sType != stype) entry = entry->pNext;
     return entry;
+}
+
+// Use it carefully
+static void delete_ext_struct(vulkan_struct_header* entry, VkStructureType stype) {
+    while (entry->pNext && entry->pNext->sType != stype) entry = entry->pNext;
+    if (!entry->pNext) return;
+    entry->pNext = entry->pNext->pNext;
+}
+
+static void add_ext_struct(vulkan_struct_header* entry, vulkan_struct_header* ext_struct) {
+    while (entry->pNext) entry = entry->pNext;
+    entry->pNext = ext_struct;
 }
 
 #if defined(ANDROID)
@@ -229,6 +237,8 @@ static uint32_t getAHardwareBufBPP(uint32_t fmt) {
 // In default, the code is disabled.
 #define VKTRACE_PAGEGUARD_ENABLE_SYNC_GPU_DATA_BACK_ENV "VKTRACE_PAGEGUARD_ENABLE_SYNC_GPU_DATA_BACK"
 
+#define VKTRACE_PAGEGUARD_SYNC_GPU_DATA_BACK_REALTIME_ENV "VKTRACE_PAGEGUARD_SYNC_GPU_DATA_BACK_REALTIME"
+
 // VKTRACE_TRIM_TRIGGER env var is set by the vktrace program to
 // communicate the --TraceTrigger command line argument to the
 // trace layer.
@@ -316,3 +326,8 @@ static uint32_t getAHardwareBufBPP(uint32_t fmt) {
 // VkPhysicalDeviceRayTracingPipelineFeaturesKHR when tracing.
 // Its default value is 0. Set it to non-zero values to disable this feature.
 #define VKTRACE_DISABLE_CAPTUREREPLAY_FEATURE_ENV "VKTRACE_DISABLE_CAPTUREREPLAY_FEATURE"
+
+// VKTRACE_ENABLE_COPY_AS_BUFFER env var is an option used to control capture ray query trace
+// to copy and restore buffer before every CmdBuildAccelerationStructuresKHR.
+// Its default value is 0. Set it to non-zero values to enable it.
+#define VKTRACE_ENABLE_COPY_AS_BUFFER_ENV "VKTRACE_ENABLE_COPY_AS_BUFFER"

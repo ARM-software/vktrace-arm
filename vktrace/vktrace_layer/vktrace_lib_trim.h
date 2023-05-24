@@ -24,6 +24,7 @@
 #include "vktrace_lib_trim_generate.h"
 #include "vktrace_lib_trim_statetracker.h"
 #include "vktrace_lib_trim_descriptoriterator.h"
+#include "vktrace_lib_trim_cmdbuild_as.h"
 #include "vulkan/vulkan.h"
 
 #if defined(PLATFORM_LINUX)  // VK_USE_PLATFORM_XCB_KHR
@@ -53,6 +54,7 @@ extern uint64_t g_trimStartFrame;
 extern uint64_t g_trimEndFrame;
 extern bool g_trimAlreadyFinished;
 extern bool g_TraceLockEnabled;
+extern bool g_TraceEnableCopyAsBuf;
 extern std::unordered_map<VkDevice, VkPhysicalDevice> g_deviceToPhysicalDevice;
 
 enum QueryCmd {
@@ -69,6 +71,7 @@ typedef struct _DeviceMemory {
 
 typedef struct _cmdBuildASPacketInfo {
     VkCommandPool commandPool;
+    VkBuildAccelerationStructureModeKHR mode;
     vktrace_trace_packet_header* pHeader;
 } cmdBuildASPacketInfo;
 
@@ -229,6 +232,7 @@ void mark_QueryPool_reference(VkQueryPool var);
 void mark_DeviceMemory_reference(VkDeviceMemory var);
 void mark_Buffer_reference(VkBuffer var);
 void mark_BufferView_reference(VkBufferView var);
+void mark_Sampler_reference(VkSampler var);
 void mark_AccelerationStructure_reference(VkAccelerationStructureKHR var);
 
 ObjectInfo &add_Instance_object(VkInstance var);
@@ -321,6 +325,10 @@ ObjectInfo &add_AccelerationStructure_object(VkAccelerationStructureKHR var);
 ObjectInfo *get_AccelerationStructure_objectInfo(VkAccelerationStructureKHR var);
 
 void        add_BuildAccelerationStructure_object(vktrace_trace_packet_header* var);
+BuildAsInfo& add_cmdBuildAccelerationStructure_object(BuildAsInfo var);
+std::vector<BuildAsInfo>& get_cmdBuildAccelerationStrucutres();
+cmdCopyAsInfo& add_cmdCopyAccelerationStructure_object(cmdCopyAsInfo var);
+std::vector<cmdCopyAsInfo>& get_cmdCopyAccelerationStructure();
 
 void remove_Instance_object(const VkInstance var);
 void remove_PhysicalDevice_object(const VkPhysicalDevice var);
@@ -352,6 +360,8 @@ void remove_DescriptorUpdateTemplate_object(VkDescriptorUpdateTemplate var);
 void remove_DescriptorSet_object(const VkDescriptorSet var);
 void remove_AccelerationStructure_object(const VkAccelerationStructureKHR var);
 void remove_BuildAccelerationStructure_object(vktrace_trace_packet_header* var);
+void remove_cmdBuildAccelerationStructure_object(BuildAsInfo& var);
+void remove_cmdCopyAccelerationStructure_object(cmdCopyAsInfo& var);
 
 void reset_CommandPool_object(VkCommandPool var);
 
@@ -360,5 +370,7 @@ void clear_binding_Pipelines_from_CommandBuffer(VkCommandBuffer commandBuffer);
 void add_CommandBuffer_to_binding_Pipeline(VkCommandBuffer commandBuffer, VkPipeline pipeLine);
 void clear_CommandBuffer_calls_by_binding_Pipeline(VkPipeline pipeLine);
 void cancel_ASPacketCreate(vktrace_trace_packet_header* pCreateASPacket);
+
+bool UpdateInvalidDescriptors(const VkWriteDescriptorSet *pDescriptorWrites);
 
 }  // namespace trim

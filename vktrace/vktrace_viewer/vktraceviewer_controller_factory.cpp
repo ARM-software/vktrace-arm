@@ -42,10 +42,10 @@ vktraceviewer_QController* vktraceviewer_controller_factory::Load(const char* fi
     funcptr_vktraceviewer_DeleteQController DeleteQController =
         (funcptr_vktraceviewer_DeleteQController)vktrace_platform_get_library_entrypoint(pLibrary, "vtvDeleteQController");
     if (CreateQController == NULL) {
-        vktrace_LogError("Controller '%s' is missing entrypoint 'vtvCreateQController'.\n", filename);
+        vktrace_LogError("Controller '%s' is missing entrypoint 'vtvCreateQController'.", filename);
     }
     if (DeleteQController == NULL) {
-        vktrace_LogError("Controller '%s' is missing entrypoint 'vtvDeleteQController'.\n", filename);
+        vktrace_LogError("Controller '%s' is missing entrypoint 'vtvDeleteQController'.", filename);
     }
 
     if (CreateQController != NULL && DeleteQController != NULL) {

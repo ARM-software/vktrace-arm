@@ -22,6 +22,7 @@
  **************************************************************************/
 #pragma once
 
+#define VK_ANDROID_frame_boundary 1
 #if defined(PLATFORM_LINUX)
 #define _GNU_SOURCE 1
 #include <unistd.h>

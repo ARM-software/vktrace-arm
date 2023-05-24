@@ -43,11 +43,11 @@ int compress_packet(compressor *g_compressor, vktrace_trace_packet_header* &pPac
     char *compress_buffer = (char *)pCompressPacketHeader + sizeof(vktrace_trace_packet_header) + sizeof(vktrace_trace_packet_header_compression_ext);
     int compressed_data_size = g_compressor->compress((char*)pPacketHeader->pBody, orig_data_size, compress_buffer, buffer_size);
     if (compressed_data_size <= 0) {
-        vktrace_LogError("Compression error: %d\n", compressed_data_size);
+        vktrace_LogError("Compression error: %d", compressed_data_size);
         return -1;
     }
     else if (compressed_data_size >= orig_data_size) {
-        vktrace_LogDebug("The data after compression becomes even larger (%d bytes to %d bytes), so it won't be compressed.\n", orig_data_size, compressed_data_size);
+        vktrace_LogDebug("The data after compression becomes even larger (%d bytes to %d bytes), so it won't be compressed.", orig_data_size, compressed_data_size);
         return 0;
     }
     else {

@@ -50,12 +50,12 @@ vktrace_get_process_name(void)
     if (pinfo)
     {
         read(pinfo, currentProcessName, sizeof(currentProcessName));
-        vktrace_LogDebug("Current process: %s (%d)\n", currentProcessName, getpid());
+        vktrace_LogDebug("Current process: %s (%d)", currentProcessName, getpid());
         close(pinfo);
     }
     else
     {
-        vktrace_LogError("Failed to open: %s\n", path);
+        vktrace_LogError("Failed to open: %s", path);
     }
 
     return currentProcessName;
@@ -219,6 +219,7 @@ void AndroidSetEnv(const char* key, const char* val) {
     const size_t len_quote = strlen(quote);
     const size_t len_val = strlen(val);
     char* full_command = malloc(len_command + len_key + len_space + len_val + 1);
+    memset(full_command, 0, len_command + len_key + len_space + len_val + 1);
     memcpy(full_command, command, len_command);
     memcpy(full_command + len_command, key, len_key);
     memcpy(full_command + len_command + len_key, space, len_space);
@@ -240,7 +241,19 @@ void AndroidSetEnv(const char* key, const char* val) {
 char* vktrace_get_global_var(const char* name) {
 #if defined(PLATFORM_LINUX) || defined(PLATFORM_OSX)
 #if defined(ANDROID)
-    return AndroidGetEnv(name);
+    char* envValue = AndroidGetEnv(name);
+    if (envValue == NULL) {
+        const char* command = "debug.";
+        const size_t len_command = strlen(command);
+        const size_t len_name = strlen(name);
+        char* full_command = malloc(len_command + len_name + 1);
+        memset(full_command, 0, len_command + len_name + 1);
+        memcpy(full_command, command, len_command);
+        memcpy(full_command + len_command, name, len_name);
+        envValue = AndroidGetEnv(full_command);
+        free(full_command);
+    }
+    return envValue;
 #else
     return getenv(name);
 #endif

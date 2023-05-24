@@ -71,10 +71,10 @@ static vkreplayer_settings s_defaultVkReplaySettings = {
                                                             .skipGetFenceStatus = 0,
                                                             .skipFenceRanges = NULL,
                                                             .finishBeforeSwap = FALSE,
-                                                            .forcePipelineShadingRate = NULL,
+                                                            .forceVariableRateShading = NULL,
                                                             .enableVirtualSwapchain = FALSE,
                                                             .enableVscPerfMode = FALSE,
-
+                                                            .forceUseFilter = UINT_MAX,
 };
 
 vkReplay* g_pReplayer = NULL;

@@ -63,6 +63,64 @@ struct QueueFamily {
     VkQueue *queues;
 };
 
+// data structure to trim build acceleratation structure
+// the idea is to copy all used vertex/index/transform/aabb/instance data to a new created staging buffer
+// store the staging buffer data and restore it with vkMap/vkUnmap to the original buffer memory with the correct offset
+typedef struct _BuildAsBufferInfo
+{
+    // The data structure of the original buffer to be saved
+    VkDeviceSize        bufOffset;  // data offset inside buffer
+    VkDeviceSize        dataSize;   // data size
+    VkDeviceSize        memOffset;  // data offset inside memory buffer bound to
+    VkDeviceMemory      bufMem;     // memory buffer bound to
+    VkBuffer            buffer;     // the buffer to be dumpped
+    uint64_t            buf_gid;
+    uint64_t            bufMem_gid;
+    // The data structure of the new created staging buffer
+    VkDeviceMemory      stagingMem; // memory bound to the new staging buffer
+    VkBuffer            stagingBuf; // a new staging buffer to blt the buffer to
+    VkDeviceAddress     stagingAddr;
+}BuildAsBufferInfo;
+typedef struct _BuildAsGeometryInfo
+{
+    VkGeometryTypeKHR   type;
+    union
+    {
+        struct
+        {
+            BuildAsBufferInfo   vb;
+            BuildAsBufferInfo   ib;
+            BuildAsBufferInfo   tb;
+        }triangle;
+        struct
+        {
+            BuildAsBufferInfo   info;
+        }aabb;
+        struct
+        {
+            BuildAsBufferInfo   info;
+        }instance;
+        struct
+        {
+            BuildAsBufferInfo   info;
+        }as;
+    };
+    uint32_t infoIndex;
+    uint32_t geoIndex;
+}BuildAsGeometryInfo;
+
+typedef struct _BuildAsInfo
+{
+    vktrace_trace_packet_header*                pCmdBuildAccelerationtStructure;
+    std::vector<BuildAsGeometryInfo>            geometryInfo;
+    std::vector<vktrace_trace_packet_header*>   AssistCommand;
+}BuildAsInfo;
+
+typedef struct _cmdCopyAsInfo
+{
+    vktrace_trace_packet_header*                pCmdCopyAccelerationStructureKHR;
+}cmdCopyAsInfo;
+
 //-------------------------------------------------------------------------
 // Some of the items in this struct are based on what is tracked in the
 // 'VkLayer_object_tracker' (struct _OBJTRACK_NODE).
@@ -76,6 +134,7 @@ typedef struct _Trim_ObjectInfo {
     VkInstance belongsToInstance;              // owning Instance
     VkPhysicalDevice belongsToPhysicalDevice;  // owning PhysicalDevice
     VkDevice belongsToDevice;                  // owning Device
+    uint64_t    gid;
     union _ObjectInfo {                        // additional object-specific information
         struct _Instance {                     // VkInstance
             vktrace_trace_packet_header *pCreatePacket;
@@ -184,6 +243,7 @@ typedef struct _Trim_ObjectInfo {
             vktrace_trace_packet_header *pUnmapMemoryPacket;
             vktrace_trace_packet_header *pGetBufferDeviceAddressPacket;
             vktrace_trace_packet_header *pGetBufferOpaqueCaptureAddress;
+            vktrace_trace_packet_header *pGetAccelerationStructureBuildSizesKHRPacket;
             uint32_t queueFamilyIndex;
             VkAccessFlags accessFlags;
             VkDeviceMemory memory;
@@ -232,13 +292,17 @@ typedef struct _Trim_ObjectInfo {
         } PipelineCache;
         struct _Pipeline {  // VkPipeline
             bool isGraphicsPipeline;
+            bool isRayTRacingPipeline;
             const VkAllocationCallbacks *pAllocator;
             VkPipelineCache pipelineCache;
             VkGraphicsPipelineCreateInfo graphicsPipelineCreateInfo;
             VkComputePipelineCreateInfo computePipelineCreateInfo;
+            VkRayTracingPipelineCreateInfoKHR rayTracingPipelineCreateInfo;
             uint32_t renderPassVersion;
             uint32_t shaderModuleCreateInfoCount;
             VkShaderModuleCreateInfo *pShaderModuleCreateInfos;
+            uint32_t rayTracingShaderGroupHandlesCount;
+            vktrace_trace_packet_header *pGetRayTracingShaderGroupHandlesKHRPackets[INT8_MAX];
         } Pipeline;
         struct _DescriptorPool {  // VkDescriptorPool
             vktrace_trace_packet_header *pCreatePacket;
@@ -398,6 +462,10 @@ class StateTracker {
     ObjectInfo &add_DescriptorUpdateTemplate(VkDescriptorUpdateTemplate var);
     ObjectInfo &add_AccelerationStructure(VkAccelerationStructureKHR var);
     void add_BuildAccelerationStructure(vktrace_trace_packet_header* pBuildAS);
+    BuildAsInfo& add_cmdBuildAccelerationStructure(BuildAsInfo BuildAS);
+    std::vector<BuildAsInfo>& get_cmdBuildAccelerationStrucutres();
+    cmdCopyAsInfo& add_cmdCopyAccelerationStructure(cmdCopyAsInfo copyAs);
+    std::vector<cmdCopyAsInfo>& get_cmdCopyAccelerationStructure();
 
     ObjectInfo *get_Instance(VkInstance var);
     ObjectInfo *get_PhysicalDevice(VkPhysicalDevice var);
@@ -461,6 +529,8 @@ class StateTracker {
     void remove_DescriptorSet(const VkDescriptorSet var);
     void remove_AccelerationStructure(const VkAccelerationStructureKHR var);
     void remove_BuildAccelerationStructure(vktrace_trace_packet_header* pBuildAS);
+    void remove_cmdBuildAccelerationStructure(BuildAsInfo& BuildAS);
+    void remove_cmdCopyAccelerationStructure(cmdCopyAsInfo copyAs);
 
     static void copy_VkRenderPassCreateInfo(VkApplicationInfo *pDst, VkApplicationInfo *psrc);
 
@@ -470,6 +540,7 @@ class StateTracker {
 
     static void copy_VkGraphicsPipelineCreateInfo(VkGraphicsPipelineCreateInfo *pDst, const VkGraphicsPipelineCreateInfo &src);
     static void copy_VkComputePipelineCreateInfo(VkComputePipelineCreateInfo *pDst, const VkComputePipelineCreateInfo &src);
+    static void copy_VkRayTracingPipelineCreateInfo(VkRayTracingPipelineCreateInfoKHR *pDst, const VkRayTracingPipelineCreateInfoKHR &src);
     static void copy_VkPipelineShaderStageCreateInfo(VkPipelineShaderStageCreateInfo *pDstStage,
                                                      const VkPipelineShaderStageCreateInfo &srcStage);
     static void delete_VkPipelineShaderStageCreateInfo(VkPipelineShaderStageCreateInfo *pStage);
@@ -521,6 +592,8 @@ class StateTracker {
     std::unordered_map<VkDescriptorSet, ObjectInfo> createdDescriptorSets;
     std::unordered_map<VkAccelerationStructureKHR, ObjectInfo> createdAccelerationStructures;
     std::vector<vktrace_trace_packet_header *> buildAccelerationStructures;
+    std::vector<BuildAsInfo> cmdBuildAccelerationStructures;
+    std::vector<cmdCopyAsInfo> cmdCopyAccelerationStructure;
 
     std::unordered_set<VkShaderModule> destroyedShaderModules;
 };

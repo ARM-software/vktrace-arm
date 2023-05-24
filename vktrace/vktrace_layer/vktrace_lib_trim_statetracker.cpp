@@ -21,7 +21,7 @@
 namespace trim {
 // declared extern in statetracker.h
 VKTRACE_CRITICAL_SECTION trimTransitionMapLock;
-
+uint64_t gid = 0;
 //-------------------------------------------------------------------------
 #define COPY_PACKET(packet) packet = copy_packet(packet)
 
@@ -649,10 +649,20 @@ StateTracker &StateTracker::operator=(const StateTracker &other) {
             VkGraphicsPipelineCreateInfo createInfoCopy = obj->second.ObjectInfo.Pipeline.graphicsPipelineCreateInfo;
             copy_VkGraphicsPipelineCreateInfo(pCreateInfo, createInfoCopy);
         } else {
-            VkComputePipelineCreateInfo createInfoCopy = obj->second.ObjectInfo.Pipeline.computePipelineCreateInfo;
-            copy_VkComputePipelineCreateInfo(
-                const_cast<VkComputePipelineCreateInfo *>(&obj->second.ObjectInfo.Pipeline.computePipelineCreateInfo),
-                createInfoCopy);
+            if (obj->second.ObjectInfo.Pipeline.isRayTRacingPipeline) {
+                VkRayTracingPipelineCreateInfoKHR createInfoCopy = obj->second.ObjectInfo.Pipeline.rayTracingPipelineCreateInfo;
+                copy_VkRayTracingPipelineCreateInfo(
+                    const_cast<VkRayTracingPipelineCreateInfoKHR *>(&obj->second.ObjectInfo.Pipeline.rayTracingPipelineCreateInfo),
+                    createInfoCopy);
+                for (uint32_t groupIndex = 0; groupIndex < obj->second.ObjectInfo.Pipeline.rayTracingShaderGroupHandlesCount; groupIndex++) {
+                    COPY_PACKET(obj->second.ObjectInfo.Pipeline.pGetRayTracingShaderGroupHandlesKHRPackets[groupIndex]);
+                }
+            } else {
+                VkComputePipelineCreateInfo createInfoCopy = obj->second.ObjectInfo.Pipeline.computePipelineCreateInfo;
+                copy_VkComputePipelineCreateInfo(
+                    const_cast<VkComputePipelineCreateInfo *>(&obj->second.ObjectInfo.Pipeline.computePipelineCreateInfo),
+                    createInfoCopy);
+            }
         }
     }
 
@@ -700,6 +710,7 @@ StateTracker &StateTracker::operator=(const StateTracker &other) {
         COPY_PACKET(obj->second.ObjectInfo.Buffer.pUnmapMemoryPacket);
         COPY_PACKET(obj->second.ObjectInfo.Buffer.pGetBufferDeviceAddressPacket);
         COPY_PACKET(obj->second.ObjectInfo.Buffer.pGetBufferOpaqueCaptureAddress);
+        COPY_PACKET(obj->second.ObjectInfo.Buffer.pGetAccelerationStructureBuildSizesKHRPacket);
     }
 
     createdAccelerationStructures = other.createdAccelerationStructures;
@@ -712,6 +723,27 @@ StateTracker &StateTracker::operator=(const StateTracker &other) {
     for (auto obj = buildAccelerationStructures.begin(); obj != buildAccelerationStructures.end(); obj++) {
         COPY_PACKET(*obj);
     }
+
+    cmdBuildAccelerationStructures.clear();
+    for (auto it = other.cmdBuildAccelerationStructures.begin(); it!=other.cmdBuildAccelerationStructures.end(); it++) {
+        BuildAsInfo info;
+        info.pCmdBuildAccelerationtStructure = copy_packet(it->pCmdBuildAccelerationtStructure);
+        info.geometryInfo.clear();
+        for (auto it_geo = it->geometryInfo.begin(); it_geo != it->geometryInfo.end(); it_geo++) {
+            info.geometryInfo.push_back(*it_geo);
+        }
+        // the assist commands are not generated yet
+        info.AssistCommand.clear();
+        cmdBuildAccelerationStructures.push_back(info);
+    }
+
+    cmdCopyAccelerationStructure.clear();
+    for (auto it = other.cmdCopyAccelerationStructure.begin(); it!=other.cmdCopyAccelerationStructure.end(); it++) {
+        cmdCopyAsInfo info;
+        info.pCmdCopyAccelerationStructureKHR = copy_packet(it->pCmdCopyAccelerationStructureKHR);
+        cmdCopyAccelerationStructure.push_back(info);
+    }
+
     createdBufferViews = other.createdBufferViews;
     for (auto obj = createdBufferViews.begin(); obj != createdBufferViews.end(); obj++) {
         COPY_PACKET(obj->second.ObjectInfo.BufferView.pCreatePacket);
@@ -1067,6 +1099,57 @@ void StateTracker::copy_VkComputePipelineCreateInfo(VkComputePipelineCreateInfo 
 
 //---------------------------------------------------------------------
 //---------------------------------------------------------------------
+void StateTracker::copy_VkRayTracingPipelineCreateInfo(VkRayTracingPipelineCreateInfoKHR *pDst, const VkRayTracingPipelineCreateInfoKHR &src) {
+    *pDst = src;
+
+    if (src.pStages != nullptr) {
+        VkPipelineShaderStageCreateInfo *pStages = new VkPipelineShaderStageCreateInfo[src.stageCount]();
+        for (uint32_t i = 0; i < src.stageCount; i++) {
+            copy_VkPipelineShaderStageCreateInfo(&pStages[i], src.pStages[i]);
+        }
+
+        pDst->pStages = pStages;
+    }
+
+    if (src.pGroups != nullptr) {
+        VkRayTracingShaderGroupCreateInfoKHR *pGroups = new VkRayTracingShaderGroupCreateInfoKHR[src.groupCount];
+        memcpy(pGroups, src.pGroups, src.groupCount * sizeof(VkRayTracingShaderGroupCreateInfoKHR));
+        pDst->pGroups = pGroups;
+    }
+
+    if (src.pLibraryInfo != nullptr) {
+        VkPipelineLibraryCreateInfoKHR *pLInfo = new VkPipelineLibraryCreateInfoKHR();
+        *pLInfo = *(src.pLibraryInfo);
+        pDst->pLibraryInfo = pLInfo;
+
+        if (src.pLibraryInfo->pLibraries != nullptr) {
+            VkPipeline *pLibraries = new VkPipeline[pLInfo->libraryCount];
+            memcpy(pLibraries, pLInfo->pLibraries, pLInfo->libraryCount * sizeof(VkPipeline));
+            pLInfo->pLibraries = pLibraries;
+        }
+    }
+
+    if (src.pLibraryInterface != nullptr) {
+        VkRayTracingPipelineInterfaceCreateInfoKHR *pLibraryInterface = new VkRayTracingPipelineInterfaceCreateInfoKHR();
+        *pLibraryInterface = *(src.pLibraryInterface);
+        pDst->pLibraryInterface = pLibraryInterface;
+    }
+
+    if (src.pDynamicState != nullptr) {
+        VkPipelineDynamicStateCreateInfo *pDS = new VkPipelineDynamicStateCreateInfo();
+        *pDS = *(src.pDynamicState);
+        pDst->pDynamicState = pDS;
+
+        if (src.pDynamicState->pDynamicStates != nullptr) {
+            VkDynamicState *pDynamicStates = new VkDynamicState[pDS->dynamicStateCount];
+            memcpy(pDynamicStates, pDS->pDynamicStates, pDS->dynamicStateCount * sizeof(VkDynamicState));
+            pDS->pDynamicStates = pDynamicStates;
+        }
+    }
+}
+
+//---------------------------------------------------------------------
+//---------------------------------------------------------------------
 ObjectInfo &StateTracker::add_Instance(VkInstance var) {
     if (std::find(seqInstances.begin(), seqInstances.end(), var) == seqInstances.end()) {
         seqInstances.push_back(var);
@@ -1158,6 +1241,7 @@ ObjectInfo &StateTracker::add_DeviceMemory(VkDeviceMemory var) {
     ObjectInfo &info = createdDeviceMemorys[var];
     memset(&info, 0, sizeof(ObjectInfo));
     info.vkObject = (uint64_t)var;
+    info.gid = ++gid;
     return info;
 }
 
@@ -1196,6 +1280,7 @@ ObjectInfo &StateTracker::add_Buffer(VkBuffer var) {
     ObjectInfo &info = createdBuffers[var];
     memset(&info, 0, sizeof(ObjectInfo));
     info.vkObject = (uint64_t)var;
+    info.gid = ++gid;
     return info;
 }
 
@@ -1279,6 +1364,26 @@ ObjectInfo &StateTracker::add_AccelerationStructure(VkAccelerationStructureKHR v
 void StateTracker::add_BuildAccelerationStructure(vktrace_trace_packet_header* pBuildAS) {
     buildAccelerationStructures.push_back(pBuildAS);
 }
+
+BuildAsInfo& StateTracker::add_cmdBuildAccelerationStructure(BuildAsInfo BuildAS) {
+    cmdBuildAccelerationStructures.push_back(BuildAS);
+    return cmdBuildAccelerationStructures.back();
+
+}
+
+cmdCopyAsInfo& StateTracker::add_cmdCopyAccelerationStructure(cmdCopyAsInfo copyAs) {
+    cmdCopyAccelerationStructure.push_back(copyAs);
+    return cmdCopyAccelerationStructure.back();
+}
+
+std::vector<BuildAsInfo>& StateTracker::get_cmdBuildAccelerationStrucutres() {
+    return cmdBuildAccelerationStructures;
+}
+
+std::vector<cmdCopyAsInfo>& StateTracker::get_cmdCopyAccelerationStructure() {
+    return cmdCopyAccelerationStructure;
+}
+
 //---------------------------------------------------------------------
 //---------------------------------------------------------------------
 ObjectInfo *StateTracker::get_Instance(VkInstance var) {
@@ -1695,6 +1800,7 @@ void StateTracker::remove_Buffer(const VkBuffer var) {
         vktrace_delete_trace_packet(&pInfo->ObjectInfo.Buffer.pUnmapMemoryPacket);
         vktrace_delete_trace_packet(&pInfo->ObjectInfo.Buffer.pGetBufferDeviceAddressPacket);
         vktrace_delete_trace_packet(&pInfo->ObjectInfo.Buffer.pGetBufferOpaqueCaptureAddress);
+        vktrace_delete_trace_packet(&pInfo->ObjectInfo.Buffer.pGetAccelerationStructureBuildSizesKHRPacket);
     }
     createdBuffers.erase(var);
 }
@@ -1801,6 +1907,19 @@ void StateTracker::remove_Pipeline(const VkPipeline var) {
             delete[] pInfo->ObjectInfo.Pipeline.graphicsPipelineCreateInfo.pStages;
         }
 
+        if (pInfo->ObjectInfo.Pipeline.rayTracingPipelineCreateInfo.pStages != nullptr) {
+            for (uint32_t i = 0; i < pInfo->ObjectInfo.Pipeline.rayTracingPipelineCreateInfo.stageCount; ++i) {
+                delete_VkPipelineShaderStageCreateInfo(const_cast<VkPipelineShaderStageCreateInfo *>(
+                    &pInfo->ObjectInfo.Pipeline.rayTracingPipelineCreateInfo.pStages[i]));
+            }
+
+            delete[] pInfo->ObjectInfo.Pipeline.graphicsPipelineCreateInfo.pStages;
+        }
+
+        for (uint32_t groupIndex = 0; groupIndex < pInfo->ObjectInfo.Pipeline.rayTracingShaderGroupHandlesCount; groupIndex++) {
+            vktrace_delete_trace_packet(&pInfo->ObjectInfo.Pipeline.pGetRayTracingShaderGroupHandlesKHRPackets[groupIndex]);
+        }
+
         if (pInfo->ObjectInfo.Pipeline.graphicsPipelineCreateInfo.pVertexInputState != nullptr) {
             if (pInfo->ObjectInfo.Pipeline.graphicsPipelineCreateInfo.pVertexInputState->pVertexAttributeDescriptions != nullptr) {
                 delete[] pInfo->ObjectInfo.Pipeline.graphicsPipelineCreateInfo.pVertexInputState->pVertexAttributeDescriptions;
@@ -1862,6 +1981,30 @@ void StateTracker::remove_Pipeline(const VkPipeline var) {
             }
 
             delete pInfo->ObjectInfo.Pipeline.graphicsPipelineCreateInfo.pDynamicState;
+        }
+
+        if (pInfo->ObjectInfo.Pipeline.rayTracingPipelineCreateInfo.pGroups != nullptr) {
+            delete[] pInfo->ObjectInfo.Pipeline.rayTracingPipelineCreateInfo.pGroups;
+        }
+
+        if (pInfo->ObjectInfo.Pipeline.rayTracingPipelineCreateInfo.pLibraryInfo != nullptr) {
+            if (pInfo->ObjectInfo.Pipeline.rayTracingPipelineCreateInfo.pLibraryInfo->pLibraries != nullptr) {
+                delete[] pInfo->ObjectInfo.Pipeline.rayTracingPipelineCreateInfo.pLibraryInfo->pLibraries;
+            }
+
+            delete pInfo->ObjectInfo.Pipeline.rayTracingPipelineCreateInfo.pLibraryInfo;
+        }
+
+        if (pInfo->ObjectInfo.Pipeline.rayTracingPipelineCreateInfo.pLibraryInterface != nullptr) {
+            delete pInfo->ObjectInfo.Pipeline.rayTracingPipelineCreateInfo.pLibraryInterface;
+        }
+
+        if (pInfo->ObjectInfo.Pipeline.rayTracingPipelineCreateInfo.pDynamicState != nullptr) {
+            if (pInfo->ObjectInfo.Pipeline.rayTracingPipelineCreateInfo.pDynamicState->pDynamicStates != nullptr) {
+                delete[] pInfo->ObjectInfo.Pipeline.rayTracingPipelineCreateInfo.pDynamicState->pDynamicStates;
+            }
+
+            delete pInfo->ObjectInfo.Pipeline.rayTracingPipelineCreateInfo.pDynamicState;
         }
     }
     createdPipelines.erase(var);
@@ -1970,4 +2113,15 @@ void StateTracker::remove_BuildAccelerationStructure(vktrace_trace_packet_header
     }
 }
 
+void StateTracker::remove_cmdBuildAccelerationStructure(BuildAsInfo& BuildAS) {
+    if (BuildAS.pCmdBuildAccelerationtStructure != NULL) {
+        vktrace_delete_trace_packet(&BuildAS.pCmdBuildAccelerationtStructure);
+    }
+}
+
+void StateTracker::remove_cmdCopyAccelerationStructure(cmdCopyAsInfo copyAs) {
+    if (copyAs.pCmdCopyAccelerationStructureKHR != NULL) {
+        vktrace_delete_trace_packet(&copyAs.pCmdCopyAccelerationStructureKHR);
+    }
+}
 }

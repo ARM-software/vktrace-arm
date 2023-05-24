@@ -432,6 +432,24 @@ void vktrace_finalize_buffer_address(vktrace_trace_packet_header* pHeader, void*
         vktrace_finalize_buffer_address(pHeader, pDst);                                  \
     } while (0)
 
+void vktrace_add_present_regions_to_trace_packet(vktrace_trace_packet_header *pHeader,
+                                                 const VkPresentRegionsKHR **ppOut,
+                                                 const VkPresentRegionsKHR *pIn) {
+    uint32_t i;
+    vktrace_add_buffer_to_trace_packet(pHeader, (void **)&((*ppOut)->pRegions),
+                                       sizeof(VkPresentRegionKHR) * pIn->swapchainCount, pIn->pRegions);
+    for (i = 0; i < pIn->swapchainCount; i++) {
+        if (pIn->pRegions[i].pRectangles != NULL) {
+            vktrace_add_buffer_to_trace_packet(pHeader, (void **)&((*ppOut)->pRegions[i].pRectangles),
+                                               sizeof(VkRectLayerKHR) * pIn->pRegions[i].rectangleCount,
+                                               pIn->pRegions[i].pRectangles);
+            vktrace_finalize_buffer_address(pHeader, (void **)&((*ppOut)->pRegions[i].pRectangles));
+        }
+    }
+    vktrace_finalize_buffer_address(pHeader, (void **)&((*ppOut)->pRegions));
+    return;
+}
+
 void vktrace_add_pnext_structs_to_trace_packet(vktrace_trace_packet_header* pHeader, void* pOut, const void* pIn) {
     void** ppOutNext;
     const void* pInNext;
@@ -493,6 +511,13 @@ void vktrace_add_pnext_structs_to_trace_packet(vktrace_trace_packet_header* pHea
                 case VK_STRUCTURE_TYPE_SAMPLE_LOCATIONS_INFO_EXT:
                     AddPointerWithCountToTracebuffer(VkSampleLocationsInfoEXT, VkSampleLocationEXT, pSampleLocations,
                                                      sampleLocationsCount);
+                    break;
+                case VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_DIVISOR_STATE_CREATE_INFO_EXT:
+                    AddPointerWithCountToTracebuffer(VkPipelineVertexInputDivisorStateCreateInfoEXT, VkVertexInputBindingDivisorDescriptionEXT, pVertexBindingDivisors,
+                                                     vertexBindingDivisorCount);
+                    break;
+                case VK_STRUCTURE_TYPE_PRESENT_REGIONS_KHR:
+                    vktrace_add_present_regions_to_trace_packet(pHeader, (const VkPresentRegionsKHR**)ppOutNext, (VkPresentRegionsKHR*)pInNext);
                     break;
                 case VK_STRUCTURE_TYPE_RENDER_PASS_SAMPLE_LOCATIONS_BEGIN_INFO_EXT:
                     AddPointerWithCountToTracebuffer(VkRenderPassSampleLocationsBeginInfoEXT, VkAttachmentSampleLocationsEXT,
@@ -929,6 +954,30 @@ void add_VkInstanceCreateInfo_to_packet(vktrace_trace_packet_header* pHeader, Vk
     vktrace_finalize_buffer_address(pHeader, (void**)ppStruct);
 }
 
+void add_VkDependencyInfo_to_packet(vktrace_trace_packet_header* pHeader, VkDependencyInfo** ppStruct, VkDependencyInfo* pInStruct) {
+    vktrace_add_buffer_to_trace_packet(pHeader, (void**)ppStruct, sizeof(VkDependencyInfo), pInStruct);
+    vktrace_add_pnext_structs_to_trace_packet(pHeader, (void*)*ppStruct, (void*)pInStruct);
+
+    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&((*ppStruct)->pMemoryBarriers), pInStruct->memoryBarrierCount * sizeof(VkMemoryBarrier2), pInStruct->pMemoryBarriers);
+    uint32_t i = 0;
+    for (i = 0; i < pInStruct->memoryBarrierCount; i++) {
+        vktrace_add_pnext_structs_to_trace_packet(pHeader, (void*)((*ppStruct)->pMemoryBarriers + i), pInStruct->pMemoryBarriers + i);
+    }
+    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&((*ppStruct)->pBufferMemoryBarriers), pInStruct->bufferMemoryBarrierCount * sizeof(VkBufferMemoryBarrier2), pInStruct->pBufferMemoryBarriers);
+    for (i = 0; i < pInStruct->bufferMemoryBarrierCount; i++) {
+        vktrace_add_pnext_structs_to_trace_packet(pHeader, (void*)((*ppStruct)->pBufferMemoryBarriers + i), pInStruct->pBufferMemoryBarriers + i);
+    }
+    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&((*ppStruct)->pImageMemoryBarriers), pInStruct->imageMemoryBarrierCount * sizeof(VkImageMemoryBarrier2), pInStruct->pImageMemoryBarriers);
+    for (i = 0; i < pInStruct->imageMemoryBarrierCount; i++) {
+        vktrace_add_pnext_structs_to_trace_packet(pHeader, (void*)((*ppStruct)->pImageMemoryBarriers + i), pInStruct->pImageMemoryBarriers + i);
+    }
+    vktrace_finalize_buffer_address(pHeader, (void**)&((*ppStruct)->pMemoryBarriers));
+    vktrace_finalize_buffer_address(pHeader, (void**)&((*ppStruct)->pBufferMemoryBarriers));
+    vktrace_finalize_buffer_address(pHeader, (void**)&((*ppStruct)->pImageMemoryBarriers));
+    vktrace_finalize_buffer_address(pHeader, (void**)ppStruct);
+
+}
+
 void add_VkDeviceCreateInfo_to_packet(vktrace_trace_packet_header* pHeader, VkDeviceCreateInfo** ppStruct,
                                       const VkDeviceCreateInfo* pInStruct) {
     uint32_t i, siz = 0;
@@ -1047,6 +1096,27 @@ VkInstanceCreateInfo* interpret_VkInstanceCreateInfo(vktrace_trace_packet_header
         }
     }
     return pVkInstanceCreateInfo;
+}
+
+VkDependencyInfo* interpret_VkDependencyInfo(vktrace_trace_packet_header* pHeader, intptr_t ptr_variable) {
+    VkDependencyInfo* pVkDependencyInfo = (VkDependencyInfo*)vktrace_trace_packet_interpret_buffer_pointer(pHeader, (intptr_t)ptr_variable);
+    if (pVkDependencyInfo != NULL) {
+        vkreplay_interpret_pnext_pointers(pHeader, (void*)pVkDependencyInfo);
+        pVkDependencyInfo->pMemoryBarriers = (VkMemoryBarrier2*)vktrace_trace_packet_interpret_buffer_pointer(pHeader, (intptr_t)pVkDependencyInfo->pMemoryBarriers);
+        uint32_t i = 0;
+        for (i = 0; i < pVkDependencyInfo->memoryBarrierCount; i++) {
+            vkreplay_interpret_pnext_pointers(pHeader, (void*)&pVkDependencyInfo->pMemoryBarriers[i]);
+        }
+        pVkDependencyInfo->pBufferMemoryBarriers = (VkBufferMemoryBarrier2*)vktrace_trace_packet_interpret_buffer_pointer(pHeader, (intptr_t)pVkDependencyInfo->pBufferMemoryBarriers);
+        for (i = 0; i < pVkDependencyInfo->bufferMemoryBarrierCount; i++) {
+            vkreplay_interpret_pnext_pointers(pHeader, (void*)&pVkDependencyInfo->pBufferMemoryBarriers[i]);
+        }
+        pVkDependencyInfo->pImageMemoryBarriers = (VkImageMemoryBarrier2*)vktrace_trace_packet_interpret_buffer_pointer(pHeader, (intptr_t)pVkDependencyInfo->pImageMemoryBarriers);
+        for (i = 0; i < pVkDependencyInfo->imageMemoryBarrierCount; i++) {
+            vkreplay_interpret_pnext_pointers(pHeader, (void*)&pVkDependencyInfo->pImageMemoryBarriers[i]);
+        }
+    }
+    return pVkDependencyInfo;
 }
 
 VkDeviceCreateInfo* interpret_VkDeviceCreateInfo(vktrace_trace_packet_header* pHeader, intptr_t ptr_variable) {
@@ -1185,6 +1255,22 @@ void vkreplay_interpret_pnext_pointers(vktrace_trace_packet_header* pHeader, voi
                 break;
             case VK_STRUCTURE_TYPE_SAMPLE_LOCATIONS_INFO_EXT:
                 InterpretPointerInPNext(VkSampleLocationsInfoEXT, VkSampleLocationEXT, pSampleLocations);
+                break;
+            case VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_DIVISOR_STATE_CREATE_INFO_EXT:
+                InterpretPointerInPNext(VkPipelineVertexInputDivisorStateCreateInfoEXT, VkVertexInputBindingDivisorDescriptionEXT, pVertexBindingDivisors);
+                break;
+            case VK_STRUCTURE_TYPE_PRESENT_REGIONS_KHR:
+                {
+                    VkPresentRegionsKHR* struct_ptr_cur =
+                        (VkPresentRegionsKHR*)(((VkApplicationInfo*)struct_ptr)->pNext);
+                    struct_ptr_cur->pRegions = (VkPresentRegionKHR*)vktrace_trace_packet_interpret_buffer_pointer(
+                        pHeader, (intptr_t)struct_ptr_cur->pRegions);
+                    for (i = 0; i < struct_ptr_cur->swapchainCount; i++) {
+                        VkRectLayerKHR** ppRectangles = (VkRectLayerKHR**)&(struct_ptr_cur->pRegions[i].pRectangles);
+                        *ppRectangles = (VkRectLayerKHR*)vktrace_trace_packet_interpret_buffer_pointer(
+                            pHeader, (intptr_t)struct_ptr_cur->pRegions[i].pRectangles);
+                    }
+                }
                 break;
             case VK_STRUCTURE_TYPE_RENDER_PASS_SAMPLE_LOCATIONS_BEGIN_INFO_EXT:
                 InterpretPointerInPNext(VkRenderPassSampleLocationsBeginInfoEXT, VkAttachmentSampleLocationsEXT,

@@ -535,6 +535,15 @@ typedef enum _VKTRACE_TRACE_PACKET_ID_VK {
     VKTRACE_TPI_VK_vkCmdCopyBufferToImage2KHR = 450,
     VKTRACE_TPI_VK_vkCmdCopyImage2KHR = 451,
     VKTRACE_TPI_VK_vkCmdCopyImageToBuffer2KHR = 452,
+    VKTRACE_TPI_VK_vkGetMemoryAndroidHardwareBufferANDROID = 453,
+    VKTRACE_TPI_VK_vkAcquireProfilingLockKHR = 454,
+    VKTRACE_TPI_VK_vkEnumeratePhysicalDeviceQueueFamilyPerformanceQueryCountersKHR = 455,
+    VKTRACE_TPI_VK_vkGetPhysicalDeviceQueueFamilyPerformanceQueryPassesKHR = 456,
+    VKTRACE_TPI_VK_vkReleaseProfilingLockKHR = 457,
+
+#if VK_ANDROID_frame_boundary
+    VKTRACE_TPI_VK_vkFrameBoundaryANDROID = 0xFFEB,              // non-standard API derived
+#endif
 
     VKTRACE_TPI_VK_vkCmdPushConstantsRemap = 0xFFEC,            // non-standard API derived from vkCmdPushConstants
     VKTRACE_TPI_VK_vkFlushMappedMemoryRangesRemap = 0xFFED,     // non-standard API derived from vkFlushMappedMemoryRanges

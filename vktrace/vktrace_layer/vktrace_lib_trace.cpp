@@ -107,8 +107,15 @@ std::unordered_map<void*, memoryMapParam> g_memoryMapInfo;
 std::unordered_map<VkDevice, deviceFeatureSupport> g_deviceToFeatureSupport;
 std::unordered_map<VkDeviceAddress, VkBuffer> g_deviceAddressToBuffer;
 std::vector<VkBuffer> g_bufferInCmdBuildAS;
-std::vector<VkCommandBuffer> g_commandBufferInCmdBuildAS;
 extern std::map<uint64_t, cmdBuildASPacketInfo> g_cmdBuildASPacket;
+#if VK_ANDROID_frame_boundary
+std::unordered_map<VkDevice, std::list<VkQueue>> g_devicetoQueues;
+#endif
+
+#if defined(ANDROID)
+std::unordered_set<VkDeviceMemory> g_exportedDeviceMemory;
+std::unordered_set<AHardwareBuffer*> g_exportedAHardwareBuffer;
+#endif
 
 // declared as extern in vktrace_lib_helpers.h
 VKTRACE_CRITICAL_SECTION g_memInfoLock;
@@ -126,6 +133,8 @@ std::unordered_map<VkDeviceAddress, VkBuffer> g_BuftoDeviceAddrRev;
 
 std::unordered_map<VkAccelerationStructureKHR, VkDeviceAddress> g_AStoDeviceAddr;
 std::unordered_map<VkDeviceAddress, VkAccelerationStructureKHR> g_AStoDeviceAddrRev;
+
+std::unordered_map<VkDeviceMemory, std::vector<VkBuffer>> g_MemoryToBuffers;
 
 layer_instance_data* mid(void* object) {
     dispatch_key key = get_dispatch_key(object);
@@ -178,6 +187,15 @@ static layer_device_data* initDeviceData(VkDevice device, const PFN_vkGetDeviceP
 
     layer_init_device_dispatch_table(device, &pTable->devTable, gpa);
 
+#if VK_ANDROID_frame_boundary
+    pTable->FrameBoundaryANDROID = (PFN_vkFrameBoundaryANDROID) gpa(device, "vkFrameBoundaryANDROID");
+    vktrace_LogDebug("pTable->FrameBoundaryANDROID %p", pTable->FrameBoundaryANDROID);
+    if (pTable->FrameBoundaryANDROID == nullptr) {
+        vktrace_LogDebug("StubFrameBoundaryANDROID");
+        pTable->FrameBoundaryANDROID = (PFN_vkFrameBoundaryANDROID)StubFrameBoundaryANDROID;
+    }
+#endif
+
     return pTable;
 }
 
@@ -220,9 +238,17 @@ bool getForceFifoEnableFlag() {
 
 bool getPMBSyncGPUDataBackEnableFlag() {
     static bool EnableSyncBack = false;
+    static bool RealTimeSyncBack = false;
     static bool FirstTimeRun = true;
+    static bool FirstGetRealTime = true;
+    if (FirstGetRealTime) {
+        FirstGetRealTime = false;
+        RealTimeSyncBack = getBoolOption(VKTRACE_PAGEGUARD_SYNC_GPU_DATA_BACK_REALTIME_ENV, false);
+    }
     if (FirstTimeRun) {
-        FirstTimeRun = false;
+        if (!RealTimeSyncBack) {
+            FirstTimeRun = false;
+        }
         EnableSyncBack = getBoolOption(VKTRACE_PAGEGUARD_ENABLE_SYNC_GPU_DATA_BACK_ENV, false);
     }
     return EnableSyncBack;
@@ -281,6 +307,40 @@ void* strip_create_extensions(const void* pNext) {
     return create_info;
 }
 
+#if VK_ANDROID_frame_boundary
+VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkFrameBoundaryANDROID(
+    VkDevice device,
+    VkSemaphore semaphore,
+    VkImage image) {
+
+    VkResult result = VK_SUCCESS;
+
+    vktrace_trace_packet_header* pHeader;
+    packet_vkFrameBoundaryANDROID* pPacket = NULL;
+    CREATE_TRACE_PACKET(vkFrameBoundaryANDROID, 0);
+
+    pPacket = interpret_body_as_vkFrameBoundaryANDROID(pHeader);
+    pPacket->device     = device;
+    pPacket->semaphore  = semaphore;
+    pPacket->image      = image;
+
+    result = mdd(device)->FrameBoundaryANDROID(device, semaphore, image);
+    pPacket->result = result;
+
+    if (!g_trimEnabled) {
+        FINISH_TRACE_PACKET();
+    } else {
+        vktrace_finalize_trace_packet(pHeader);
+        if (g_trimIsInTrim) {
+            trim::write_packet(pHeader);
+        } else {
+            vktrace_delete_trace_packet(&pHeader);
+        }
+    }
+    return result;
+}
+#endif
+
 VKTRACER_EXPORT VKAPI_ATTR void VKAPI_CALL __HOOKED_vkCmdSetCheckpointNV(
     VkCommandBuffer commandBuffer,
     const void* pCheckpointMarker) {
@@ -306,6 +366,213 @@ VKTRACER_EXPORT VKAPI_ATTR void VKAPI_CALL __HOOKED_vkCmdSetCheckpointNV(
     }
 }
 
+#if defined(ANDROID)
+VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkGetMemoryAndroidHardwareBufferANDROID(
+    VkDevice device,
+    const VkMemoryGetAndroidHardwareBufferInfoANDROID* pInfo,
+    struct AHardwareBuffer** pBuffer) {
+    trim::TraceLock<std::mutex> lock(g_mutex_trace);
+    VkResult result;
+    vktrace_trace_packet_header* pHeader;
+    packet_vkGetMemoryAndroidHardwareBufferANDROID* pPacket = NULL;
+    CREATE_TRACE_PACKET(vkGetMemoryAndroidHardwareBufferANDROID, get_struct_chain_size((void*)pInfo) + sizeof(void*));
+    result = mdd(device)->devTable.GetMemoryAndroidHardwareBufferANDROID(device, pInfo, pBuffer);
+    if (result == VK_SUCCESS) {
+        // Save the android hardware buffer handle if it bound to exported memory
+        if (g_exportedDeviceMemory.count(pInfo->memory) != 0) {
+            g_exportedAHardwareBuffer.insert(*pBuffer);
+        }
+    }
+    vktrace_set_packet_entrypoint_end_time(pHeader);
+    pPacket = interpret_body_as_vkGetMemoryAndroidHardwareBufferANDROID(pHeader);
+    pPacket->device = device;
+    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pInfo), sizeof(VkMemoryGetAndroidHardwareBufferInfoANDROID), pInfo);
+    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pBuffer), sizeof(void*), pBuffer);
+    pPacket->result = result;
+    vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pInfo));
+    vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pBuffer));
+    if (!g_trimEnabled) {
+        FINISH_TRACE_PACKET();
+    } else {
+        vktrace_finalize_trace_packet(pHeader);
+        if (g_trimIsInTrim) {
+            trim::write_packet(pHeader);
+        } else {
+            vktrace_delete_trace_packet(&pHeader);
+        }
+    }
+    return result;
+}
+#endif
+
+// save Android HardwareBuffer Data
+#if defined(ANDROID) && (VK_ANDROID_frame_boundary == 1)
+static void* saveAndroidHardwareBufferData(VkDevice device, VkDeviceMemory memory, VkDeviceMemory& dstBufferMemory, uint32_t width, uint32_t height, VkDeviceSize size) {
+    vktrace_LogDebug("line = %d: saveAndroidHardwareBufferData: device %p, memory %p, width = %lu, height = %lu, size = %lu", __LINE__, device, memory, width, height, size);
+    VkResult result;
+
+    // create image
+    VkExternalFormatANDROID externalFormatANDROID = {};
+    externalFormatANDROID.sType = VK_STRUCTURE_TYPE_EXTERNAL_FORMAT_ANDROID;
+
+    VkExternalMemoryImageCreateInfo externalMemoryImageCreateInfo = {};
+    externalMemoryImageCreateInfo.sType         = VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_IMAGE_CREATE_INFO;
+    externalMemoryImageCreateInfo.pNext         = &externalFormatANDROID;
+    externalMemoryImageCreateInfo.handleTypes   = VK_EXTERNAL_MEMORY_HANDLE_TYPE_ANDROID_HARDWARE_BUFFER_BIT_ANDROID;
+
+    VkImageCreateInfo imageCreateInfo = {};
+    imageCreateInfo.sType           = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    imageCreateInfo.pNext           = &externalMemoryImageCreateInfo;
+    imageCreateInfo.imageType       = VK_IMAGE_TYPE_2D;
+    imageCreateInfo.format          = VK_FORMAT_R8G8B8A8_UNORM;
+    imageCreateInfo.extent.width    = width;
+    imageCreateInfo.extent.height   = height;
+    imageCreateInfo.extent.depth    = 1;
+    imageCreateInfo.mipLevels       = 1;
+    imageCreateInfo.arrayLayers     = 1;
+    imageCreateInfo.samples         = VK_SAMPLE_COUNT_1_BIT;
+    imageCreateInfo.tiling          = VK_IMAGE_TILING_OPTIMAL;
+    imageCreateInfo.usage           = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+    imageCreateInfo.sharingMode     = VK_SHARING_MODE_EXCLUSIVE;
+    imageCreateInfo.initialLayout   = VK_IMAGE_LAYOUT_UNDEFINED;
+
+    VkImage image = VK_NULL_HANDLE;
+    result = mdd(device)->devTable.CreateImage(device, &imageCreateInfo, nullptr, &image);
+    if(result != VK_SUCCESS) {
+        vktrace_LogError("Failed to create image when saving image data");
+    }
+
+    // bind image memory
+    VkBindImageMemoryInfo bindImageMemoryInfo = {};
+    bindImageMemoryInfo.sType = VK_STRUCTURE_TYPE_BIND_IMAGE_MEMORY_INFO;
+    bindImageMemoryInfo.image = image;
+    bindImageMemoryInfo.memory = memory;
+    result = mdd(device)->devTable.BindImageMemory2(device, 1, &bindImageMemoryInfo);
+    if(result != VK_SUCCESS) {
+        vktrace_LogError("Failed to bind image memory when saving image data");
+    }
+
+    // create vkbuffer
+    VkBuffer dstBuffer = VK_NULL_HANDLE;
+
+    VkBufferCreateInfo bufferCreateInfo = {};
+    bufferCreateInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    bufferCreateInfo.size = size;
+    bufferCreateInfo.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+
+    result = mdd(device)->devTable.CreateBuffer(device, &bufferCreateInfo, nullptr, &dstBuffer);
+    if(result != VK_SUCCESS) {
+        vktrace_LogError("Failed to create buffer when saving image data");
+    }
+    vktrace_LogDebug(" line = %d: dstBuffer = %p", __LINE__, dstBuffer);
+    VkMemoryRequirements memRequirements;
+    mdd(device)->devTable.GetBufferMemoryRequirements(device, dstBuffer, &memRequirements);
+    if(result != VK_SUCCESS) {
+        vktrace_LogError("Failed to get buffer memory requirements when saving image data");
+    }
+
+    VkMemoryAllocateInfo memAllocateInfo = {};
+    memAllocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    memAllocateInfo.allocationSize = memRequirements.size;
+    memAllocateInfo.memoryTypeIndex = 1;
+    result = mdd(device)->devTable.AllocateMemory(device, &memAllocateInfo, nullptr, &dstBufferMemory);
+    if(result != VK_SUCCESS) {
+        vktrace_LogError("Failed to allocate memory when saving image data");
+    }
+    vktrace_LogDebug(" line = %d: dstBufferMemory = %p", __LINE__, dstBufferMemory);
+    result = mdd(device)->devTable.BindBufferMemory(device, dstBuffer, dstBufferMemory, 0);
+    if(result != VK_SUCCESS) {
+        vktrace_LogError("Failed to bind buffer memory when saving image data");
+    }
+
+    // create command buffer pool
+    VkCommandPool commandPool = VK_NULL_HANDLE;
+    VkCommandPoolCreateInfo commandPoolCreateInfo = {};
+    commandPoolCreateInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+    commandPoolCreateInfo.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
+    commandPoolCreateInfo.queueFamilyIndex = 0;
+    result = mdd(device)->devTable.CreateCommandPool(device, &commandPoolCreateInfo, nullptr, &commandPool);
+    if(result != VK_SUCCESS) {
+        vktrace_LogError("Failed to create command pool when saving image data");
+    }
+    vktrace_LogDebug(" line = %d: commandPool = %p", __LINE__, commandPool);
+
+    // allocate command buffer from pool
+    VkCommandBufferAllocateInfo commandBufferAllocateInfo = {};
+    commandBufferAllocateInfo.sType         = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    commandBufferAllocateInfo.commandPool   = commandPool;
+    commandBufferAllocateInfo.level         = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    commandBufferAllocateInfo.commandBufferCount = 1;
+
+    VkCommandBuffer commandBuffer = VK_NULL_HANDLE;
+    result = mdd(device)->devTable.AllocateCommandBuffers(device, &commandBufferAllocateInfo, &commandBuffer);
+    if(result != VK_SUCCESS) {
+        vktrace_LogError("Failed to allocate command buffer when saving image data");
+    }
+    vktrace_LogDebug(" line = %d: commandBuffer = %p", __LINE__, commandBuffer);
+
+    // begin command buffer
+    VkCommandBufferBeginInfo commandBufferBeginInfo = {};
+    commandBufferBeginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    commandBufferBeginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    result = mdd(device)->devTable.BeginCommandBuffer(commandBuffer, &commandBufferBeginInfo);
+    if(result != VK_SUCCESS) {
+        vktrace_LogError("Failed to begin command buffer when saving image data");
+    }
+
+    VkBufferImageCopy region = {};
+    region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    region.imageSubresource.layerCount = 1;
+    region.imageExtent = {width, height, 1};
+    mdd(device)->devTable.CmdCopyImageToBuffer(commandBuffer, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, dstBuffer, 1, &region);
+    result = mdd(device)->devTable.EndCommandBuffer(commandBuffer);
+    if(result != VK_SUCCESS) {
+        vktrace_LogError("Failed to end command buffer when saving image data");
+    }
+
+    // queue submit & wait
+    if(g_devicetoQueues[device].empty()) {
+        vktrace_LogError("No available queue when saving image data");
+        return nullptr;
+    }
+    VkQueue queue = g_devicetoQueues[device].front();
+    vktrace_LogDebug(" line = %d: queue = %p", __LINE__, queue);
+
+    VkSubmitInfo submitInfo = {};
+    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submitInfo.commandBufferCount = 1;
+    submitInfo.pCommandBuffers = &commandBuffer;
+
+    VkFence nullFence = {VK_NULL_HANDLE};
+    result = mdd(device)->devTable.QueueSubmit(queue, 1, &submitInfo, nullFence);
+    if(result != VK_SUCCESS) {
+        vktrace_LogError("Failed to submit queue when saving image data");
+    }
+    result = mdd(device)->devTable.QueueWaitIdle(queue);
+    if(result != VK_SUCCESS) {
+        vktrace_LogError("Failed to wait queue idle when saving image data");
+    }
+
+    // map memory
+    void* ptr = nullptr;
+    result = mdd(device)->devTable.MapMemory(device, dstBufferMemory, 0, size, 0, &ptr);
+    if(result != VK_SUCCESS) {
+        vktrace_LogError("Failed to map memory when saving image data");
+    }
+    mdd(device)->devTable.UnmapMemory(device, dstBufferMemory);
+
+
+    // destruction
+    mdd(device)->devTable.DestroyImage(device, image, nullptr);
+    mdd(device)->devTable.DestroyBuffer(device, dstBuffer, nullptr);
+    mdd(device)->devTable.FreeCommandBuffers(device, commandPool, 1, &commandBuffer);
+    mdd(device)->devTable.DestroyCommandPool(device, commandPool, nullptr);
+
+    return ptr;
+}
+#endif
+
+
 VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkAllocateMemory(VkDevice device, const VkMemoryAllocateInfo* pAllocateInfo,
                                                                          const VkAllocationCallbacks* pAllocator,
                                                                          VkDeviceMemory* pMemory) {
@@ -313,6 +580,9 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkAllocateMemory(VkDevic
     VkResult result;
     size_t additional_size = 0;
 #if defined(ANDROID)
+    #if VK_ANDROID_frame_boundary
+    bool manuallyStoreAndroidHardwareBufferFlag = false;
+    #endif
     vulkan_struct_header* pvkst_header = (vulkan_struct_header*)pAllocateInfo;
     uint32_t import_buf_size           = 0;
     void*    hwbuf_cpu_ptr             = NULL;
@@ -321,17 +591,30 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkAllocateMemory(VkDevic
     pvkst_header = (vulkan_struct_header*)find_ext_struct(pvkst_header, VK_STRUCTURE_TYPE_IMPORT_ANDROID_HARDWARE_BUFFER_INFO_ANDROID);
     if (pvkst_header) {
         pImportAHWBuf = (VkImportAndroidHardwareBufferInfoANDROID*)pvkst_header;
-        AHardwareBuffer_describe(pImportAHWBuf->buffer, &ahwbuf_desc);
-        int ret = AHardwareBuffer_lock(pImportAHWBuf->buffer, AHARDWAREBUFFER_USAGE_CPU_READ_RARELY, -1, NULL, &hwbuf_cpu_ptr);
-        if (ret) {
-            vktrace_LogError("AM: Lock the hardware buffer failed !");
-        } else {
-            if (ahwbuf_desc.width > ahwbuf_desc.stride) {
-                vktrace_LogError("NOTE: AHardwareBuffer_lock function is abnormal(stride = %u, width = %u)!", ahwbuf_desc.stride, ahwbuf_desc.width);
+        // No need to save data of imported hardware buffer if it is exported by content
+        if (g_exportedAHardwareBuffer.count(pImportAHWBuf->buffer) == 0) {
+            AHardwareBuffer_describe(pImportAHWBuf->buffer, &ahwbuf_desc);
+            int ret = AHardwareBuffer_lock(pImportAHWBuf->buffer, AHARDWAREBUFFER_USAGE_CPU_READ_RARELY, -1, NULL, &hwbuf_cpu_ptr);
+
+            if (ret) {
+                vktrace_LogError("AM: Lock the hardware buffer failed ! Error code: %d", ret);
+    #if VK_ANDROID_frame_boundary
+                vktrace_LogError("AM: Saving the hardware buffer manually...");
+                manuallyStoreAndroidHardwareBufferFlag = true;
+                uint32_t stride = (ahwbuf_desc.width > ahwbuf_desc.stride) ? ahwbuf_desc.width : ahwbuf_desc.stride;
+                import_buf_size = stride * ahwbuf_desc.height * getAHardwareBufBPP(ahwbuf_desc.format);
+                additional_size = sizeof(AHardwareBuffer_Desc) + import_buf_size;
+    #endif
             }
-            uint32_t stride = (ahwbuf_desc.width > ahwbuf_desc.stride) ? ahwbuf_desc.width : ahwbuf_desc.stride;
-            import_buf_size = stride * ahwbuf_desc.height * getAHardwareBufBPP(ahwbuf_desc.format);
-            additional_size = sizeof(AHardwareBuffer_Desc) + import_buf_size;
+            else {
+                if (ahwbuf_desc.width > ahwbuf_desc.stride) {
+                    vktrace_LogError("NOTE: AHardwareBuffer_lock function is abnormal(stride = %u, width = %u)!", ahwbuf_desc.stride, ahwbuf_desc.width);
+                }
+                uint32_t stride = (ahwbuf_desc.width > ahwbuf_desc.stride) ? ahwbuf_desc.width : ahwbuf_desc.stride;
+                import_buf_size = stride * ahwbuf_desc.height * getAHardwareBufBPP(ahwbuf_desc.format);
+                additional_size = sizeof(AHardwareBuffer_Desc) + import_buf_size;
+            }
+
         }
     }
 #endif
@@ -358,6 +641,7 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkAllocateMemory(VkDevic
         VkMemoryPropertyFlags propertyFlags =
             getPageGuardControlInstance().getMemoryPropertyFlags(device, pAllocateInfo->memoryTypeIndex);
         if ((propertyFlags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) != 0) {
+            const_cast<VkMemoryAllocateInfo*>(pAllocateInfo)->memoryTypeIndex = find_mem_type_index(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
             // host visible memory, enable extension
             if (pAllocateInfo->pNext != nullptr) {
                 // Todo: add checking process to detect if the extension we
@@ -446,12 +730,43 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkAllocateMemory(VkDevic
     }
 
 #if defined(ANDROID)
+    if (result == VK_SUCCESS) {
+        VkExportMemoryAllocateInfo* exportInfo = (VkExportMemoryAllocateInfo*)find_ext_struct((vulkan_struct_header*)pAllocateInfo,
+                                                                                    VK_STRUCTURE_TYPE_EXPORT_MEMORY_ALLOCATE_INFO);
+        // Save the VkMemory handle if it is specified as export memory
+        if (exportInfo) {
+            assert(exportInfo->handleTypes & VK_EXTERNAL_MEMORY_HANDLE_TYPE_ANDROID_HARDWARE_BUFFER_BIT_ANDROID);
+            g_exportedDeviceMemory.insert(*pMemory);
+        }
+    }
     if (import_buf_size > 0 && hwbuf_cpu_ptr) {
         PBYTE pdest_addr = (PBYTE)pHeader->pBody + ROUNDUP_TO_8(sizeof(packet_vkAllocateMemory)) + packetSize;
         memcpy(pdest_addr, &ahwbuf_desc, sizeof(AHardwareBuffer_Desc));
         memcpy(pdest_addr + sizeof(AHardwareBuffer_Desc), hwbuf_cpu_ptr, import_buf_size);
         AHardwareBuffer_unlock(pImportAHWBuf->buffer, NULL);
         pImportAHWBuf->buffer = (struct AHardwareBuffer*)(pdest_addr - (uint8_t*)pHeader->pBody);
+        vktrace_LogDebug("Store AHardwareBuffer by offset, pImportAHWBuf->buffer = %p", pImportAHWBuf->buffer);
+    }
+    #if VK_ANDROID_frame_boundary
+    else if(manuallyStoreAndroidHardwareBufferFlag == true) {
+        VkDeviceMemory dstBufferMemory = VK_NULL_HANDLE;
+        void* androidHardwareBuffer = saveAndroidHardwareBufferData(device, *pMemory, dstBufferMemory, ahwbuf_desc.width, ahwbuf_desc.height, pAllocateInfo->allocationSize);
+        if(androidHardwareBuffer != nullptr) {
+            PBYTE pdest_addr = (PBYTE)pHeader->pBody + ROUNDUP_TO_8(sizeof(packet_vkAllocateMemory)) + packetSize;
+            memcpy(pdest_addr, &ahwbuf_desc, sizeof(AHardwareBuffer_Desc));
+            memcpy(pdest_addr + sizeof(AHardwareBuffer_Desc), androidHardwareBuffer, pAllocateInfo->allocationSize);
+            pImportAHWBuf->buffer = (struct AHardwareBuffer*)(pdest_addr - (uint8_t*)pHeader->pBody);
+            vktrace_LogDebug("Store AHardwareBuffer manually, pImportAHWBuf->buffer = %p", pImportAHWBuf->buffer);
+        }
+        else {
+            vktrace_LogError("Errors happened when storing AHardwareBuffer manually!");
+        }
+        if(dstBufferMemory != VK_NULL_HANDLE)
+            mdd(device)->devTable.FreeMemory(device, dstBufferMemory, nullptr);
+    }
+    #endif
+    else if (pImportAHWBuf != NULL){
+        vktrace_LogDebug("Store AHardwareBuffer by address, pImportAHWBuf->buffer = %p", pImportAHWBuf->buffer);
     }
 #endif
     pPacket = interpret_body_as_vkAllocateMemory(pHeader);
@@ -464,6 +779,12 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkAllocateMemory(VkDevic
     vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pAllocateInfo));
     vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pAllocator));
     vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pMemory));
+
+    if (allocateFlagInfo != nullptr && (allocateFlagInfo->flags & VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_CAPTURE_REPLAY_BIT_KHR)) {
+        void** ppNext = const_cast<void**>(&(pAllocateInfo->pNext));
+        // we insert here should not appear after back to app.
+        *ppNext = pNextOriginal;
+    }
 
     if (!g_trimEnabled) {
         // trim not enabled, send packet as usual
@@ -669,6 +990,16 @@ VKTRACER_EXPORT VKAPI_ATTR void VKAPI_CALL __HOOKED_vkFreeMemory(VkDevice device
     trim::TraceLock<std::mutex> lock(g_mutex_trace);
     vktrace_trace_packet_header* pHeader;
     packet_vkFreeMemory* pPacket = NULL;
+
+#if defined(USE_PAGEGUARD_SPEEDUP) && !defined(PAGEGUARD_ADD_PAGEGUARD_ON_REAL_MAPPED_MEMORY)
+    if (!UseMappedExternalHostMemoryExtension()) {
+        auto it = g_MemoryToBuffers.find(memory);
+        if (it != g_MemoryToBuffers.end()) {
+            g_MemoryToBuffers.erase(it);
+        }
+    }
+#endif
+
     bool bFind = false;
     if (g_trimEnabled && !g_trimIsInTrim) {
         for (auto& e : g_bufferToDeviceMemory) {
@@ -1132,12 +1463,14 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkEnumeratePhysicalDevic
     vktrace_trace_packet_header* pHeader;
     packet_vkEnumeratePhysicalDeviceGroups* pPacket = NULL;
     result = mid(instance)->instTable.EnumeratePhysicalDeviceGroups(instance, pPhysicalDeviceGroupCount, pPhysicalDeviceGroupProperties);
+    int propertiesArraySize = 0;
     if (pPhysicalDeviceGroupProperties) {
         for (uint32_t i = 0; i < *pPhysicalDeviceGroupCount; ++i) {
             pPhysicalDeviceGroupProperties[i].sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_GROUP_PROPERTIES;
+            propertiesArraySize += get_struct_chain_size((void*)&pPhysicalDeviceGroupProperties[i]);
         }
     }
-    CREATE_TRACE_PACKET(vkEnumeratePhysicalDeviceGroups, sizeof(uint32_t) + get_struct_chain_size((void*)pPhysicalDeviceGroupProperties));
+    CREATE_TRACE_PACKET(vkEnumeratePhysicalDeviceGroups, sizeof(uint32_t) + propertiesArraySize);
     vktrace_set_packet_entrypoint_end_time(pHeader);
     pPacket = interpret_body_as_vkEnumeratePhysicalDeviceGroups(pHeader);
     pPacket->instance = instance;
@@ -1597,6 +1930,9 @@ VKTRACER_EXPORT VKAPI_ATTR void VKAPI_CALL __HOOKED_vkGetAccelerationStructureBu
         if (g_trimIsInTrim) {
             trim::write_packet(pHeader);
         } else {
+            trim::set_scratch_size(device, pSizeInfo->buildScratchSize, pSizeInfo->updateScratchSize);
+            cmdBuildASPacketInfo packetInfo = {VK_NULL_HANDLE, VK_BUILD_ACCELERATION_STRUCTURE_MODE_MAX_ENUM_KHR, trim::copy_packet(pHeader)};
+            g_cmdBuildASPacket[pHeader->global_packet_index] = packetInfo;
             vktrace_delete_trace_packet(&pHeader);
         }
     }
@@ -1738,6 +2074,59 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkBuildAccelerationStruc
     return result;
 }
 
+VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkCopyAccelerationStructureKHR(
+    VkDevice device,
+    VkDeferredOperationKHR deferredOperation,
+    const VkCopyAccelerationStructureInfoKHR* pInfo) {
+    trim::TraceLock<std::mutex> lock(g_mutex_trace);
+    VkResult result;
+    vktrace_trace_packet_header* pHeader;
+    packet_vkCopyAccelerationStructureKHR* pPacket = NULL;
+    CREATE_TRACE_PACKET(vkCopyAccelerationStructureKHR, get_struct_chain_size((void*)pInfo));
+    result = mdd(device)->devTable.CopyAccelerationStructureKHR(device, deferredOperation, pInfo);
+    vktrace_set_packet_entrypoint_end_time(pHeader);
+    pPacket = interpret_body_as_vkCopyAccelerationStructureKHR(pHeader);
+    pPacket->device = device;
+    pPacket->deferredOperation = deferredOperation;
+    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pInfo), sizeof(VkCopyAccelerationStructureInfoKHR), pInfo);
+    pPacket->result = result;
+    vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pInfo));
+    if (!g_trimEnabled) {
+        FINISH_TRACE_PACKET();
+    } else {
+        vktrace_finalize_trace_packet(pHeader);
+        bool bASLiving = true;
+        trim::ObjectInfo* pSrcInfo = trim::get_AccelerationStructure_objectInfo(pInfo->src);
+        trim::ObjectInfo* pDstInfo = trim::get_AccelerationStructure_objectInfo(pInfo->dst);
+        if (pSrcInfo == nullptr || pDstInfo == nullptr) {
+            bASLiving = false;
+        }
+
+        if (g_trimIsInTrim) {
+             trim::write_packet(pHeader);
+        } else {
+            if (bASLiving) {
+                trim::add_BuildAccelerationStructure_object(trim::copy_packet(pHeader));
+            }
+            vktrace_delete_trace_packet(&pHeader);
+        }
+    }
+    return result;
+}
+
+std::unordered_map<VkDeviceAddress, VkBuffer>::iterator findCloestDeviceAddress(VkDeviceAddress addr) {
+    uint64_t delta_min = ULONG_LONG_MAX;
+    auto it_result = g_deviceAddressToBuffer.end();
+    for (auto it = g_deviceAddressToBuffer.begin(); it != g_deviceAddressToBuffer.end(); ++it) {
+        uint64_t delta = addr - it->first;
+        if (addr >= it->first && delta < delta_min) {
+            delta_min = delta;
+            it_result = it;
+        }
+    }
+    return it_result;
+}
+
 VKTRACER_EXPORT VKAPI_ATTR void VKAPI_CALL __HOOKED_vkCmdBuildAccelerationStructuresKHR(
     VkCommandBuffer commandBuffer,
     uint32_t infoCount,
@@ -1822,15 +2211,441 @@ VKTRACER_EXPORT VKAPI_ATTR void VKAPI_CALL __HOOKED_vkCmdBuildAccelerationStruct
                 }
             }
             if (bASLiving) {
-                auto it = std::find(g_commandBufferInCmdBuildAS.begin(), g_commandBufferInCmdBuildAS.end(), commandBuffer);
-                if (it == g_commandBufferInCmdBuildAS.end()) {
-                    g_commandBufferInCmdBuildAS.push_back(commandBuffer);
-                }
                 trim::ObjectInfo* pCBInfo = trim::get_CommandBuffer_objectInfo(commandBuffer);
                 if (pCBInfo == nullptr) {
                     vktrace_LogError("Can't find the command buffer object.");
                 } else {
-                    cmdBuildASPacketInfo packetInfo = {pCBInfo->ObjectInfo.CommandBuffer.commandPool, trim::copy_packet(pHeader)};
+                    cmdBuildASPacketInfo packetInfo = {pCBInfo->ObjectInfo.CommandBuffer.commandPool, pInfos[0].mode, trim::copy_packet(pHeader)};
+                    g_cmdBuildASPacket[pHeader->global_packet_index] = packetInfo;
+                }
+
+                trim::BuildAsInfo _buildAsInfo;
+                _buildAsInfo.pCmdBuildAccelerationtStructure = trim::copy_packet(pHeader);
+                trim::BuildAsInfo &buildAsInfo = trim::add_cmdBuildAccelerationStructure_object(_buildAsInfo);
+
+                for (uint32_t i = 0; i < infoCount; ++i) {
+                    for (uint32_t j = 0; j < pInfos[i].geometryCount; ++j) {
+                        switch (pInfos[i].pGeometries[j].geometryType) {
+                            case VK_GEOMETRY_TYPE_TRIANGLES_KHR:
+                            if (pInfos[i].pGeometries[j].geometry.triangles.vertexData.deviceAddress != 0) {
+                                auto it = g_deviceAddressToBuffer.find(pInfos[i].pGeometries[j].geometry.triangles.vertexData.deviceAddress);
+                                if (it == g_deviceAddressToBuffer.end()) {
+                                    vktrace_LogDebug("find the closest address.");
+                                    it = findCloestDeviceAddress(pInfos[i].pGeometries[j].geometry.triangles.vertexData.deviceAddress);
+                                }
+                                if (it != g_deviceAddressToBuffer.end()) {
+                                    auto it0 = std::find(g_bufferInCmdBuildAS.begin(), g_bufferInCmdBuildAS.end(),it->second);
+                                    if (it0 == g_bufferInCmdBuildAS.end()) {
+                                        g_bufferInCmdBuildAS.push_back(it->second);
+                                    }
+                                } else {
+                                    vktrace_LogError("can't find the vertexData buffer device address.");
+                                }
+                            }
+                            if (pInfos[i].pGeometries[j].geometry.triangles.indexData.deviceAddress != 0) {
+                                auto it = g_deviceAddressToBuffer.find(pInfos[i].pGeometries[j].geometry.triangles.indexData.deviceAddress);
+                                if (it == g_deviceAddressToBuffer.end()) {
+                                    vktrace_LogDebug("find the closest address.");
+                                    it = findCloestDeviceAddress(pInfos[i].pGeometries[j].geometry.triangles.indexData.deviceAddress);
+                                }
+                                if (it != g_deviceAddressToBuffer.end())  {
+                                    auto it0 = std::find(g_bufferInCmdBuildAS.begin(), g_bufferInCmdBuildAS.end(),it->second);
+                                    if (it0 == g_bufferInCmdBuildAS.end()) {
+                                        g_bufferInCmdBuildAS.push_back(it->second);
+                                    }
+                                } else {
+                                    vktrace_LogError("can't find the indexData buffer device address.");
+                                }
+                            }
+                            if (pInfos[i].pGeometries[j].geometry.triangles.transformData.deviceAddress != 0) {
+                                auto it = g_deviceAddressToBuffer.find(pInfos[i].pGeometries[j].geometry.triangles.transformData.deviceAddress);
+                                if (it == g_deviceAddressToBuffer.end()) {
+                                    vktrace_LogDebug("find the closest address.");
+                                    it = findCloestDeviceAddress(pInfos[i].pGeometries[j].geometry.triangles.transformData.deviceAddress);
+                                }
+                                if (it != g_deviceAddressToBuffer.end()) {
+                                    auto it0 = std::find(g_bufferInCmdBuildAS.begin(), g_bufferInCmdBuildAS.end(),it->second);
+                                    if (it0 == g_bufferInCmdBuildAS.end()) {
+                                        g_bufferInCmdBuildAS.push_back(it->second);
+                                    }
+                                } else {
+                                    vktrace_LogError("can't find the transformData buffer device address.");
+                                }
+                            }
+                            break;
+                            case VK_GEOMETRY_TYPE_AABBS_KHR:
+                            if (pInfos[i].pGeometries[j].geometry.aabbs.data.deviceAddress != 0) {
+                                auto it = g_deviceAddressToBuffer.find(pInfos[i].pGeometries[j].geometry.aabbs.data.deviceAddress);
+                                if (it == g_deviceAddressToBuffer.end()) {
+                                    vktrace_LogDebug("find the closest address.");
+                                    it = findCloestDeviceAddress(pInfos[i].pGeometries[j].geometry.aabbs.data.deviceAddress);
+                                }
+                                if (it != g_deviceAddressToBuffer.end()) {
+                                    auto it0 = std::find(g_bufferInCmdBuildAS.begin(), g_bufferInCmdBuildAS.end(),it->second);
+                                    if (it0 == g_bufferInCmdBuildAS.end()) {
+                                        g_bufferInCmdBuildAS.push_back(it->second);
+                                    }
+                                } else {
+                                    vktrace_LogError("can't find the aabbs.data buffer device address.");
+                                }
+                            }
+                            break;
+                            case VK_GEOMETRY_TYPE_INSTANCES_KHR:
+                            if (pInfos[i].pGeometries[j].geometry.instances.data.deviceAddress != 0) {
+                                auto it = g_deviceAddressToBuffer.find(pInfos[i].pGeometries[j].geometry.instances.data.deviceAddress);
+                                if (it == g_deviceAddressToBuffer.end()) {
+                                    vktrace_LogDebug("find the closest address.");
+                                    it = findCloestDeviceAddress(pInfos[i].pGeometries[j].geometry.instances.data.deviceAddress);
+                                }
+                                if (it != g_deviceAddressToBuffer.end()) {
+                                    auto it0 = std::find(g_bufferInCmdBuildAS.begin(), g_bufferInCmdBuildAS.end(),it->second);
+                                    if (it0 == g_bufferInCmdBuildAS.end()) {
+                                        g_bufferInCmdBuildAS.push_back(it->second);
+                                    }
+                                } else {
+                                    vktrace_LogError("can't find the instances.data buffer device address.");
+                                }
+                            }
+                            break;
+                            default:
+                                vktrace_LogError("Can't support the geometry type.");
+                        }
+                    }
+
+                    for (uint32_t j = 0; (j < pInfos[i].geometryCount && g_TraceEnableCopyAsBuf); ++j) {
+                        trim::BuildAsGeometryInfo geometryInfo;
+                        memset(&geometryInfo, 0, sizeof(geometryInfo));
+                        geometryInfo.infoIndex = i;
+                        geometryInfo.geoIndex  = j;
+                        switch (pInfos[i].pGeometries[j].geometryType) {
+                            case VK_GEOMETRY_TYPE_TRIANGLES_KHR:
+                                geometryInfo.type = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
+                                if (pInfos[i].pGeometries[j].geometry.triangles.vertexData.deviceAddress != 0) {
+                                    switch (pInfos[i].pGeometries[j].geometry.triangles.indexType) {
+                                        case VK_INDEX_TYPE_NONE_KHR: {
+                                            geometryInfo.triangle.vb.bufOffset =
+                                                ppBuildRangeInfos[i][j].primitiveOffset +
+                                                pInfos[i].pGeometries[j].geometry.triangles.vertexStride *
+                                                    ppBuildRangeInfos[i][j].firstVertex;
+                                            geometryInfo.triangle.vb.dataSize =
+                                                pInfos[i].pGeometries[j].geometry.triangles.vertexStride *
+                                                ppBuildRangeInfos[i][j].primitiveCount * 3;
+                                            break;
+                                        }
+                                        case VK_INDEX_TYPE_UINT8_EXT:
+                                        case VK_INDEX_TYPE_UINT16:
+                                        case VK_INDEX_TYPE_UINT32: {
+                                            geometryInfo.triangle.vb.bufOffset = 0;
+                                            geometryInfo.triangle.vb.dataSize =
+                                                pInfos[i].pGeometries[j].geometry.triangles.vertexStride *
+                                                pInfos[i].pGeometries[j].geometry.triangles.maxVertex;
+                                            break;
+                                        }
+                                        default: {
+                                            vktrace_LogError("Unknown index buffer type!");
+                                        }
+                                    }
+                                    VkResult result;
+                                    result = trim::get_cmdbuildas_memory_buffer(
+                                        pInfos[i].pGeometries[j].geometry.triangles.vertexData.deviceAddress,
+                                        geometryInfo.triangle.vb.dataSize, &geometryInfo.triangle.vb.bufOffset,
+                                        &geometryInfo.triangle.vb.bufMem, &geometryInfo.triangle.vb.buffer,
+                                        &geometryInfo.triangle.vb.memOffset, &geometryInfo.triangle.vb.buf_gid, &geometryInfo.triangle.vb.bufMem_gid);
+                                    if (result != VK_SUCCESS) {
+                                        if (geometryInfo.triangle.ib.bufMem == VK_NULL_HANDLE) {
+                                            vktrace_LogError(
+                                                "vkCmdBuildAccelerationStrucutresKHR: couldn't find a memory for vertex buffer !");
+                                        } else if (geometryInfo.triangle.ib.buffer == VK_NULL_HANDLE) {
+                                            vktrace_LogError(
+                                                "vkCmdBuildAccelerationStrucutresKHR: couldn't find a buffer for vertex buffer !");
+                                            vktrace_LogError(
+                                                "vkCmdBuildAccelerationStrucutresKHR: Create a new staging buffer for VB and bound to "
+                                                "the known memory with offset");
+                                            result = trim::create_staging_buffer_on_memory(
+                                                commandBuffer, &geometryInfo.triangle.vb.buffer, geometryInfo.triangle.vb.bufMem,
+                                                geometryInfo.triangle.vb.memOffset, geometryInfo.triangle.vb.dataSize);
+                                        }
+                                    }
+                                    trim::dump_build_AS_buffer_data(commandBuffer, geometryInfo.triangle.vb);
+                                }
+                                if (pInfos[i].pGeometries[j].geometry.triangles.indexData.deviceAddress != 0) {
+                                    switch (pInfos[i].pGeometries[j].geometry.triangles.indexType) {
+                                        case VK_INDEX_TYPE_NONE_KHR: {
+                                            geometryInfo.triangle.ib.bufOffset = 0;
+                                            geometryInfo.triangle.ib.dataSize = 0;
+                                            break;
+                                        }
+                                        case VK_INDEX_TYPE_UINT8_EXT:
+                                        case VK_INDEX_TYPE_UINT16:
+                                        case VK_INDEX_TYPE_UINT32: {
+                                            uint32_t IbStride = 0;
+                                            switch (pInfos[i].pGeometries[j].geometry.triangles.indexType) {
+                                                case VK_INDEX_TYPE_UINT8_EXT: {
+                                                    IbStride = 1;
+                                                    break;
+                                                }
+                                                case VK_INDEX_TYPE_UINT16: {
+                                                    IbStride = 2;
+                                                    break;
+                                                }
+                                                case VK_INDEX_TYPE_UINT32: {
+                                                    IbStride = 4;
+                                                    break;
+                                                }
+                                            }
+                                            geometryInfo.triangle.ib.bufOffset = ppBuildRangeInfos[i][j].primitiveOffset;
+                                            geometryInfo.triangle.ib.dataSize = ppBuildRangeInfos[i][j].primitiveCount * IbStride * 3;
+                                            break;
+                                        }
+                                        default: {
+                                            vktrace_LogError("vkCmdBuildAccelerationStrucutresKHR: Unknown index buffer type!");
+                                        }
+                                    }
+                                    VkResult result;
+                                    result = trim::get_cmdbuildas_memory_buffer(
+                                        pInfos[i].pGeometries[j].geometry.triangles.indexData.deviceAddress,
+                                        geometryInfo.triangle.ib.dataSize, &geometryInfo.triangle.ib.bufOffset,
+                                        &geometryInfo.triangle.ib.bufMem, &geometryInfo.triangle.ib.buffer,
+                                        &geometryInfo.triangle.ib.memOffset, &geometryInfo.triangle.ib.buf_gid, &geometryInfo.triangle.ib.bufMem_gid);
+                                    if (result != VK_SUCCESS) {
+                                        if (geometryInfo.triangle.ib.bufMem == VK_NULL_HANDLE) {
+                                            vktrace_LogError(
+                                                "vkCmdBuildAccelerationStrucutresKHR: couldn't find a memory for index buffer !");
+                                        } else if (geometryInfo.triangle.ib.buffer == VK_NULL_HANDLE) {
+                                            vktrace_LogError(
+                                                "vkCmdBuildAccelerationStrucutresKHR: couldn't find a buffer for index buffer !");
+                                            vktrace_LogError(
+                                                "vkCmdBuildAccelerationStrucutresKHR: Create a new staging buffer for IB and bound to "
+                                                "the known memory with offset");
+                                            result = trim::create_staging_buffer_on_memory(
+                                                commandBuffer, &geometryInfo.triangle.ib.buffer, geometryInfo.triangle.ib.bufMem,
+                                                geometryInfo.triangle.ib.memOffset, geometryInfo.triangle.ib.dataSize);
+                                        }
+                                    }
+                                    trim::dump_build_AS_buffer_data(commandBuffer, geometryInfo.triangle.ib);
+                                }
+                                if (pInfos[i].pGeometries[j].geometry.triangles.transformData.deviceAddress != 0) {
+                                    geometryInfo.triangle.tb.bufOffset = ppBuildRangeInfos[i][j].transformOffset;
+                                    geometryInfo.triangle.tb.dataSize = sizeof(VkTransformMatrixKHR);
+                                    VkResult result;
+                                    result = trim::get_cmdbuildas_memory_buffer(
+                                        pInfos[i].pGeometries[j].geometry.triangles.transformData.deviceAddress,
+                                        geometryInfo.triangle.tb.dataSize, &geometryInfo.triangle.tb.bufOffset,
+                                        &geometryInfo.triangle.tb.bufMem, &geometryInfo.triangle.tb.buffer,
+                                        &geometryInfo.triangle.tb.memOffset, &geometryInfo.triangle.tb.buf_gid, &geometryInfo.triangle.tb.bufMem_gid);
+                                    if (result != VK_SUCCESS) {
+                                        if (geometryInfo.triangle.ib.bufMem == VK_NULL_HANDLE) {
+                                            vktrace_LogError(
+                                                "vkCmdBuildAccelerationStrucutresKHR: couldn't find a memory for transform buffer "
+                                                "!");
+                                        } else if (geometryInfo.triangle.ib.buffer == VK_NULL_HANDLE) {
+                                            vktrace_LogError(
+                                                "vkCmdBuildAccelerationStrucutresKHR: couldn't find a buffer for transform buffer "
+                                                "!");
+                                            vktrace_LogError(
+                                                "vkCmdBuildAccelerationStrucutresKHR: Create a new staging buffer for TB and bound "
+                                                "to "
+                                                "the known memory with offset");
+                                            result = trim::create_staging_buffer_on_memory(
+                                                commandBuffer, &geometryInfo.triangle.tb.buffer, geometryInfo.triangle.tb.bufMem,
+                                                geometryInfo.triangle.tb.memOffset, geometryInfo.triangle.tb.dataSize);
+                                        }
+                                    }
+                                    trim::dump_build_AS_buffer_data(commandBuffer, geometryInfo.triangle.tb);
+                                }
+                                buildAsInfo.geometryInfo.push_back(geometryInfo);
+                                break;
+                            case VK_GEOMETRY_TYPE_AABBS_KHR:
+                                geometryInfo.type = VK_GEOMETRY_TYPE_AABBS_KHR;
+                                if (pInfos[i].pGeometries[j].geometry.aabbs.data.deviceAddress != 0) {
+                                    geometryInfo.aabb.info.bufOffset = ppBuildRangeInfos[i][j].primitiveOffset;
+                                    geometryInfo.aabb.info.dataSize =
+                                        ppBuildRangeInfos[i][j].primitiveCount * pInfos[i].pGeometries[j].geometry.aabbs.stride;
+
+                                    VkResult result;
+                                    result = trim::get_cmdbuildas_memory_buffer(
+                                        pInfos[i].pGeometries[j].geometry.aabbs.data.deviceAddress, geometryInfo.aabb.info.dataSize,
+                                        &geometryInfo.aabb.info.bufOffset, &geometryInfo.aabb.info.bufMem,
+                                        &geometryInfo.aabb.info.buffer, &geometryInfo.aabb.info.memOffset,
+                                        &geometryInfo.aabb.info.buf_gid, &geometryInfo.aabb.info.bufMem_gid);
+                                    if (result != VK_SUCCESS) {
+                                        if (geometryInfo.triangle.ib.bufMem == VK_NULL_HANDLE) {
+                                            vktrace_LogError(
+                                                "vkCmdBuildAccelerationStrucutresKHR: couldn't find a memory for "
+                                                "AABB buffer "
+                                                "!");
+                                        } else if (geometryInfo.triangle.ib.buffer == VK_NULL_HANDLE) {
+                                            vktrace_LogError(
+                                                "vkCmdBuildAccelerationStrucutresKHR: couldn't find a buffer for "
+                                                "AABB buffer "
+                                                "!");
+                                            vktrace_LogError(
+                                                "vkCmdBuildAccelerationStrucutresKHR: Create a new staging buffer for "
+                                                "AABB buffer and bound "
+                                                "to "
+                                                "the known memory with offset");
+                                            result = trim::create_staging_buffer_on_memory(
+                                                commandBuffer, &geometryInfo.aabb.info.buffer, geometryInfo.aabb.info.bufMem,
+                                                geometryInfo.aabb.info.memOffset, geometryInfo.aabb.info.dataSize);
+                                        }
+                                    }
+                                    trim::dump_build_AS_buffer_data(commandBuffer, geometryInfo.aabb.info);
+                                }
+                                buildAsInfo.geometryInfo.push_back(geometryInfo);
+                                break;
+                            case VK_GEOMETRY_TYPE_INSTANCES_KHR:
+                                geometryInfo.type = VK_GEOMETRY_TYPE_INSTANCES_KHR;
+                                if (pInfos[i].pGeometries[j].geometry.instances.data.deviceAddress != 0) {
+                                    if (pInfos[i].pGeometries[j].geometry.instances.arrayOfPointers == VK_FALSE) {
+                                        geometryInfo.instance.info.bufOffset = ppBuildRangeInfos[i][j].primitiveOffset;
+                                        geometryInfo.instance.info.dataSize =
+                                            ppBuildRangeInfos[i][j].primitiveCount * sizeof(VkAccelerationStructureInstanceKHR);
+                                        VkResult result;
+                                        result = trim::get_cmdbuildas_memory_buffer(
+                                            pInfos[i].pGeometries[j].geometry.instances.data.deviceAddress,
+                                            geometryInfo.instance.info.dataSize, &geometryInfo.instance.info.bufOffset,
+                                            &geometryInfo.instance.info.bufMem, &geometryInfo.instance.info.buffer,
+                                            &geometryInfo.instance.info.memOffset, &geometryInfo.instance.info.buf_gid, &geometryInfo.instance.info.bufMem_gid);
+                                        if (result != VK_SUCCESS) {
+                                            if (geometryInfo.triangle.ib.bufMem == VK_NULL_HANDLE) {
+                                                vktrace_LogError(
+                                                    "vkCmdBuildAccelerationStrucutresKHR: couldn't find a memory for "
+                                                    "instance buffer "
+                                                    "!");
+                                            } else if (geometryInfo.triangle.ib.buffer == VK_NULL_HANDLE) {
+                                                vktrace_LogError(
+                                                    "vkCmdBuildAccelerationStrucutresKHR: couldn't find a buffer for "
+                                                    "instance buffer "
+                                                    "!");
+                                                vktrace_LogError(
+                                                    "vkCmdBuildAccelerationStrucutresKHR: Create a new staging buffer for "
+                                                    "instance buffer and bound "
+                                                    "to "
+                                                    "the known memory with offset");
+                                                result = trim::create_staging_buffer_on_memory(
+                                                    commandBuffer, &geometryInfo.instance.info.buffer,
+                                                    geometryInfo.instance.info.bufMem, geometryInfo.instance.info.memOffset,
+                                                    geometryInfo.instance.info.dataSize);
+                                            }
+                                        }
+                                        trim::dump_build_AS_buffer_data(commandBuffer, geometryInfo.instance.info);
+                                    }
+                                    buildAsInfo.geometryInfo.push_back(geometryInfo);
+                                } else {
+                                    vktrace_LogError("instance buffer  arrayOfPointers not handled.");
+                                }
+                                break;
+                            default:
+                                vktrace_LogError("Can't support the geometry type.");
+                        }
+                    }
+                    if (pInfos[i].scratchData.deviceAddress != 0) {
+                        auto it = g_deviceAddressToBuffer.find(pInfos[i].scratchData.deviceAddress);
+                        if (it == g_deviceAddressToBuffer.end()) {
+                            vktrace_LogDebug("find the closest address.");
+                            it = findCloestDeviceAddress(pInfos[i].scratchData.deviceAddress);
+                        }
+                        if (it != g_deviceAddressToBuffer.end()) {
+                            auto it0 = std::find(g_bufferInCmdBuildAS.begin(), g_bufferInCmdBuildAS.end(), it->second);
+                            if (it0 == g_bufferInCmdBuildAS.end()) {
+                                g_bufferInCmdBuildAS.push_back(it->second);
+                            }
+                        } else {
+                            vktrace_LogError("can't find the scratchData buffer device address.");
+                        }
+                    }
+                }
+            }
+            vktrace_delete_trace_packet(&pHeader);
+        }
+    }
+}
+
+VKTRACER_EXPORT VKAPI_ATTR void VKAPI_CALL __HOOKED_vkCmdBuildAccelerationStructuresIndirectKHR(
+    VkCommandBuffer commandBuffer,
+    uint32_t infoCount,
+    const VkAccelerationStructureBuildGeometryInfoKHR* pInfos,
+    const VkDeviceAddress* pIndirectDeviceAddresses,
+    const uint32_t* pIndirectStrides,
+    const uint32_t* const* ppMaxPrimitiveCounts) {
+    trim::TraceLock<std::mutex> lock(g_mutex_trace);
+    vktrace_trace_packet_header* pHeader;
+    packet_vkCmdBuildAccelerationStructuresIndirectKHR* pPacket = NULL;
+    int pInfosSize = 0;
+#if defined(USE_PAGEGUARD_SPEEDUP)
+    pageguardEnter();
+    flushAllChangedMappedMemory(&vkFlushMappedMemoryRangesWithoutAPICall);
+    if (!UseMappedExternalHostMemoryExtension()) {
+        // If enable external host memory extension, there will be no shadow
+        // memory, so we don't need any read pageguard handling.
+        resetAllReadFlagAndPageGuard();
+    }
+    pageguardExit();
+#endif
+
+    for (uint32_t i = 0; i < infoCount; ++i) {
+        pInfosSize += get_struct_chain_size((void*)&pInfos[i]);
+        for (uint32_t j = 0; j < pInfos[i].geometryCount; ++j) {
+            if (pInfos[i].pGeometries[j].geometryType == VK_GEOMETRY_TYPE_INSTANCES_KHR) {
+                int size = ppMaxPrimitiveCounts[i][j];
+                pInfosSize += sizeof(uint32_t) * size;
+            }
+        }
+    }
+
+    CREATE_TRACE_PACKET(vkCmdBuildAccelerationStructuresIndirectKHR, pInfosSize + infoCount * sizeof(VkDeviceAddress) + infoCount * sizeof(uint32_t) + infoCount * sizeof(uint32_t));
+    mdd(commandBuffer)->devTable.CmdBuildAccelerationStructuresIndirectKHR(commandBuffer, infoCount, pInfos, pIndirectDeviceAddresses, pIndirectStrides, ppMaxPrimitiveCounts);
+    vktrace_set_packet_entrypoint_end_time(pHeader);
+    pPacket = interpret_body_as_vkCmdBuildAccelerationStructuresIndirectKHR(pHeader);
+    pPacket->commandBuffer = commandBuffer;
+    pPacket->infoCount = infoCount;
+    // add pInfos
+    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pInfos), infoCount * sizeof(VkAccelerationStructureBuildGeometryInfoKHR), pInfos);
+    for (uint32_t i = 0; i < infoCount; ++i) {
+        VkAccelerationStructureBuildGeometryInfoKHR* temp = (VkAccelerationStructureBuildGeometryInfoKHR* )&(pPacket->pInfos[i]);
+        add_VkAccelerationStructureBuildGeometryInfoKHR_to_packet(pHeader, (VkAccelerationStructureBuildGeometryInfoKHR**)&temp, (VkAccelerationStructureBuildGeometryInfoKHR*)&pInfos[i], false, NULL, false, NULL);
+    }
+    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pIndirectDeviceAddresses), infoCount * sizeof(VkDeviceAddress), pIndirectDeviceAddresses);
+    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pIndirectStrides), infoCount * sizeof(uint32_t), pIndirectStrides);
+    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->ppMaxPrimitiveCounts), infoCount * sizeof(uint32_t), ppMaxPrimitiveCounts);
+    vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pInfos));
+    vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pIndirectDeviceAddresses));
+    vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pIndirectStrides));
+    vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->ppMaxPrimitiveCounts));
+
+    if (!g_trimEnabled) {
+        FINISH_TRACE_PACKET();
+    } else {
+        vktrace_finalize_trace_packet(pHeader);
+        if (g_trimIsInTrim) {
+            trim::write_packet(pHeader);
+        } else {
+            bool bASLiving = true;
+            for (uint32_t i = 0; i < infoCount; i++) {
+                if (pInfos[i].mode == VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR) {
+                    trim::ObjectInfo* pDstInfo = trim::get_AccelerationStructure_objectInfo(pInfos[i].dstAccelerationStructure);
+                    if (pDstInfo == nullptr) {
+                       bASLiving = false;
+                       break;
+                    }
+                    trim::mark_AccelerationStructure_reference(pInfos[i].dstAccelerationStructure);
+                } else if (pInfos[i].mode == VK_BUILD_ACCELERATION_STRUCTURE_MODE_UPDATE_KHR) {
+                    trim::ObjectInfo* pSrcInfo = trim::get_AccelerationStructure_objectInfo(pInfos[i].srcAccelerationStructure);
+                    trim::ObjectInfo* pDstInfo = trim::get_AccelerationStructure_objectInfo(pInfos[i].dstAccelerationStructure);
+                    if (pSrcInfo == nullptr || pDstInfo == nullptr) {
+                       bASLiving = false;
+                       break;
+                    }
+                    trim::mark_AccelerationStructure_reference(pInfos[i].srcAccelerationStructure);
+                    trim::mark_AccelerationStructure_reference(pInfos[i].dstAccelerationStructure);
+                }
+            }
+            if (bASLiving) {
+                trim::ObjectInfo* pCBInfo = trim::get_CommandBuffer_objectInfo(commandBuffer);
+                if (pCBInfo == nullptr) {
+                    vktrace_LogError("Can't find the command buffer object.");
+                } else {
+                    cmdBuildASPacketInfo packetInfo = {pCBInfo->ObjectInfo.CommandBuffer.commandPool,  pInfos[0].mode, trim::copy_packet(pHeader)};
                     g_cmdBuildASPacket[pHeader->global_packet_index] = packetInfo;
                 }
                 for (uint32_t i = 0; i < infoCount; ++i) {
@@ -1840,34 +2655,46 @@ VKTRACER_EXPORT VKAPI_ATTR void VKAPI_CALL __HOOKED_vkCmdBuildAccelerationStruct
                             if (pInfos[i].pGeometries[j].geometry.triangles.vertexData.deviceAddress != 0) {
                                 auto it = g_deviceAddressToBuffer.find(pInfos[i].pGeometries[j].geometry.triangles.vertexData.deviceAddress);
                                 if (it == g_deviceAddressToBuffer.end()) {
-                                    vktrace_LogError("vertexData device address can't find.");
-                                } else {
+                                    vktrace_LogDebug("find the closest address.");
+                                    it = findCloestDeviceAddress(pInfos[i].pGeometries[j].geometry.triangles.vertexData.deviceAddress);
+                                }
+                                if (it != g_deviceAddressToBuffer.end()) {
                                     auto it0 = std::find(g_bufferInCmdBuildAS.begin(), g_bufferInCmdBuildAS.end(),it->second);
                                     if (it0 == g_bufferInCmdBuildAS.end()) {
                                         g_bufferInCmdBuildAS.push_back(it->second);
                                     }
+                                } else {
+                                    vktrace_LogError("can't find the vertexData buffer device address.");
                                 }
                             }
                             if (pInfos[i].pGeometries[j].geometry.triangles.indexData.deviceAddress != 0) {
                                 auto it = g_deviceAddressToBuffer.find(pInfos[i].pGeometries[j].geometry.triangles.indexData.deviceAddress);
                                 if (it == g_deviceAddressToBuffer.end()) {
-                                    vktrace_LogError("indexData device address can't find.");
-                                } else {
+                                    vktrace_LogDebug("find the closest address.");
+                                    it = findCloestDeviceAddress(pInfos[i].pGeometries[j].geometry.triangles.indexData.deviceAddress);
+                                }
+                                if (it != g_deviceAddressToBuffer.end())  {
                                     auto it0 = std::find(g_bufferInCmdBuildAS.begin(), g_bufferInCmdBuildAS.end(),it->second);
                                     if (it0 == g_bufferInCmdBuildAS.end()) {
                                         g_bufferInCmdBuildAS.push_back(it->second);
                                     }
+                                } else {
+                                    vktrace_LogError("can't find the indexData buffer device address.");
                                 }
                             }
                             if (pInfos[i].pGeometries[j].geometry.triangles.transformData.deviceAddress != 0) {
                                 auto it = g_deviceAddressToBuffer.find(pInfos[i].pGeometries[j].geometry.triangles.transformData.deviceAddress);
                                 if (it == g_deviceAddressToBuffer.end()) {
-                                    vktrace_LogError("transformData device address can't find.");
-                                } else {
+                                    vktrace_LogDebug("find the closest address.");
+                                    it = findCloestDeviceAddress(pInfos[i].pGeometries[j].geometry.triangles.transformData.deviceAddress);
+                                }
+                                if (it != g_deviceAddressToBuffer.end()) {
                                     auto it0 = std::find(g_bufferInCmdBuildAS.begin(), g_bufferInCmdBuildAS.end(),it->second);
                                     if (it0 == g_bufferInCmdBuildAS.end()) {
                                         g_bufferInCmdBuildAS.push_back(it->second);
                                     }
+                                } else {
+                                    vktrace_LogError("can't find the transformData buffer device address.");
                                 }
                             }
                             break;
@@ -1875,12 +2702,16 @@ VKTRACER_EXPORT VKAPI_ATTR void VKAPI_CALL __HOOKED_vkCmdBuildAccelerationStruct
                             if (pInfos[i].pGeometries[j].geometry.aabbs.data.deviceAddress != 0) {
                                 auto it = g_deviceAddressToBuffer.find(pInfos[i].pGeometries[j].geometry.aabbs.data.deviceAddress);
                                 if (it == g_deviceAddressToBuffer.end()) {
-                                    vktrace_LogError("aabbsData device address can't find.");
-                                } else {
+                                    vktrace_LogDebug("find the closest address.");
+                                    it = findCloestDeviceAddress(pInfos[i].pGeometries[j].geometry.aabbs.data.deviceAddress);
+                                }
+                                if (it != g_deviceAddressToBuffer.end()) {
                                     auto it0 = std::find(g_bufferInCmdBuildAS.begin(), g_bufferInCmdBuildAS.end(),it->second);
                                     if (it0 == g_bufferInCmdBuildAS.end()) {
                                         g_bufferInCmdBuildAS.push_back(it->second);
                                     }
+                                } else {
+                                    vktrace_LogError("can't find the aabbs.data buffer device address.");
                                 }
                             }
                             break;
@@ -1888,12 +2719,16 @@ VKTRACER_EXPORT VKAPI_ATTR void VKAPI_CALL __HOOKED_vkCmdBuildAccelerationStruct
                             if (pInfos[i].pGeometries[j].geometry.instances.data.deviceAddress != 0) {
                                 auto it = g_deviceAddressToBuffer.find(pInfos[i].pGeometries[j].geometry.instances.data.deviceAddress);
                                 if (it == g_deviceAddressToBuffer.end()) {
-                                    vktrace_LogError("instancesData device address can't find.");
-                                } else {
+                                    vktrace_LogDebug("find the closest address.");
+                                    it = findCloestDeviceAddress(pInfos[i].pGeometries[j].geometry.instances.data.deviceAddress);
+                                }
+                                if (it != g_deviceAddressToBuffer.end()) {
                                     auto it0 = std::find(g_bufferInCmdBuildAS.begin(), g_bufferInCmdBuildAS.end(),it->second);
                                     if (it0 == g_bufferInCmdBuildAS.end()) {
                                         g_bufferInCmdBuildAS.push_back(it->second);
                                     }
+                                } else {
+                                    vktrace_LogError("can't find the instances.data buffer device address.");
                                 }
                             }
                             break;
@@ -1904,15 +2739,58 @@ VKTRACER_EXPORT VKAPI_ATTR void VKAPI_CALL __HOOKED_vkCmdBuildAccelerationStruct
                     if (pInfos[i].scratchData.deviceAddress != 0) {
                         auto it = g_deviceAddressToBuffer.find(pInfos[i].scratchData.deviceAddress);
                         if (it == g_deviceAddressToBuffer.end()) {
-                            vktrace_LogError("scratchData device address can't find.");
-                        } else {
+                            vktrace_LogDebug("find the closest address.");
+                            it = findCloestDeviceAddress(pInfos[i].scratchData.deviceAddress);
+                        }
+                        if (it != g_deviceAddressToBuffer.end()) {
                             auto it0 = std::find(g_bufferInCmdBuildAS.begin(), g_bufferInCmdBuildAS.end(), it->second);
                             if (it0 == g_bufferInCmdBuildAS.end()) {
                                 g_bufferInCmdBuildAS.push_back(it->second);
                             }
+                        } else {
+                            vktrace_LogError("can't find the scratchData buffer device address.");
                         }
                     }
                 }
+            }
+            vktrace_delete_trace_packet(&pHeader);
+        }
+    }
+}
+
+VKTRACER_EXPORT VKAPI_ATTR void VKAPI_CALL __HOOKED_vkCmdCopyAccelerationStructureKHR(VkCommandBuffer commandBuffer, const VkCopyAccelerationStructureInfoKHR* pInfo)
+{
+    trim::TraceLock<std::mutex> lock(g_mutex_trace);
+    vktrace_trace_packet_header* pHeader;
+    packet_vkCmdCopyAccelerationStructureKHR* pPacket = NULL;
+    CREATE_TRACE_PACKET(vkCmdCopyAccelerationStructureKHR, get_struct_chain_size((void*)pInfo));
+    mdd(commandBuffer)->devTable.CmdCopyAccelerationStructureKHR(commandBuffer, pInfo);
+    vktrace_set_packet_entrypoint_end_time(pHeader);
+#if defined(USE_PAGEGUARD_SPEEDUP) && !defined(PAGEGUARD_ADD_PAGEGUARD_ON_REAL_MAPPED_MEMORY)
+    if (!UseMappedExternalHostMemoryExtension()) {
+        g_cmdBufferToAS[commandBuffer].push_back(pInfo->dst);
+    }
+#endif
+    pPacket = interpret_body_as_vkCmdCopyAccelerationStructureKHR(pHeader);
+    pPacket->commandBuffer = commandBuffer;
+    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pInfo), sizeof(VkCopyAccelerationStructureInfoKHR), pInfo);
+    vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pInfo));
+    if (!g_trimEnabled) {
+        FINISH_TRACE_PACKET();
+    } else {
+        vktrace_finalize_trace_packet(pHeader);
+        if (g_trimIsInTrim) {
+            trim::write_packet(pHeader);
+        } else {
+            trim::cmdCopyAsInfo _cmdCopyAsInfo;
+            _cmdCopyAsInfo.pCmdCopyAccelerationStructureKHR = trim::copy_packet(pHeader);
+            trim::add_cmdCopyAccelerationStructure_object(_cmdCopyAsInfo);
+            trim::ObjectInfo* pCBInfo = trim::get_CommandBuffer_objectInfo(commandBuffer);
+            if (pCBInfo == nullptr) {
+                vktrace_LogError("Can't find the command buffer object.");
+            } else {
+                cmdBuildASPacketInfo packetInfo = {pCBInfo->ObjectInfo.CommandBuffer.commandPool, VK_BUILD_ACCELERATION_STRUCTURE_MODE_MAX_ENUM_KHR, trim::copy_packet(pHeader)};
+                g_cmdBuildASPacket[pHeader->global_packet_index] = packetInfo;
             }
             vktrace_delete_trace_packet(&pHeader);
         }
@@ -1949,12 +2827,48 @@ VKTRACER_EXPORT VKAPI_ATTR void VKAPI_CALL __HOOKED_vkDestroyAccelerationStructu
             g_AStoBuffer.erase(it);
         }
 #endif
+        trim::remove_cmdbuild_by_as(accelerationStructure);
+        trim::remove_cmdCopyAs_by_as(accelerationStructure);
         if (g_trimIsInTrim) {
             trim::write_packet(pHeader);
         } else {
             vktrace_delete_trace_packet(&pHeader);
         }
     }
+}
+
+// This function returns the size of VkRayTracingPipelineCreateInfoKHR struct to be used when creating a packet.
+uint64_t getVkRayTracingPipelineCreateInfoKHRSize(const VkRayTracingPipelineCreateInfoKHR* pCreateInfos) {
+    size_t entryPointNameLength = 0;
+    size_t struct_size = get_struct_chain_size(pCreateInfos);
+
+    if ((pCreateInfos->stageCount) && (pCreateInfos->pStages != nullptr)) {
+        VkPipelineShaderStageCreateInfo* pStage = const_cast<VkPipelineShaderStageCreateInfo*>(pCreateInfos->pStages);
+        for (uint32_t i = 0; i < pCreateInfos->stageCount; i++) {
+            if (pStage->pName) {
+                entryPointNameLength = strlen(pStage->pName) + 1;
+                struct_size += ROUNDUP_TO_4(entryPointNameLength) - entryPointNameLength;
+            }
+            struct_size += get_struct_chain_size(pStage);
+            ++pStage;
+        }
+    }
+
+    if ((pCreateInfos->groupCount) && (pCreateInfos->pGroups != nullptr)) {
+        for (uint32_t i = 0; i < pCreateInfos->groupCount; i++) {
+            struct_size += get_struct_chain_size(&pCreateInfos->pGroups[i]);
+        }
+    }
+    struct_size += get_struct_chain_size(pCreateInfos->pLibraryInfo);
+    if (pCreateInfos->pLibraryInfo != nullptr && pCreateInfos->pLibraryInfo->libraryCount && pCreateInfos->pLibraryInfo->pLibraries != nullptr) {
+        struct_size += pCreateInfos->pLibraryInfo->libraryCount * sizeof(VkPipeline);
+    }
+    struct_size += get_struct_chain_size(pCreateInfos->pLibraryInterface);
+    struct_size += get_struct_chain_size(pCreateInfos->pDynamicState);
+    if (pCreateInfos->pDynamicState != nullptr && pCreateInfos->pDynamicState->dynamicStateCount && pCreateInfos->pDynamicState->pDynamicStates != nullptr) {
+        struct_size += pCreateInfos->pDynamicState->dynamicStateCount * sizeof(VkDynamicState);
+    }
+    return struct_size;
 }
 
 VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkCreateRayTracingPipelinesKHR(
@@ -1981,7 +2895,7 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkCreateRayTracingPipeli
     size_t additionSize = 0;
     uint32_t shaderGroupHandleSize = 0;
     for (uint32_t i = 0; i < createInfoCount; i++) {
-        additionSize += get_struct_chain_size((void*)&pCreateInfos[i]);
+        additionSize += getVkRayTracingPipelineCreateInfoKHRSize(&pCreateInfos[i]);
         if (g_deviceToFeatureSupport.find(device) != g_deviceToFeatureSupport.end()) {
             shaderGroupHandleSize += g_deviceToFeatureSupport[device].propertyShaderGroupHandleCaptureReplaySize * pCreateInfos[i].groupCount;
         }
@@ -2036,13 +2950,157 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkCreateRayTracingPipeli
         FINISH_TRACE_PACKET();
     } else {
         vktrace_finalize_trace_packet(pHeader);
+
+        for (uint32_t i = 0; i < createInfoCount; i++) {
+            trim::ObjectInfo& info = trim::add_Pipeline_object(pPipelines[i]);
+            info.belongsToDevice = device;
+            info.ObjectInfo.Pipeline.isGraphicsPipeline = false;
+            info.ObjectInfo.Pipeline.isRayTRacingPipeline = true;
+            info.ObjectInfo.Pipeline.pipelineCache = pipelineCache;
+            info.ObjectInfo.Pipeline.shaderModuleCreateInfoCount = pCreateInfos[i].stageCount;
+            info.ObjectInfo.Pipeline.pShaderModuleCreateInfos =
+                VKTRACE_NEW_ARRAY(VkShaderModuleCreateInfo, pCreateInfos[i].stageCount);
+
+            for (uint32_t stageIndex = 0; stageIndex < info.ObjectInfo.Pipeline.shaderModuleCreateInfoCount; stageIndex++) {
+                trim::ObjectInfo* pShaderModuleInfo = trim::get_ShaderModule_objectInfo(pCreateInfos[i].pStages[stageIndex].module);
+                if (pShaderModuleInfo != nullptr) {
+                    trim::StateTracker::copy_VkShaderModuleCreateInfo(
+                        &info.ObjectInfo.Pipeline.pShaderModuleCreateInfos[stageIndex],
+                        pShaderModuleInfo->ObjectInfo.ShaderModule.createInfo);
+                } else {
+                    memset(&info.ObjectInfo.Pipeline.pShaderModuleCreateInfos[stageIndex], 0, sizeof(VkShaderModuleCreateInfo));
+                }
+
+                if (g_trimIsInTrim) {
+                    trim::mark_ShaderModule_reference(pCreateInfos[i].pStages[stageIndex].module);
+                }
+            }
+
+            trim::StateTracker::copy_VkRayTracingPipelineCreateInfo(&info.ObjectInfo.Pipeline.rayTracingPipelineCreateInfo,
+                                                                 pCreateInfos[i]);
+            if (pAllocator != NULL) {
+                info.ObjectInfo.Pipeline.pAllocator = pAllocator;
+                trim::add_Allocator(pAllocator);
+            }
+        }
+
         if (g_trimIsInTrim) {
+            trim::mark_PipelineCache_reference(pipelineCache);
             trim::write_packet(pHeader);
         } else {
             vktrace_delete_trace_packet(&pHeader);
         }
     }
     return result;
+}
+
+VKTRACER_EXPORT VKAPI_ATTR void VKAPI_CALL __HOOKED_vkCmdTraceRaysKHR(
+    VkCommandBuffer commandBuffer, const VkStridedDeviceAddressRegionKHR* pRaygenShaderBindingTable,
+    const VkStridedDeviceAddressRegionKHR* pMissShaderBindingTable, const VkStridedDeviceAddressRegionKHR* pHitShaderBindingTable,
+    const VkStridedDeviceAddressRegionKHR* pCallableShaderBindingTable, uint32_t width, uint32_t height, uint32_t depth)
+{
+    trim::TraceLock<std::mutex> lock(g_mutex_trace);
+    vktrace_trace_packet_header* pHeader;
+    packet_vkCmdTraceRaysKHR* pPacket = NULL;
+
+#if defined(USE_PAGEGUARD_SPEEDUP)
+    pageguardEnter();
+    flushAllChangedMappedMemory(&vkFlushMappedMemoryRangesWithoutAPICall);
+    if (!UseMappedExternalHostMemoryExtension()) {
+        // If enable external host memory extension, there will be no shadow
+        // memory, so we don't need any read pageguard handling.
+        resetAllReadFlagAndPageGuard();
+    }
+    pageguardExit();
+#endif
+
+    CREATE_TRACE_PACKET(vkCmdTraceRaysKHR, sizeof(VkStridedDeviceAddressRegionKHR) + sizeof(VkStridedDeviceAddressRegionKHR) +
+                                               sizeof(VkStridedDeviceAddressRegionKHR) + sizeof(VkStridedDeviceAddressRegionKHR));
+    mdd(commandBuffer)->devTable.CmdTraceRaysKHR(commandBuffer, pRaygenShaderBindingTable, pMissShaderBindingTable,
+                                                 pHitShaderBindingTable, pCallableShaderBindingTable, width, height, depth);
+    vktrace_set_packet_entrypoint_end_time(pHeader);
+    pPacket = interpret_body_as_vkCmdTraceRaysKHR(pHeader);
+    pPacket->commandBuffer = commandBuffer;
+    pPacket->width = width;
+    pPacket->height = height;
+    pPacket->depth = depth;
+    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pRaygenShaderBindingTable),
+                                       sizeof(VkStridedDeviceAddressRegionKHR), pRaygenShaderBindingTable);
+    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pMissShaderBindingTable),
+                                       sizeof(VkStridedDeviceAddressRegionKHR), pMissShaderBindingTable);
+    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pHitShaderBindingTable), sizeof(VkStridedDeviceAddressRegionKHR),
+                                       pHitShaderBindingTable);
+    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pCallableShaderBindingTable),
+                                       sizeof(VkStridedDeviceAddressRegionKHR), pCallableShaderBindingTable);
+    vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pRaygenShaderBindingTable));
+    vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pMissShaderBindingTable));
+    vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pHitShaderBindingTable));
+    vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pCallableShaderBindingTable));
+    if (!g_trimEnabled) {
+        FINISH_TRACE_PACKET();
+    } else {
+        vktrace_finalize_trace_packet(pHeader);
+        trim::add_CommandBuffer_call(commandBuffer, trim::copy_packet(pHeader));
+        if (g_trimIsInTrim) {
+            trim::write_packet(pHeader);
+        } else {
+            vktrace_delete_trace_packet(&pHeader);
+        }
+    }
+}
+
+VKTRACER_EXPORT VKAPI_ATTR void VKAPI_CALL __HOOKED_vkCmdTraceRaysIndirectKHR(
+    VkCommandBuffer commandBuffer, const VkStridedDeviceAddressRegionKHR* pRaygenShaderBindingTable,
+    const VkStridedDeviceAddressRegionKHR* pMissShaderBindingTable, const VkStridedDeviceAddressRegionKHR* pHitShaderBindingTable,
+    const VkStridedDeviceAddressRegionKHR* pCallableShaderBindingTable, VkDeviceAddress indirectDeviceAddress)
+{
+    trim::TraceLock<std::mutex> lock(g_mutex_trace);
+    vktrace_trace_packet_header* pHeader;
+    packet_vkCmdTraceRaysIndirectKHR* pPacket = NULL;
+
+#if defined(USE_PAGEGUARD_SPEEDUP)
+    pageguardEnter();
+    flushAllChangedMappedMemory(&vkFlushMappedMemoryRangesWithoutAPICall);
+    if (!UseMappedExternalHostMemoryExtension()) {
+        // If enable external host memory extension, there will be no shadow
+        // memory, so we don't need any read pageguard handling.
+        resetAllReadFlagAndPageGuard();
+    }
+    pageguardExit();
+#endif
+
+    CREATE_TRACE_PACKET(vkCmdTraceRaysIndirectKHR,
+                        sizeof(VkStridedDeviceAddressRegionKHR) + sizeof(VkStridedDeviceAddressRegionKHR) +
+                            sizeof(VkStridedDeviceAddressRegionKHR) + sizeof(VkStridedDeviceAddressRegionKHR));
+    mdd(commandBuffer)->devTable.CmdTraceRaysIndirectKHR(commandBuffer, pRaygenShaderBindingTable, pMissShaderBindingTable,
+                                                         pHitShaderBindingTable, pCallableShaderBindingTable, indirectDeviceAddress);
+    vktrace_set_packet_entrypoint_end_time(pHeader);
+    pPacket = interpret_body_as_vkCmdTraceRaysIndirectKHR(pHeader);
+    pPacket->commandBuffer = commandBuffer;
+    pPacket->indirectDeviceAddress = indirectDeviceAddress;
+    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pRaygenShaderBindingTable),
+                                       sizeof(VkStridedDeviceAddressRegionKHR), pRaygenShaderBindingTable);
+    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pMissShaderBindingTable),
+                                       sizeof(VkStridedDeviceAddressRegionKHR), pMissShaderBindingTable);
+    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pHitShaderBindingTable), sizeof(VkStridedDeviceAddressRegionKHR),
+                                       pHitShaderBindingTable);
+    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pCallableShaderBindingTable),
+                                       sizeof(VkStridedDeviceAddressRegionKHR), pCallableShaderBindingTable);
+    vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pRaygenShaderBindingTable));
+    vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pMissShaderBindingTable));
+    vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pHitShaderBindingTable));
+    vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pCallableShaderBindingTable));
+    if (!g_trimEnabled) {
+        FINISH_TRACE_PACKET();
+    } else {
+        vktrace_finalize_trace_packet(pHeader);
+        trim::add_CommandBuffer_call(commandBuffer, trim::copy_packet(pHeader));
+        if (g_trimIsInTrim) {
+            trim::write_packet(pHeader);
+        } else {
+            vktrace_delete_trace_packet(&pHeader);
+        }
+    }
 }
 
 VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkCreateFramebuffer(VkDevice device,
@@ -2228,6 +3286,21 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkCreateInstance(const V
     static VktracePageguardLoad vktracePageguardLoad;
 #endif
 
+    std::vector<const char *> enable_extension_names;
+    for (i = 0; i < pCreateInfo->enabledExtensionCount; i++) {
+        enable_extension_names.push_back(pCreateInfo->ppEnabledExtensionNames[i]);
+    }
+
+    const char* propertyName = "VK_KHR_get_physical_device_properties2";
+    // vkGetPhysicalDeviceFeatures2KHR function need VK_KHR_get_physical_device_properties2 extension
+    auto it = std::find(enable_extension_names.begin(), enable_extension_names.end(), propertyName);
+    if (it == enable_extension_names.end()) {
+        enable_extension_names.push_back(propertyName);
+    }
+
+    const_cast<VkInstanceCreateInfo*>(pCreateInfo)->ppEnabledExtensionNames = enable_extension_names.data();
+    const_cast<VkInstanceCreateInfo*>(pCreateInfo)->enabledExtensionCount = (uint32_t)enable_extension_names.size();
+
     VkLayerInstanceCreateInfo* chain_info = get_chain_info(pCreateInfo, VK_LAYER_LINK_INFO);
 
     assert(chain_info->u.pLayerInfo);
@@ -2317,7 +3390,7 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkCreateInstance(const V
     localCreateInfo.pNext = strip_create_extensions(pCreateInfo->pNext);
 
     CREATE_TRACE_PACKET(vkCreateInstance,
-                        sizeof(VkInstance) + get_struct_chain_size((void*)&localCreateInfo) + sizeof(VkAllocationCallbacks));
+                        sizeof(VkInstance) + get_struct_chain_size((void*)&localCreateInfo) + sizeof(VkAllocationCallbacks) + 256);
     pHeader->vktrace_begin_time = vktraceStartTime;
     pHeader->entrypoint_begin_time = startTime;
     pHeader->entrypoint_end_time = endTime;
@@ -2528,18 +3601,24 @@ VkResult post_vkCreateRenderPass2(
         if (pSubpass) vktrace_add_pnext_structs_to_trace_packet(pHeader, (void*)pSubpass, pSp);
         vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pSubpass->pInputAttachments),
                                            pSubpass->inputAttachmentCount * sizeof(VkAttachmentReference2), pSp->pInputAttachments);
-        VkAttachmentReference2* pAttachment = (VkAttachmentReference2*)(pPacket->pCreateInfo->pSubpasses[i].pInputAttachments);
-        if (pAttachment) vktrace_add_pnext_structs_to_trace_packet(pHeader, (void*)pAttachment, pSp->pInputAttachments);
+        for (uint32_t k = 0; k < pPacket->pCreateInfo->pSubpasses[i].inputAttachmentCount; k++) {
+            VkAttachmentReference2* pAttachment = (VkAttachmentReference2*)(&(pPacket->pCreateInfo->pSubpasses[i].pInputAttachments[k]));
+            VkAttachmentReference2* pInputAttachment = (VkAttachmentReference2*)(&(pSp->pInputAttachments[k]));
+            if (pAttachment) vktrace_add_pnext_structs_to_trace_packet(pHeader, (void*)pAttachment, pInputAttachment);
+        }
         vktrace_finalize_buffer_address(pHeader, (void**)&(pSubpass->pInputAttachments));
         vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pSubpass->pColorAttachments),
                                            pSubpass->colorAttachmentCount * sizeof(VkAttachmentReference2), pSp->pColorAttachments);
-        pAttachment = (VkAttachmentReference2*)(pPacket->pCreateInfo->pSubpasses[i].pColorAttachments);
-        if (pAttachment) vktrace_add_pnext_structs_to_trace_packet(pHeader, (void*)pAttachment, pSp->pColorAttachments);
+        for (uint32_t k = 0; k < pPacket->pCreateInfo->pSubpasses[i].colorAttachmentCount; k++) {
+            VkAttachmentReference2* pAttachment = (VkAttachmentReference2*)(&(pPacket->pCreateInfo->pSubpasses[i].pColorAttachments[k]));
+            VkAttachmentReference2* pColorAttachment = (VkAttachmentReference2*)(&(pSp->pColorAttachments[k]));
+            if (pAttachment) vktrace_add_pnext_structs_to_trace_packet(pHeader, (void*)pAttachment, pColorAttachment);
+        }
         vktrace_finalize_buffer_address(pHeader, (void**)&(pSubpass->pColorAttachments));
         vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pSubpass->pResolveAttachments),
                                            pSubpass->colorAttachmentCount * sizeof(VkAttachmentReference2),
                                            pSp->pResolveAttachments);
-        pAttachment = (VkAttachmentReference2*)(pPacket->pCreateInfo->pSubpasses[i].pResolveAttachments);
+        VkAttachmentReference2* pAttachment = (VkAttachmentReference2*)(pPacket->pCreateInfo->pSubpasses[i].pResolveAttachments);
         if (pAttachment) vktrace_add_pnext_structs_to_trace_packet(pHeader, (void*)pAttachment, pSp->pResolveAttachments);
         vktrace_finalize_buffer_address(pHeader, (void**)&(pSubpass->pResolveAttachments));
         vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pSubpass->pDepthStencilAttachment),
@@ -2550,8 +3629,6 @@ VkResult post_vkCreateRenderPass2(
         vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pSubpass->pPreserveAttachments),
                                            pSubpass->preserveAttachmentCount * sizeof(VkAttachmentReference2),
                                            pSp->pPreserveAttachments);
-        pAttachment = (VkAttachmentReference2*)(pPacket->pCreateInfo->pSubpasses[i].pPreserveAttachments);
-        if (pAttachment) vktrace_add_pnext_structs_to_trace_packet(pHeader, (void*)pAttachment, pSp->pPreserveAttachments);
         vktrace_finalize_buffer_address(pHeader, (void**)&(pSubpass->pPreserveAttachments));
     }
     vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pAllocator), sizeof(VkAllocationCallbacks), NULL);
@@ -2694,9 +3771,32 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkEnumerateDeviceExtensi
     uint64_t vktraceStartTime = vktrace_get_time();
     startTime = vktrace_get_time();
     // Only call down chain if querying ICD rather than layer device extensions
+#if VK_ANDROID_frame_boundary
+    if (pLayerName == NULL) {
+        result =
+            mid(physicalDevice)->instTable.EnumerateDeviceExtensionProperties(physicalDevice, NULL, pPropertyCount, pProperties);
+        if(pProperties != nullptr)  {
+            VkExtensionProperties* pProperties_t = new VkExtensionProperties[*pPropertyCount + 1];
+            for(int i = 0; i < *pPropertyCount; i++) {
+                pProperties_t[i] = pProperties[i];
+            }
+
+            VkExtensionProperties pProperties_vkFrameBoundaryANDROID = {};
+            strcpy(pProperties_vkFrameBoundaryANDROID.extensionName, "VK_ANDROID_frame_boundary");
+            pProperties_vkFrameBoundaryANDROID.specVersion = 1;
+            pProperties_t[*pPropertyCount] = pProperties_vkFrameBoundaryANDROID;
+
+            pProperties = pProperties_t;
+
+        }
+        (*pPropertyCount) += 1;
+    }
+#else
     if (pLayerName == NULL)
         result =
             mid(physicalDevice)->instTable.EnumerateDeviceExtensionProperties(physicalDevice, NULL, pPropertyCount, pProperties);
+#endif
+
     else {
         *pPropertyCount = 0;
         return VK_SUCCESS;
@@ -3418,6 +4518,9 @@ VKTRACER_EXPORT VKAPI_ATTR void VKAPI_CALL __HOOKED_vkUpdateDescriptorSets(VkDev
 #if defined(USE_PAGEGUARD_SPEEDUP) && !defined(PAGEGUARD_ADD_PAGEGUARD_ON_REAL_MAPPED_MEMORY)
     if (!UseMappedExternalHostMemoryExtension()) {
         for (uint32_t i = 0; i < descriptorWriteCount; i++) {
+            if (pDescriptorWrites[i].descriptorCount == 0) {
+                continue;
+            }
             if (pDescriptorWrites[i].descriptorType == VK_DESCRIPTOR_TYPE_STORAGE_BUFFER || pDescriptorWrites[i].descriptorType == VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC) {
                 g_descsetToMemory[pDescriptorWrites[i].dstSet] = g_bufferToDeviceMemory[pDescriptorWrites[i].pBufferInfo->buffer];
             } else if (pDescriptorWrites[i].descriptorType == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE) {
@@ -3548,6 +4651,7 @@ VKTRACER_EXPORT VKAPI_ATTR void VKAPI_CALL __HOOKED_vkUpdateDescriptorSets(VkDev
     }
 }
 
+VkFence sCurFence = VK_NULL_HANDLE;
 VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkGetFenceStatus(
     VkDevice device,
     VkFence fence) {
@@ -3570,7 +4674,10 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkGetFenceStatus(
             result = VK_NOT_READY;
             g_submittedFenceCounter[fence]--;
     }
-
+    if (sCurFence == fence && result == VK_NOT_READY) {
+        vktrace_delete_trace_packet(&pHeader);
+        return result;
+    }
     pPacket = interpret_body_as_vkGetFenceStatus(pHeader);
     pPacket->device = device;
     pPacket->fence = fence;
@@ -3585,6 +4692,7 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkGetFenceStatus(
             vktrace_delete_trace_packet(&pHeader);
         }
     }
+    sCurFence = fence;
     return result;
 }
 
@@ -4149,6 +5257,72 @@ VKTRACER_EXPORT VKAPI_ATTR void VKAPI_CALL __HOOKED_vkCmdPipelineBarrier(
     }
 }
 
+VKTRACER_EXPORT VKAPI_ATTR void VKAPI_CALL __HOOKED_vkCmdPipelineBarrier2KHR(
+    VkCommandBuffer commandBuffer,
+    const VkDependencyInfo* pDependencyInfo) {
+    trim::TraceLock<std::mutex> lock(g_mutex_trace);
+    vktrace_trace_packet_header* pHeader;
+    packet_vkCmdPipelineBarrier2KHR* pPacket = NULL;
+    size_t customSize = 0;
+    if (pDependencyInfo != nullptr) {
+        customSize = (pDependencyInfo->memoryBarrierCount * sizeof(VkMemoryBarrier2)) + (pDependencyInfo->bufferMemoryBarrierCount * sizeof(VkBufferMemoryBarrier2)) +
+                    (pDependencyInfo->imageMemoryBarrierCount * sizeof(VkImageMemoryBarrier2));
+        for (uint32_t i = 0; i < pDependencyInfo->memoryBarrierCount; i++) customSize += get_struct_chain_size(&pDependencyInfo->pMemoryBarriers[i]);
+        for (uint32_t i = 0; i < pDependencyInfo->bufferMemoryBarrierCount; i++) customSize += get_struct_chain_size(&pDependencyInfo->pBufferMemoryBarriers[i]);
+        for (uint32_t i = 0; i < pDependencyInfo->imageMemoryBarrierCount; i++) customSize += get_struct_chain_size(&pDependencyInfo->pImageMemoryBarriers[i]);
+    }
+
+    CREATE_TRACE_PACKET(vkCmdPipelineBarrier2KHR, sizeof(VkDependencyInfo) + customSize);
+    mdd(commandBuffer)->devTable.CmdPipelineBarrier2KHR(commandBuffer, pDependencyInfo);
+    vktrace_set_packet_entrypoint_end_time(pHeader);
+    pPacket = interpret_body_as_vkCmdPipelineBarrier2KHR(pHeader);
+    pPacket->commandBuffer = commandBuffer;
+    add_VkDependencyInfo_to_packet(pHeader, const_cast<VkDependencyInfo**>(&(pPacket->pDependencyInfo)), const_cast<VkDependencyInfo*>(pDependencyInfo));
+    if (!g_trimEnabled) {
+        FINISH_TRACE_PACKET();
+    } else {
+        vktrace_finalize_trace_packet(pHeader);
+        if (g_trimIsInTrim) {
+            trim::write_packet(pHeader);
+        } else {
+            vktrace_delete_trace_packet(&pHeader);
+        }
+    }
+}
+
+VKTRACER_EXPORT VKAPI_ATTR void VKAPI_CALL __HOOKED_vkCmdPipelineBarrier2(
+    VkCommandBuffer commandBuffer,
+    const VkDependencyInfo* pDependencyInfo) {
+    trim::TraceLock<std::mutex> lock(g_mutex_trace);
+    vktrace_trace_packet_header* pHeader;
+    packet_vkCmdPipelineBarrier2* pPacket = NULL;
+    size_t customSize = 0;
+    if (pDependencyInfo != nullptr) {
+        customSize = (pDependencyInfo->memoryBarrierCount * sizeof(VkMemoryBarrier2)) + (pDependencyInfo->bufferMemoryBarrierCount * sizeof(VkBufferMemoryBarrier2)) +
+                    (pDependencyInfo->imageMemoryBarrierCount * sizeof(VkImageMemoryBarrier2));
+        for (uint32_t i = 0; i < pDependencyInfo->memoryBarrierCount; i++) customSize += get_struct_chain_size(&pDependencyInfo->pMemoryBarriers[i]);
+        for (uint32_t i = 0; i < pDependencyInfo->bufferMemoryBarrierCount; i++) customSize += get_struct_chain_size(&pDependencyInfo->pBufferMemoryBarriers[i]);
+        for (uint32_t i = 0; i < pDependencyInfo->imageMemoryBarrierCount; i++) customSize += get_struct_chain_size(&pDependencyInfo->pImageMemoryBarriers[i]);
+    }
+
+    CREATE_TRACE_PACKET(vkCmdPipelineBarrier2, sizeof(VkDependencyInfo) + customSize);
+    mdd(commandBuffer)->devTable.CmdPipelineBarrier2(commandBuffer, pDependencyInfo);
+    vktrace_set_packet_entrypoint_end_time(pHeader);
+    pPacket = interpret_body_as_vkCmdPipelineBarrier2(pHeader);
+    pPacket->commandBuffer = commandBuffer;
+    add_VkDependencyInfo_to_packet(pHeader, const_cast<VkDependencyInfo**>(&(pPacket->pDependencyInfo)), const_cast<VkDependencyInfo*>(pDependencyInfo));
+    if (!g_trimEnabled) {
+        FINISH_TRACE_PACKET();
+    } else {
+        vktrace_finalize_trace_packet(pHeader);
+        if (g_trimIsInTrim) {
+            trim::write_packet(pHeader);
+        } else {
+            vktrace_delete_trace_packet(&pHeader);
+        }
+    }
+}
+
 bool getCmdPushConstantsRemapEnableFlag() {
     static bool EnableBuffer = false;
     static bool FirstTimeRun = true;
@@ -4369,6 +5543,7 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkCreateGraphicsPipeline
             trim::ObjectInfo& info = trim::add_Pipeline_object(pPipelines[i]);
             info.belongsToDevice = device;
             info.ObjectInfo.Pipeline.isGraphicsPipeline = true;
+            info.ObjectInfo.Pipeline.isRayTRacingPipeline = false;
             info.ObjectInfo.Pipeline.pipelineCache = pipelineCache;
             info.ObjectInfo.Pipeline.renderPassVersion = trim::get_RenderPassVersion(pCreateInfos[i].renderPass);
             info.ObjectInfo.Pipeline.shaderModuleCreateInfoCount = pCreateInfos[i].stageCount;
@@ -4471,6 +5646,7 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkCreateComputePipelines
             trim::ObjectInfo& info = trim::add_Pipeline_object(pPipelines[i]);
             info.belongsToDevice = device;
             info.ObjectInfo.Pipeline.isGraphicsPipeline = false;
+            info.ObjectInfo.Pipeline.isRayTRacingPipeline = false;
             info.ObjectInfo.Pipeline.pipelineCache = pipelineCache;
             info.ObjectInfo.Pipeline.shaderModuleCreateInfoCount = 1;
             info.ObjectInfo.Pipeline.pShaderModuleCreateInfos = VKTRACE_NEW(VkShaderModuleCreateInfo);
@@ -4781,6 +5957,90 @@ VKTRACER_EXPORT VKAPI_ATTR void VKAPI_CALL __HOOKED_vkCmdBeginRenderingKHR(
     }
 }
 
+VKTRACER_EXPORT VKAPI_ATTR void VKAPI_CALL __HOOKED_vkGetDeviceImageMemoryRequirements(
+    VkDevice device,
+    const VkDeviceImageMemoryRequirements* pInfo,
+    VkMemoryRequirements2* pMemoryRequirements) {
+    trim::TraceLock<std::mutex> lock(g_mutex_trace);
+    vktrace_trace_packet_header* pHeader;
+    packet_vkGetDeviceImageMemoryRequirements* pPacket = NULL;
+
+    size_t customSize = 0;
+    customSize += get_struct_chain_size((void*)pInfo) + get_struct_chain_size((void*)pMemoryRequirements) + get_struct_chain_size((void*)(pInfo->pCreateInfo));
+    CREATE_TRACE_PACKET(vkGetDeviceImageMemoryRequirements, customSize);
+
+    mdd(device)->devTable.GetDeviceImageMemoryRequirements(device, pInfo, pMemoryRequirements);
+    vktrace_set_packet_entrypoint_end_time(pHeader);
+    pPacket = interpret_body_as_vkGetDeviceImageMemoryRequirements(pHeader);
+    pPacket->device = device;
+
+    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pInfo), sizeof(VkDeviceImageMemoryRequirements), pInfo);
+    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pMemoryRequirements), sizeof(VkMemoryRequirements2), pMemoryRequirements);
+    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pInfo->pCreateInfo), sizeof(VkImageCreateInfo), pInfo->pCreateInfo);
+
+    if (pInfo) vktrace_add_pnext_structs_to_trace_packet(pHeader, (void *)pPacket->pInfo, (void *)pInfo);
+    if (pInfo && pInfo->pCreateInfo) vktrace_add_pnext_structs_to_trace_packet(pHeader, (void *)pPacket->pInfo->pCreateInfo, pInfo->pCreateInfo);
+    vktrace_add_pnext_structs_to_trace_packet(pHeader, (void *)pPacket->pMemoryRequirements, (void *)pMemoryRequirements);
+
+    vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pInfo->pCreateInfo));
+    vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pInfo));
+    vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pMemoryRequirements));
+
+    if (!g_trimEnabled) {
+        FINISH_TRACE_PACKET();
+    } else {
+        // NOT TEST
+        vktrace_finalize_trace_packet(pHeader);
+        if (g_trimIsInTrim) {
+            trim::write_packet(pHeader);
+        } else {
+            vktrace_delete_trace_packet(&pHeader);
+        }
+    }
+}
+
+VKTRACER_EXPORT VKAPI_ATTR void VKAPI_CALL __HOOKED_vkGetDeviceImageMemoryRequirementsKHR(
+    VkDevice device,
+    const VkDeviceImageMemoryRequirements* pInfo,
+    VkMemoryRequirements2* pMemoryRequirements) {
+    trim::TraceLock<std::mutex> lock(g_mutex_trace);
+    vktrace_trace_packet_header* pHeader;
+    packet_vkGetDeviceImageMemoryRequirementsKHR* pPacket = NULL;
+
+    size_t customSize = 0;
+    customSize += get_struct_chain_size((void*)pInfo) + get_struct_chain_size((void*)pMemoryRequirements) + get_struct_chain_size((void*)(pInfo->pCreateInfo));
+    CREATE_TRACE_PACKET(vkGetDeviceImageMemoryRequirementsKHR, customSize);
+
+    mdd(device)->devTable.GetDeviceImageMemoryRequirementsKHR(device, pInfo, pMemoryRequirements);
+    vktrace_set_packet_entrypoint_end_time(pHeader);
+    pPacket = interpret_body_as_vkGetDeviceImageMemoryRequirementsKHR(pHeader);
+    pPacket->device = device;
+
+    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pInfo), sizeof(VkDeviceImageMemoryRequirements), pInfo);
+    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pMemoryRequirements), sizeof(VkMemoryRequirements2), pMemoryRequirements);
+    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pInfo->pCreateInfo), sizeof(VkImageCreateInfo), pInfo->pCreateInfo);
+
+    if (pInfo) vktrace_add_pnext_structs_to_trace_packet(pHeader, (void *)pPacket->pInfo, (void *)pInfo);
+    if (pInfo && pInfo->pCreateInfo) vktrace_add_pnext_structs_to_trace_packet(pHeader, (void *)pPacket->pInfo->pCreateInfo, pInfo->pCreateInfo);
+    vktrace_add_pnext_structs_to_trace_packet(pHeader, (void *)pPacket->pMemoryRequirements, (void *)pMemoryRequirements);
+
+    vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pInfo->pCreateInfo));
+    vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pInfo));
+    vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pMemoryRequirements));
+
+    if (!g_trimEnabled) {
+        FINISH_TRACE_PACKET();
+    } else {
+        // NOT TEST
+        vktrace_finalize_trace_packet(pHeader);
+        if (g_trimIsInTrim) {
+            trim::write_packet(pHeader);
+        } else {
+            vktrace_delete_trace_packet(&pHeader);
+        }
+    }
+}
+
 VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkFreeDescriptorSets(VkDevice device, VkDescriptorPool descriptorPool,
                                                                              uint32_t descriptorSetCount,
                                                                              const VkDescriptorSet* pDescriptorSets) {
@@ -4958,12 +6218,10 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkCreateBuffer(VkDevice 
     vktrace_trace_packet_header* pHeader;
     packet_vkCreateBuffer* pPacket = NULL;
     CREATE_TRACE_PACKET(vkCreateBuffer, get_struct_chain_size((void*)pCreateInfo) + ROUNDUP_TO_4(sizeof(VkBufferOpaqueCaptureAddressCreateInfo)) + sizeof(VkAllocationCallbacks) + sizeof(VkBuffer));
-    VkBufferCreateInfo replayCreateInfo = *pCreateInfo;
-    VkBufferCreateInfo trimCreateInfo = *pCreateInfo;
+    void* pNextOriginal = const_cast<void*>(pCreateInfo->pNext);
     if (g_trimEnabled) {
         // need to add TRANSFER_SRC usage to the buffer so that we can copy out of it.
-        trimCreateInfo.usage |= VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
-        pCreateInfo = &trimCreateInfo;
+        const_cast<VkBufferCreateInfo*>(pCreateInfo)->usage |= VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
     }
 
     if (pCreateInfo->usage & VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR) {
@@ -5013,8 +6271,7 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkCreateBuffer(VkDevice 
 
     if (g_trimEnabled) {
         // need to add TRANSFER_DST usage to the buffer so that we can recreate it.
-        replayCreateInfo.usage |= VK_BUFFER_USAGE_TRANSFER_DST_BIT;
-        pCreateInfo = &replayCreateInfo;
+        const_cast<VkBufferCreateInfo*>(pCreateInfo)->usage |= VK_BUFFER_USAGE_TRANSFER_DST_BIT;
     }
     pPacket = interpret_body_as_vkCreateBuffer(pHeader);
     pPacket->device = device;
@@ -5028,6 +6285,13 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkCreateBuffer(VkDevice 
     vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pCreateInfo));
     vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pAllocator));
     vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pBuffer));
+
+    if (pCreateInfo->flags & VK_BUFFER_CREATE_DEVICE_ADDRESS_CAPTURE_REPLAY_BIT_EXT) {
+        void** ppNext = const_cast<void**>(&(pCreateInfo->pNext));
+        // we insert here should not appear after back to app.
+        *ppNext = pNextOriginal;
+    }
+
     if (!g_trimEnabled) {
         FINISH_TRACE_PACKET();
     } else {
@@ -5072,12 +6336,26 @@ VKTRACER_EXPORT VKAPI_ATTR void VKAPI_CALL __HOOKED_vkDestroyBuffer(VkDevice dev
     vktrace_set_packet_entrypoint_end_time(pHeader);
 #if defined(USE_PAGEGUARD_SPEEDUP) && !defined(PAGEGUARD_ADD_PAGEGUARD_ON_REAL_MAPPED_MEMORY)
     if (!UseMappedExternalHostMemoryExtension()) {
+        auto it = g_bufferToDeviceMemory.find(buffer);
+        if (it != g_bufferToDeviceMemory.end()) {
+            auto it_memBuf = g_MemoryToBuffers.find(it->second.memory);
+            if (it_memBuf != g_MemoryToBuffers.end()) {
+                for (auto it_buf=it_memBuf->second.begin(); it_buf<it_memBuf->second.end(); it_buf++) {
+                    if (*it_buf == buffer) {
+                        it_memBuf->second.erase(it_buf);
+                        break;
+                    }
+                }
+            }
+        }
+
         if (g_bufferToDeviceMemory.find(buffer) != g_bufferToDeviceMemory.end() &&
             g_bufferToDeviceMemory[buffer].device == device) {
             g_bufferToDeviceMemory.erase(buffer);
         }
     }
 #endif
+
     if (g_bufferToOffset.find(buffer) != g_bufferToOffset.end()) {
         g_bufferToOffset.erase(buffer);
     }
@@ -5107,6 +6385,12 @@ VKTRACER_EXPORT VKAPI_ATTR void VKAPI_CALL __HOOKED_vkDestroyBuffer(VkDevice dev
         } else {
             vktrace_delete_trace_packet(&pHeader);
         }
+        for (auto it = g_deviceAddressToBuffer.begin(); it != g_deviceAddressToBuffer.end(); it++) {
+            if (buffer == it->second) {
+                g_deviceAddressToBuffer.erase(it);
+                break;
+            }
+        }
     }
 }
 
@@ -5125,6 +6409,19 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkBindBufferMemory(VkDev
         deviceMemory.device = device;
         deviceMemory.memory = memory;
         g_bufferToDeviceMemory[buffer] = deviceMemory;
+
+        auto it_buffers = g_MemoryToBuffers.find(memory);
+        if (it_buffers == g_MemoryToBuffers.end()) {
+            std::vector<VkBuffer> buffers;
+            g_MemoryToBuffers[memory] = buffers;
+        }
+        auto& buffers = g_MemoryToBuffers[memory];
+        auto it_buf = std::find(buffers.begin(), buffers.end(), buffer);
+        if (it_buf != g_MemoryToBuffers[memory].end()) {
+            vktrace_LogError("vkBindBufferMemory: Buffer has been bound to memory already!");
+        } else {
+            buffers.push_back(buffer);
+        }
     }
 #endif
     g_bufferToOffset[buffer] = memoryOffset;
@@ -5139,6 +6436,7 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkBindBufferMemory(VkDev
         it->second = memory;
         g_shaderDeviceAddrBufferToMemRev[memory] = buffer;
     }
+
     if (!g_trimEnabled) {
         FINISH_TRACE_PACKET();
     } else {
@@ -5196,6 +6494,19 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkBindBufferMemory2(
             deviceMemory.device = device;
             deviceMemory.memory = pBindInfos[i].memory;
             g_bufferToDeviceMemory[pBindInfos[i].buffer] = deviceMemory;
+
+            auto it_buffers = g_MemoryToBuffers.find(pBindInfos[i].memory);
+            if (it_buffers == g_MemoryToBuffers.end()) {
+                std::vector<VkBuffer> buffers;
+                g_MemoryToBuffers[pBindInfos[i].memory] = buffers;
+            }
+            auto& buffers = g_MemoryToBuffers[pBindInfos[i].memory];
+            auto it_buf = std::find(buffers.begin(), buffers.end(), pBindInfos[i].buffer);
+            if (it_buf != g_MemoryToBuffers[pBindInfos[i].memory].end()) {
+                vktrace_LogError("vkBindBufferMemory: Buffer has been bound to memory already!");
+            } else {
+                buffers.push_back(pBindInfos[i].buffer);
+            }
         }
     }
 #endif
@@ -6577,28 +7888,45 @@ void FinalizeTrimUpdateDescriptorSetWithTemplate(vktrace_trace_packet_header* pH
                 const char* pDescriptorRawData =
                     reinterpret_cast<const char*>(pData) + pDescriptorUpdateEntry->offset + j * pDescriptorUpdateEntry->stride;
 
-                // The following code update the descriptorset track info
-                // with the descriptor data.
+                // The following code update the descriptorset track info with
+                // the descriptor data and mark related objects in trim range
 
                 switch (pDescriptorUpdateEntry->descriptorType) {
-                    case VK_DESCRIPTOR_TYPE_SAMPLER:
-                    case VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER:
+                    case VK_DESCRIPTOR_TYPE_SAMPLER: {
+                        const VkDescriptorImageInfo* image_entry = reinterpret_cast<const VkDescriptorImageInfo *>(pDescriptorRawData);
+                        memcpy(reinterpret_cast<void*>(&(*descriptor_iterator)), pDescriptorRawData, sizeof(VkDescriptorImageInfo));
+                        if (g_trimIsInTrim) trim::mark_Sampler_reference(image_entry->sampler);
+                    } break;
+                    case VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER: {
+                        const VkDescriptorImageInfo* image_entry = reinterpret_cast<const VkDescriptorImageInfo *>(pDescriptorRawData);
+                        memcpy(reinterpret_cast<void*>(&(*descriptor_iterator)), pDescriptorRawData, sizeof(VkDescriptorImageInfo));
+                        if (g_trimIsInTrim) {
+                            trim::mark_ImageView_reference(image_entry->imageView);
+                            trim::mark_Sampler_reference(image_entry->sampler);
+                        }
+                    } break;
                     case VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE:
                     case VK_DESCRIPTOR_TYPE_STORAGE_IMAGE:
-                    case VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT:
+                    case VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT: {
+                        const VkDescriptorImageInfo* image_entry = reinterpret_cast<const VkDescriptorImageInfo *>(pDescriptorRawData);
                         memcpy(reinterpret_cast<void*>(&(*descriptor_iterator)), pDescriptorRawData, sizeof(VkDescriptorImageInfo));
-                        break;
+                        if (g_trimIsInTrim) trim::mark_ImageView_reference(image_entry->imageView);
+                    } break;
                     case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER:
                     case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER:
                     case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC:
-                    case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC:
+                    case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC: {
+                        const VkDescriptorBufferInfo* buffer_entry = reinterpret_cast<const VkDescriptorBufferInfo *>(pDescriptorRawData);
                         memcpy(reinterpret_cast<void*>(&(*descriptor_iterator)), pDescriptorRawData,
                                sizeof(VkDescriptorBufferInfo));
-                        break;
+                        if (g_trimIsInTrim) trim::mark_Buffer_reference(buffer_entry->buffer);
+                    } break;
                     case VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER:
-                    case VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER:
+                    case VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER: {
+                        const VkBufferView* buffer_view_handle = reinterpret_cast<const VkBufferView *>(pDescriptorRawData);
                         memcpy(reinterpret_cast<void*>(&(*descriptor_iterator)), pDescriptorRawData, sizeof(VkBufferView));
-                        break;
+                        if (g_trimIsInTrim) trim::mark_BufferView_reference(*buffer_view_handle);
+                    } break;
                     default:
                         assert(0);
                         break;
@@ -7042,6 +8370,9 @@ VKTRACER_EXPORT VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL __HOOKED_vkGetDevicePro
             if (!strcmp("vkAcquireNextImageKHR", funcName)) return (PFN_vkVoidFunction)__HOOKED_vkAcquireNextImageKHR;
             if (!strcmp("vkQueuePresentKHR", funcName)) return (PFN_vkVoidFunction)__HOOKED_vkQueuePresentKHR;
         }
+#if VK_ANDROID_frame_boundary
+        if (!strcmp(funcName, "vkFrameBoundaryANDROID")) return (PFN_vkVoidFunction)__HOOKED_vkFrameBoundaryANDROID;
+#endif
     }
 
     if (device == VK_NULL_HANDLE) {
@@ -7191,7 +8522,19 @@ VKTRACER_EXPORT VKAPI_ATTR void VKAPI_CALL __HOOKED_vkCmdCopyBuffer(
                 VkDeviceSize srcOffset = pRegions[i].srcOffset;
                 VkDeviceSize size = pRegions[i].size;
                 VkAccelerationStructureInstanceKHR* pAsInstance = nullptr;
-                VkResult mapResult = mdd(device)->devTable.MapMemory(device, mem, bufferOffset + srcOffset, size, 0, (void**)&pAsInstance);
+
+                VkResult mapResult = VK_ERROR_VALIDATION_FAILED_EXT;
+                bool isMapped = false;
+                VKAllocInfo* entry = find_mem_info_entry(mem);
+                if (entry && entry->pData != NULL) {
+                    uint8_t *pData = entry->pData + bufferOffset + srcOffset;
+                    pAsInstance = (VkAccelerationStructureInstanceKHR*)pData;
+                    mapResult = VK_SUCCESS;
+                } else {
+                    mapResult = mdd(device)->devTable.MapMemory(device, mem, bufferOffset + srcOffset, size, 0, (void**)&pAsInstance);
+                    isMapped = true;
+                }
+
                 if (mapResult == VK_SUCCESS) {
                     // remap all VkAccelerationStructureInstanceKHRs from trace values to replay values
                     if (enableRemapAs) {
@@ -7214,7 +8557,9 @@ VKTRACER_EXPORT VKAPI_ATTR void VKAPI_CALL __HOOKED_vkCmdCopyBuffer(
                             }
                         }
                     }
-                    mdd(device)->devTable.UnmapMemory(device, mem);
+                    if (isMapped) {
+                        mdd(device)->devTable.UnmapMemory(device, mem);
+                    }
                 }
             }
         }
@@ -7343,7 +8688,7 @@ VKTRACER_EXPORT VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL __HOOKED_vkGetInstanceP
         }
         instData = mid(instance);
     }
-    vktrace_LogError("Function %s is not in Instance", funcName);
+    vktrace_LogDebug("Function %s is not in Instance", funcName);
 
     VkLayerInstanceDispatchTable* pTable = &instData->instTable;
     if (pTable->GetInstanceProcAddr == NULL) return NULL;

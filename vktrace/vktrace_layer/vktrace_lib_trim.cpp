@@ -38,6 +38,7 @@ bool g_trimAlreadyFinished = false;
 bool g_trimPostProcess = false;
 
 bool g_TraceLockEnabled = false;
+bool g_TraceEnableCopyAsBuf = false;
 
 std::unordered_map<VkCommandBuffer, std::unordered_map<VkQueryPool, QueryCmd>> g_queryCmdStatus;
 std::unordered_map<VkQueryPool, bool> g_queryPoolStatus; // true - query active; false - query reset
@@ -139,7 +140,7 @@ VkDeviceSize calculateImageSubResourceSize(VkDevice device, VkImage image, VkIma
 
 bool calculateImageAllSubResourceSize(VkDevice device, VkImage image, VkImageCreateInfo imageCreateInfo,
                                       std::vector<VkDeviceSize> &subResourceSizes) {
-    uint32_t wholeSize = 0;
+    VkDeviceSize wholeSize = 0;
     subResourceSizes.push_back(0);
     for (uint32_t i = 0; i < imageCreateInfo.mipLevels; i++) {
         subResourceSizes.push_back(calculateImageSubResourceSize(device, image, imageCreateInfo, i));
@@ -528,6 +529,18 @@ void getTrimPreProcessAndTraceLockOptions() {
                 }
             }
         }
+
+        const char *copy_build_as_buffer_enabled_env = vktrace_get_global_var(VKTRACE_ENABLE_COPY_AS_BUFFER_ENV);
+        if (copy_build_as_buffer_enabled_env) {
+            int enable_value = 0;
+            if (sscanf(copy_build_as_buffer_enabled_env, "%d", &enable_value) == 1) {
+                if (1 == enable_value) {
+                    g_TraceEnableCopyAsBuf = true;
+                } else {
+                    g_TraceEnableCopyAsBuf = false;
+                }
+            }
+        }
     }
 }
 
@@ -683,7 +696,13 @@ bool IsMemoryDeviceOnly(VkDeviceMemory memory) {
     // VK_MEMORY_PROPERTY_HOST_VISIBLE
     bool isDeviceOnly =
         (pInfo->ObjectInfo.DeviceMemory.propertyFlags &
-         (VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT)) == VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+         (VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT)) == VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+
+    // if the memory is not device only and not mapped, must return true to use cmdCopyBuffer
+    if (pInfo->ObjectInfo.DeviceMemory.mappedAddress == NULL) {
+        isDeviceOnly = true;
+    }
+
     return isDeviceOnly;
 }
 
@@ -1235,6 +1254,9 @@ void delete_redundant_package(StateTracker &stateTracker) {
                             }
                         }
                     }
+                    if (bDelete) {
+                        break;
+                    }
                     const VkImageMemoryBarrier *pImageMemoryBarriers =
                         (const VkImageMemoryBarrier *)vktrace_trace_packet_interpret_buffer_pointer(
                             pHeader, (intptr_t)((packet_vkCmdPipelineBarrier*)pHeader->pBody)->pImageMemoryBarriers);
@@ -1255,6 +1277,9 @@ void delete_redundant_package(StateTracker &stateTracker) {
                                 break;
                             }
                         }
+                    }
+                    if (bDelete) {
+                        break;
                     }
                     packet++;
                 }
@@ -1341,8 +1366,14 @@ void snapshot_state_tracker() {
             VkDevice device = imageIter->second.belongsToDevice;
             VkImage image = imageIter->first;
 
-            if (imageIter->second.ObjectInfo.Image.mostRecentLayout == VK_IMAGE_LAYOUT_UNDEFINED)
-                continue;
+            if (imageIter->second.ObjectInfo.Image.mostRecentLayout == VK_IMAGE_LAYOUT_UNDEFINED) {
+                // In MPGPPAP-5559, an image with undefined layout is found to be
+                // used in latter frames, whose layout info may be acquired by
+                // vkGetImageSubresourceLayout. It's better dump and recreate
+                // these image to avoid trim errors.
+                vktrace_LogWarning("The Image current layout is VK_IMAGE_LAYOUT_UNDEFINED. Convert it to VK_IMAGE_LAYOUT_GENERAL.");
+                imageIter->second.ObjectInfo.Image.mostRecentLayout = VK_IMAGE_LAYOUT_GENERAL;
+            }
 
             if ((imageIter->second.ObjectInfo.Image.memorySize != 0) && (device != VK_NULL_HANDLE)) {
                 // If the memorysize is zero, it mean the image is not bound to any
@@ -1378,6 +1409,13 @@ void snapshot_state_tracker() {
                 VkResult result = mdd(device)->devTable.BeginCommandBuffer(commandBuffer, &commandBufferBeginInfo);
                 assert(result == VK_SUCCESS);
                 if (result != VK_SUCCESS) continue;
+
+                // The depth and stencil data are copied separately to void overwriting
+                VkDeviceSize stencilOffSize = imageIter->second.ObjectInfo.Image.memorySize;
+                if (imageIter->second.ObjectInfo.Image.format == VK_FORMAT_X8_D24_UNORM_PACK32
+                    || imageIter->second.ObjectInfo.Image.aspectMask == (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT)) {
+                    imageIter->second.ObjectInfo.Image.memorySize *= 2;
+                }
 
                 if (imageIter->second.ObjectInfo.Image.needsStagingBuffer) {
                     StagingInfo stagingInfo = createStagingBuffer(
@@ -1458,7 +1496,7 @@ void snapshot_state_tracker() {
                             // set bufferRowLength and bufferImageHeight to 0 make the image
                             // copy to be tightly packed according to the imageExtent.
 
-                            copyRegion.bufferOffset = layout.offset;
+                            copyRegion.bufferOffset = stencilOffSize;
                             copyRegion.imageExtent.depth = imageIter->second.ObjectInfo.Image.extent.depth;
                             copyRegion.imageExtent.width = imageIter->second.ObjectInfo.Image.extent.width;
                             copyRegion.imageExtent.height = imageIter->second.ObjectInfo.Image.extent.height;
@@ -1592,6 +1630,7 @@ void snapshot_state_tracker() {
                     StagingInfo staged = s_imageToStagedInfoMap[image];
                     memory = staged.memory;
                     offset = 0;
+                    size = staged.memoryAllocationInfo.allocationSize;
 
                     void *mappedAddress = NULL;
 
@@ -1623,7 +1662,7 @@ void snapshot_state_tracker() {
                                 bAlreadyMapped = (offset >= mappedOffset && (offset + size) <= (mappedOffset + mappedSize));
                             }
 
-                            generateMapUnmap(!bAlreadyMapped, device, memory, offset, size, 0, mappedAddress,
+                            generateMapUnmap(!bAlreadyMapped, device, memory, offset, size, bAlreadyMapped ? mappedOffset : 0, mappedAddress,
                                              &imageIter->second.ObjectInfo.Image.pMapMemoryPacket,
                                              &imageIter->second.ObjectInfo.Image.pUnmapMemoryPacket);
                         }
@@ -1783,10 +1822,13 @@ void snapshot_state_tracker() {
 
                     transitionBuffer(device, commandBuffer, buffer, VK_ACCESS_FLAG_BITS_MAX_ENUM, VK_ACCESS_TRANSFER_READ_BIT, 0,
                                      bufferIter->second.ObjectInfo.Buffer.size, true);
+                    transitionBuffer(device, commandBuffer, stagingInfo.buffer, VK_ACCESS_FLAG_BITS_MAX_ENUM, VK_ACCESS_TRANSFER_WRITE_BIT, 0,
+                                     bufferIter->second.ObjectInfo.Buffer.size, true);
                     mdd(device)->devTable.CmdCopyBuffer(commandBuffer, buffer, stagingInfo.buffer, 1, &stagingInfo.copyRegion);
-                    transitionBuffer(device, commandBuffer, buffer, VK_ACCESS_TRANSFER_READ_BIT,
-                                     bufferIter->second.ObjectInfo.Buffer.accessFlags, 0, bufferIter->second.ObjectInfo.Buffer.size,
-                                     true);
+                    transitionBuffer(device, commandBuffer, buffer, VK_ACCESS_TRANSFER_READ_BIT, bufferIter->second.ObjectInfo.Buffer.accessFlags, 0,
+                                     bufferIter->second.ObjectInfo.Buffer.size, true);
+                    transitionBuffer(device, commandBuffer, stagingInfo.buffer, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_FLAG_BITS_MAX_ENUM, 0,
+                                     bufferIter->second.ObjectInfo.Buffer.size, true);
 
                     // save the staging info for later
                     s_bufferToStagedInfoMap[buffer] = stagingInfo;
@@ -1865,7 +1907,7 @@ void snapshot_state_tracker() {
                         bAlreadyMapped = (offset >= mappedOffset && (offset + size) <= (mappedOffset + mappedSize));
                     }
 
-                    generateMapUnmap(!bAlreadyMapped, device, memory, offset, size, 0, mappedAddress,
+                    generateMapUnmap(!bAlreadyMapped, device, memory, offset, size, bAlreadyMapped ? mappedOffset : 0, mappedAddress,
                                      &bufferIter->second.ObjectInfo.Buffer.pMapMemoryPacket,
                                      &bufferIter->second.ObjectInfo.Buffer.pUnmapMemoryPacket);
                 }
@@ -2187,6 +2229,16 @@ void delete_objects_for_destroy_device(VkDevice device) {
         trim::remove_BuildAccelerationStructure_object(s_trimGlobalStateTracker.buildAccelerationStructures[i]);
     }
     delete_objects_number += s_trimGlobalStateTracker.buildAccelerationStructures.size();
+
+    for (size_t i = 0; i < s_trimGlobalStateTracker.cmdBuildAccelerationStructures.size(); i++) {
+        trim::remove_cmdBuildAccelerationStructure_object(s_trimGlobalStateTracker.cmdBuildAccelerationStructures[i]);
+    }
+    delete_objects_number += s_trimGlobalStateTracker.cmdBuildAccelerationStructures.size();
+
+    for (size_t i = 0; i < s_trimGlobalStateTracker.cmdCopyAccelerationStructure.size(); i++) {
+        trim::remove_cmdCopyAccelerationStructure_object(s_trimGlobalStateTracker.cmdCopyAccelerationStructure[i]);
+    }
+    delete_objects_number += s_trimGlobalStateTracker.cmdCopyAccelerationStructure.size();
 
     // DescriptorPool
     std::vector<VkDescriptorPool> DescriptorPoolsToRemove;
@@ -2603,6 +2655,51 @@ ObjectInfo &add_Image_object(VkImage var) {
 void remove_Image_object(const VkImage var) {
     vktrace_enter_critical_section(&trimStateTrackerLock);
     s_trimGlobalStateTracker.remove_Image(var);
+
+    // traverse all descriptor sets, and remove the image from it
+    // it's too late to remove the invalid descriptor sets when trim:: start/stop() calls
+    // as in some cases old image destoryed, which has been written/copied to a valid descriptor set
+    // while a new image created with the same handle later
+    // the bounded image before is invalid in such cases but with a same valid new created buffer handle
+    for (auto it = s_trimGlobalStateTracker.createdDescriptorSets.begin();
+              it != s_trimGlobalStateTracker.createdDescriptorSets.end();
+              it++) {
+        uint32_t descWriteCnt = it->second.ObjectInfo.DescriptorSet.writeDescriptorCount;
+        if (descWriteCnt == 0) {
+            continue;
+        }
+        VkWriteDescriptorSet *pDescWrites = it->second.ObjectInfo.DescriptorSet.pWriteDescriptorSets;
+        for (uint32_t i = 0; i < descWriteCnt; i++) {
+            uint32_t descCnt = pDescWrites[i].descriptorCount;
+            switch (pDescWrites[i].descriptorType) {
+                case VK_DESCRIPTOR_TYPE_SAMPLER:
+                case VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER:
+                case VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE:
+                case VK_DESCRIPTOR_TYPE_STORAGE_IMAGE:
+                case VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT:
+                {
+                    if (pDescWrites[i].pImageInfo) {
+                        for (uint j = 0; j < descCnt; j++) {
+                            VkImageView imageView = pDescWrites[i].pImageInfo[j].imageView;
+                            auto it_view = s_trimGlobalStateTracker.createdImageViews.find(imageView);
+                            if (it_view != s_trimGlobalStateTracker.createdImageViews.end()) {
+                                ObjectInfo* objImgView = &(it_view->second);
+                                VkImage image = objImgView->ObjectInfo.ImageView.image;
+                                if (image == var) {
+                                    UpdateInvalidDescriptors(&pDescWrites[i]);
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    break;
+                }
+                default:
+                    break;
+            }
+        }
+    }
+
     vktrace_leave_critical_section(&trimStateTrackerLock);
 }
 
@@ -2657,6 +2754,45 @@ ObjectInfo &add_Buffer_object(VkBuffer var) {
 void remove_Buffer_object(const VkBuffer var) {
     vktrace_enter_critical_section(&trimStateTrackerLock);
     s_trimGlobalStateTracker.remove_Buffer(var);
+
+    // traverse all descriptor sets, and remove the buffer from it
+    // it's too late to remove the invalid descriptor sets when trim:: start/stop() calls
+    // as in some cases old buffer destoryed, which has been written/copied to a valid descriptor set
+    // while a new buffer created with the same handle later
+    // the bounded buffer before is invalid in such cases but with a same valid new created buffer handle
+    for (auto it = s_trimGlobalStateTracker.createdDescriptorSets.begin();
+              it != s_trimGlobalStateTracker.createdDescriptorSets.end();
+              it++) {
+        uint32_t descWriteCnt = it->second.ObjectInfo.DescriptorSet.writeDescriptorCount;
+        if (descWriteCnt == 0) {
+            continue;
+        }
+        VkWriteDescriptorSet *pDescWrites = it->second.ObjectInfo.DescriptorSet.pWriteDescriptorSets;
+        for (uint32_t i = 0; i < descWriteCnt; i++) {
+            uint32_t descCnt = pDescWrites[i].descriptorCount;
+            switch (pDescWrites[i].descriptorType) {
+                case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER:
+                case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER:
+                case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC:
+                case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC:
+                case VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT:
+                {
+                    if (pDescWrites[i].pBufferInfo) {
+                        for (uint j = 0; j < descCnt; j++) {
+                            if (pDescWrites[i].pBufferInfo[j].buffer == var) {
+                                UpdateInvalidDescriptors(&pDescWrites[i]);
+                                break;
+                            }
+                        }
+                    }
+                    break;
+                }
+                default:
+                    break;
+            }
+        }
+    }
+
     vktrace_leave_critical_section(&trimStateTrackerLock);
 }
 
@@ -3160,6 +3296,41 @@ ObjectInfo &add_AccelerationStructure_object(VkAccelerationStructureKHR var) {
 void remove_AccelerationStructure_object(const VkAccelerationStructureKHR var) {
     vktrace_enter_critical_section(&trimStateTrackerLock);
     s_trimGlobalStateTracker.remove_AccelerationStructure(var);
+
+    // traverse all descriptor sets, and remove the AS from it
+    // it's too late to remove the invalid descriptor sets when trim:: start/stop() calls
+    // as in some cases old AS destoryed, which has been written/copied to a valid descriptor set
+    // while a new AS created with the same handle later
+    // the bounded AS before is invalid in such cases but with a same valid new created buffer handle
+    for (auto it = s_trimGlobalStateTracker.createdDescriptorSets.begin();
+              it != s_trimGlobalStateTracker.createdDescriptorSets.end();
+              it++) {
+        uint32_t descWriteCnt = it->second.ObjectInfo.DescriptorSet.writeDescriptorCount;
+        if (descWriteCnt == 0) {
+            continue;
+        }
+        VkWriteDescriptorSet *pDescWrites = it->second.ObjectInfo.DescriptorSet.pWriteDescriptorSets;
+        for (uint32_t i = 0; i < descWriteCnt; i++) {
+            switch (pDescWrites[i].descriptorType) {
+                case VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR:
+                {
+                    VkWriteDescriptorSetAccelerationStructureKHR* pWrtDescAS = (VkWriteDescriptorSetAccelerationStructureKHR*)pDescWrites[i].pNext;
+                    if (pWrtDescAS) {
+                        for (uint j = 0; j < pWrtDescAS->accelerationStructureCount; j++) {
+                            if (pWrtDescAS->pAccelerationStructures[j] == var) {
+                                UpdateInvalidDescriptors(&pDescWrites[i]);
+                                break;
+                            }
+                        }
+                    }
+                    break;
+                }
+                default:
+                    break;
+            }
+        }
+    }
+
     vktrace_leave_critical_section(&trimStateTrackerLock);
 }
 
@@ -3180,12 +3351,55 @@ void add_BuildAccelerationStructure_object(vktrace_trace_packet_header* var) {
     vktrace_leave_critical_section(&trimStateTrackerLock);
 }
 
+BuildAsInfo& add_cmdBuildAccelerationStructure_object(BuildAsInfo var) {
+    vktrace_enter_critical_section(&trimStateTrackerLock);
+    BuildAsInfo& info = s_trimGlobalStateTracker.add_cmdBuildAccelerationStructure(var);
+    vktrace_leave_critical_section(&trimStateTrackerLock);
+    return info;
+}
+
+std::vector<BuildAsInfo>& get_cmdBuildAccelerationStrucutres() {
+    vktrace_enter_critical_section(&trimStateTrackerLock);
+    std::vector<BuildAsInfo>& info = s_trimGlobalStateTracker.get_cmdBuildAccelerationStrucutres();
+    vktrace_leave_critical_section(&trimStateTrackerLock);
+    return info;
+}
+
+cmdCopyAsInfo& add_cmdCopyAccelerationStructure_object(cmdCopyAsInfo var) {
+    vktrace_enter_critical_section(&trimStateTrackerLock);
+    cmdCopyAsInfo& info = s_trimGlobalStateTracker.add_cmdCopyAccelerationStructure(var);
+    vktrace_leave_critical_section(&trimStateTrackerLock);
+    return info;
+}
+
+std::vector<cmdCopyAsInfo>& get_cmdCopyAccelerationStructure() {
+    vktrace_enter_critical_section(&trimStateTrackerLock);
+    std::vector<cmdCopyAsInfo>& info = s_trimGlobalStateTracker.get_cmdCopyAccelerationStructure();
+    vktrace_leave_critical_section(&trimStateTrackerLock);
+    return info;
+}
+
 void remove_BuildAccelerationStructure_object(vktrace_trace_packet_header* var)
 {
     vktrace_enter_critical_section(&trimStateTrackerLock);
     s_trimGlobalStateTracker.remove_BuildAccelerationStructure(var);
     vktrace_leave_critical_section(&trimStateTrackerLock);
 }
+
+void remove_cmdBuildAccelerationStructure_object(BuildAsInfo& var)
+{
+    vktrace_enter_critical_section(&trimStateTrackerLock);
+    s_trimGlobalStateTracker.remove_cmdBuildAccelerationStructure(var);
+    vktrace_leave_critical_section(&trimStateTrackerLock);
+}
+
+void remove_cmdCopyAccelerationStructure_object(cmdCopyAsInfo& var)
+{
+    vktrace_enter_critical_section(&trimStateTrackerLock);
+    s_trimGlobalStateTracker.remove_cmdCopyAccelerationStructure(var);
+    vktrace_leave_critical_section(&trimStateTrackerLock);
+}
+
 //=========================================================================
 
 #define TRIM_MARK_OBJECT_REFERENCE(type)                                   \
@@ -3309,6 +3523,14 @@ void mark_AccelerationStructure_reference(VkAccelerationStructureKHR var) {
         if (info != nullptr && !(info->bReferencedInTrimChecked)) {
             info->bReferencedInTrimChecked = true;
             info->bReferencedInTrim = true;
+            VkBuffer buffer = ((VkAccelerationStructureCreateInfoKHR*)info->ObjectInfo.AccelerationStructure.pCreatePacket->pBody)->buffer;
+            auto iter_buf = s_trimStateTrackerSnapshot.createdBuffers.find(buffer);
+            assert (iter_buf != s_trimStateTrackerSnapshot.createdBuffers.end());
+            ObjectInfo *bufInfo = &iter_buf->second;
+            if (bufInfo != nullptr && !(bufInfo->bReferencedInTrimChecked)) {
+                bufInfo->bReferencedInTrimChecked = true;
+                bufInfo->bReferencedInTrim = true;
+            }
         }
     }
     vktrace_leave_critical_section(&trimStateTrackerLock);
@@ -3573,6 +3795,12 @@ bool UpdateInvalidDescriptors(const VkWriteDescriptorSet *pDescriptorWrites) {
         // all descriptors in this pDescriptorWrites is invalid, we should remove it;
         VkWriteDescriptorSet *pDescriptorWritesToChange = const_cast<VkWriteDescriptorSet *>(pDescriptorWrites);
         pDescriptorWritesToChange->descriptorCount = 0;
+        if (pDescriptorWrites->descriptorType == VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR) {
+            VkWriteDescriptorSetAccelerationStructureKHR* pWrtDescAS = (VkWriteDescriptorSetAccelerationStructureKHR*)(pDescriptorWritesToChange->pNext);
+            if (pWrtDescAS) {
+                pWrtDescAS->accelerationStructureCount = 0;
+            }
+        }
     }
     return removeInvalidDescriptorsFlag;
 }
@@ -4020,6 +4248,10 @@ void record_created_buffers_commands(StateTracker &stateTracker, uint32_t &bufIt
 
         // CreateBuffer
         assert(obj->second.ObjectInfo.Buffer.pCreatePacket != NULL);
+        if (obj->second.ObjectInfo.Buffer.pGetAccelerationStructureBuildSizesKHRPacket != NULL) {
+            vktrace_write_trace_packet(obj->second.ObjectInfo.Buffer.pGetAccelerationStructureBuildSizesKHRPacket, vktrace_trace_get_trace_file());
+            vktrace_delete_trace_packet_no_lock(&(obj->second.ObjectInfo.Buffer.pGetAccelerationStructureBuildSizesKHRPacket));
+        }
         if (obj->second.ObjectInfo.Buffer.pCreatePacket != NULL) {
             vktrace_write_trace_packet(obj->second.ObjectInfo.Buffer.pCreatePacket, vktrace_trace_get_trace_file());
             vktrace_delete_trace_packet_no_lock(&(obj->second.ObjectInfo.Buffer.pCreatePacket));
@@ -4488,11 +4720,11 @@ void recreate_as(StateTracker &stateTracker){
         }
     }
     for (auto obj = stateTracker.buildAccelerationStructures.begin(); obj != stateTracker.buildAccelerationStructures.end(); obj++) {
+        // the packet maybe is BuildAccelerationStructuresKHR or CopyAccelerationStructureKHR
         vktrace_write_trace_packet(*obj, vktrace_trace_get_trace_file());
         vktrace_delete_trace_packet_no_lock(&(*obj));
     }
 }
-
 
 void recreate_device_persistently_map_mem(StateTracker &stateTracker) {
     for (auto obj = stateTracker.createdDeviceMemorys.begin(); obj != stateTracker.createdDeviceMemorys.end(); obj++) {
@@ -4590,6 +4822,9 @@ void recreate_pipelines(StateTracker &stateTracker) {
             VkShaderModule module = (obj->second.ObjectInfo.Pipeline.isGraphicsPipeline)
                                         ? obj->second.ObjectInfo.Pipeline.graphicsPipelineCreateInfo.pStages[moduleIndex].module
                                         : obj->second.ObjectInfo.Pipeline.computePipelineCreateInfo.stage.module;
+            if (obj->second.ObjectInfo.Pipeline.isRayTRacingPipeline) {
+                module = obj->second.ObjectInfo.Pipeline.rayTracingPipelineCreateInfo.pStages[moduleIndex].module;
+            }
 
             auto shaderModuleObj = stateTracker.createdShaderModules.find(module);
             auto destroyedShader = stateTracker.destroyedShaderModules.find(module);
@@ -4646,10 +4881,17 @@ void recreate_pipelines(StateTracker &stateTracker) {
                 vktrace_delete_trace_packet(&pDestroyRenderPass);
             }
         } else {
-            pHeader = trim::generate::vkCreateComputePipelines(
-                false, device, pipelineCache, 1, &obj->second.ObjectInfo.Pipeline.computePipelineCreateInfo, nullptr, &pipeline);
-            vktrace_write_trace_packet(pHeader, vktrace_trace_get_trace_file());
-            vktrace_delete_trace_packet(&pHeader);
+            if (obj->second.ObjectInfo.Pipeline.isRayTRacingPipeline) {
+                pHeader = trim::generate::vkCreateRayTracingPipelinesKHR(
+                    false, device, 0, pipelineCache, 1, &obj->second.ObjectInfo.Pipeline.rayTracingPipelineCreateInfo, nullptr, &pipeline);
+                vktrace_write_trace_packet(pHeader, vktrace_trace_get_trace_file());
+                vktrace_delete_trace_packet(&pHeader);
+            } else {
+                pHeader = trim::generate::vkCreateComputePipelines(
+                    false, device, pipelineCache, 1, &obj->second.ObjectInfo.Pipeline.computePipelineCreateInfo, nullptr, &pipeline);
+                vktrace_write_trace_packet(pHeader, vktrace_trace_get_trace_file());
+                vktrace_delete_trace_packet(&pHeader);
+            }
         }
 
         // Destroy ShaderModule objects
@@ -4657,6 +4899,9 @@ void recreate_pipelines(StateTracker &stateTracker) {
             VkShaderModule module = (obj->second.ObjectInfo.Pipeline.isGraphicsPipeline)
                                         ? obj->second.ObjectInfo.Pipeline.graphicsPipelineCreateInfo.pStages[moduleIndex].module
                                         : obj->second.ObjectInfo.Pipeline.computePipelineCreateInfo.stage.module;
+            if (obj->second.ObjectInfo.Pipeline.isRayTRacingPipeline) {
+                module = obj->second.ObjectInfo.Pipeline.rayTracingPipelineCreateInfo.pStages[moduleIndex].module;
+            }
 
             auto shaderModuleObj = stateTracker.createdShaderModules.find(module);
             auto destroyedShader = stateTracker.destroyedShaderModules.find(module);
@@ -4678,6 +4923,11 @@ void recreate_pipelines(StateTracker &stateTracker) {
                 vktrace_write_trace_packet(pHeader, vktrace_trace_get_trace_file());
                 vktrace_delete_trace_packet(&pHeader);
             }
+        }
+
+        for (uint32_t groupIndex = 0; groupIndex < obj->second.ObjectInfo.Pipeline.rayTracingShaderGroupHandlesCount; groupIndex++) {
+            vktrace_write_trace_packet(obj->second.ObjectInfo.Pipeline.pGetRayTracingShaderGroupHandlesKHRPackets[groupIndex], vktrace_trace_get_trace_file());
+            vktrace_delete_trace_packet_no_lock(&(obj->second.ObjectInfo.Pipeline.pGetRayTracingShaderGroupHandlesKHRPackets[groupIndex]));
         }
     }
 }
@@ -4957,9 +5207,224 @@ void recreate_query_pools(StateTracker &stateTracker) {
     }
 }
 
+void generateCmdBuildAsWorkflow(StateTracker &stateTracker){
+    if (stateTracker.cmdBuildAccelerationStructures.size() > 0) {
+        // prepare command buffer for later operations
+        vktrace_trace_packet_header *pHeader;
+
+        // get the correct device and queue family index
+        VkDevice    device = NULL;
+        uint32_t    queueFamilyIndex = UINT_MAX;
+        uint32_t    max_geoinfo = 0;
+        for (auto obj = stateTracker.cmdBuildAccelerationStructures.begin();
+             obj != stateTracker.cmdBuildAccelerationStructures.end(); obj++) {
+            if (obj->geometryInfo.size() == 0) {
+                continue;
+            }
+            auto &geoInfo = obj->geometryInfo;
+            max_geoinfo = max_geoinfo > geoInfo.size() ? max_geoinfo:geoInfo.size();
+            for (int i = 0; i < geoInfo.size(); i++) {
+                pHeader = copy_packet(obj->pCmdBuildAccelerationtStructure);
+                packet_vkCmdBuildAccelerationStructuresKHR *pcmdBuildPacket = interpret_body_as_vkCmdBuildAccelerationStructuresKHR(pHeader);
+                assert (pcmdBuildPacket->infoCount >= 1);
+                VkAccelerationStructureKHR dstAs = pcmdBuildPacket->pInfos[0].dstAccelerationStructure;
+                ObjectInfo *objAs = get_AccelerationStructure_objectInfo(dstAs);
+                device = ((packet_vkCreateAccelerationStructureKHR*)(objAs->ObjectInfo.AccelerationStructure.pCreatePacket->pBody))->device;
+                vktrace_delete_trace_packet(&pHeader);
+
+                ObjectInfo *objDevice = get_Device_objectInfo(device);
+                if (objDevice == NULL || device == VK_NULL_HANDLE) {
+                    vktrace_LogError("recreate_as: cannot find device 0x%llux!", device);
+                    continue;
+                }
+                // get a correct queue family which supports VK_QUEUE_GRAPHICS_BIT
+                pHeader = copy_packet(objDevice->ObjectInfo.Device.pCreatePacket);
+                packet_vkCreateDevice *pPacket = interpret_body_as_vkCreateDevice(pHeader);
+                VkPhysicalDevice            physicalDevice = pPacket->physicalDevice;
+                uint32_t                    queueFamilyCnt;
+                VkQueueFamilyProperties*    pQueueFamilyProp;
+                mid(physicalDevice)->instTable.GetPhysicalDeviceQueueFamilyProperties(physicalDevice, &queueFamilyCnt, NULL);
+                pQueueFamilyProp = (VkQueueFamilyProperties*)malloc(queueFamilyCnt * sizeof(VkQueueFamilyProperties));
+                assert(pQueueFamilyProp != NULL);
+                mid(physicalDevice)->instTable.GetPhysicalDeviceQueueFamilyProperties(physicalDevice, &queueFamilyCnt, pQueueFamilyProp);
+
+                for (int i = 0; i < pPacket->pCreateInfo->queueCreateInfoCount; i++) {
+                    if ((pPacket->pCreateInfo->pQueueCreateInfos[i].flags & VK_DEVICE_QUEUE_CREATE_PROTECTED_BIT) == 0 &&
+                        pQueueFamilyProp[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) {
+                            queueFamilyIndex = i;
+                        break;
+                    }
+                }
+                vktrace_delete_trace_packet(&pHeader);
+                assert(queueFamilyIndex != UINT_MAX);
+                free (pQueueFamilyProp);
+                break;
+            }
+            if (device != NULL) {
+                break;
+            }
+        }
+
+        // create scratch buffers
+        _scratch_size *max_scratch_size = get_max_scratch_size(device);
+        uint32_t max_size = max_scratch_size->buildSize > max_scratch_size->updateSize ?
+                            max_scratch_size->buildSize : max_scratch_size->updateSize;
+        std::vector<_shader_device_buffer> scratch_buffers;
+        for (int i = 0; i < max_geoinfo; i++) {
+            _shader_device_buffer scratch_buffer;
+            VkResult result = generate_shader_device_buffer(true, device, max_size, queueFamilyIndex, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, scratch_buffer);
+            assert(result == VK_SUCCESS);
+            scratch_buffers.push_back(scratch_buffer);
+            assert(scratch_buffers.size() > i);
+        }
+
+        // create command pool packets
+        // create a real commandPool to get a valid handle for the later packets
+        // no real commands in the command pool
+        VkCommandPool commandPool;
+        const VkCommandPoolCreateInfo cmdPoolCreateInfo = {
+            VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO, NULL,
+            VK_COMMAND_POOL_CREATE_TRANSIENT_BIT | VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT, queueFamilyIndex};
+        pHeader = generate::vkCreateCommandPool(true, device, &cmdPoolCreateInfo, NULL, &commandPool);
+        vktrace_write_trace_packet(pHeader, vktrace_trace_get_trace_file());
+        vktrace_delete_trace_packet(&pHeader);
+
+        // get device queue packets
+        VkQueue queue;
+        pHeader = generate::vkGetDeviceQueue(true, device, queueFamilyIndex, 0, &queue);
+        vktrace_write_trace_packet(pHeader, vktrace_trace_get_trace_file());
+        vktrace_delete_trace_packet(&pHeader);
+
+        // create command buffer packets
+        // create a real command buffer from the command pool
+        // to get a valid handle for the later packates
+        VkCommandBufferAllocateInfo commandBufferAllocateInfo;
+        commandBufferAllocateInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+        commandBufferAllocateInfo.pNext = NULL;
+        commandBufferAllocateInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        commandBufferAllocateInfo.commandBufferCount = 1;
+        commandBufferAllocateInfo.commandPool = commandPool;
+        VkCommandBuffer commandBuffer;
+        pHeader = generate::vkAllocateCommandBuffers(true, device, &commandBufferAllocateInfo, &commandBuffer);
+        vktrace_write_trace_packet(pHeader, vktrace_trace_get_trace_file());
+        vktrace_delete_trace_packet(&pHeader);
+
+        // loop all the vkCmdBuildAccelerationStructuresKHR() calls
+        // regenerate them in the trimed trace
+        auto obj = stateTracker.cmdBuildAccelerationStructures.begin();
+        auto objCopy = stateTracker.cmdCopyAccelerationStructure.begin();
+        while (obj != stateTracker.cmdBuildAccelerationStructures.end() || objCopy != stateTracker.cmdCopyAccelerationStructure.end()) {
+            if ((objCopy == stateTracker.cmdCopyAccelerationStructure.end()) ||
+                ((obj != stateTracker.cmdBuildAccelerationStructures.end()) &&
+                 (obj->pCmdBuildAccelerationtStructure->global_packet_index < objCopy->pCmdCopyAccelerationStructureKHR->global_packet_index))) {
+                // create input buffers (vb/ib/tb/aabb/instance), and restore data
+                // don't use the original buffer, it's because the old buffer might be destoried already
+                generate_buildas_create_inputs(device, queueFamilyIndex, *obj);
+
+                // begin command buffer packets
+                VkCommandBufferBeginInfo commandBufferBeginInfo;
+                commandBufferBeginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+                commandBufferBeginInfo.pNext = NULL;
+                commandBufferBeginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+                commandBufferBeginInfo.pInheritanceInfo = NULL;
+                pHeader = generate::vkBeginCommandBuffer(false, commandBuffer, &commandBufferBeginInfo);
+                vktrace_write_trace_packet(pHeader, vktrace_trace_get_trace_file());
+                vktrace_delete_trace_packet(&pHeader);
+
+                // vkCmdBuildAccelerationStructure
+                pHeader = obj->pCmdBuildAccelerationtStructure;
+                packet_vkCmdBuildAccelerationStructuresKHR *pPacket = (packet_vkCmdBuildAccelerationStructuresKHR*)pHeader->pBody;
+                pPacket->commandBuffer = commandBuffer;
+
+                // replace the scratch buffer device address with the new one
+                vktrace_trace_packet_header* pcmdBuildHeader = copy_packet(obj->pCmdBuildAccelerationtStructure);
+                packet_vkCmdBuildAccelerationStructuresKHR* pcmdBuildPacket = interpret_body_as_vkCmdBuildAccelerationStructuresKHR(pcmdBuildHeader);
+                for (uint32_t i = 0; i < pcmdBuildPacket->infoCount; ++i) {
+                    uint64_t offset = (uint64_t)(&pcmdBuildPacket->pInfos[i].scratchData.deviceAddress) - (uint64_t)pcmdBuildPacket;
+                    VkDeviceAddress* pAddr = (VkDeviceAddress*)((uint64_t)pPacket + offset);
+                    *pAddr = scratch_buffers[i].address;
+                }
+                vktrace_delete_trace_packet(&pcmdBuildHeader);
+
+                vktrace_write_trace_packet(obj->pCmdBuildAccelerationtStructure, vktrace_trace_get_trace_file());
+                vktrace_delete_trace_packet(&pHeader);
+                obj++;
+            }
+            else {
+                assert((obj == stateTracker.cmdBuildAccelerationStructures.end()) ||
+                       (obj->pCmdBuildAccelerationtStructure->global_packet_index > objCopy->pCmdCopyAccelerationStructureKHR->global_packet_index));
+                // begin command buffer packets
+                VkCommandBufferBeginInfo commandBufferBeginInfo;
+                commandBufferBeginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+                commandBufferBeginInfo.pNext = NULL;
+                commandBufferBeginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+                commandBufferBeginInfo.pInheritanceInfo = NULL;
+                pHeader = generate::vkBeginCommandBuffer(false, commandBuffer, &commandBufferBeginInfo);
+                vktrace_write_trace_packet(pHeader, vktrace_trace_get_trace_file());
+                vktrace_delete_trace_packet(&pHeader);
+
+                // vkCmdCopyAccelerationStructureKHR
+                pHeader = objCopy->pCmdCopyAccelerationStructureKHR;
+                packet_vkCmdCopyAccelerationStructureKHR *pPacket = (packet_vkCmdCopyAccelerationStructureKHR*)pHeader->pBody;
+                pPacket->commandBuffer = commandBuffer;
+
+                vktrace_write_trace_packet(objCopy->pCmdCopyAccelerationStructureKHR, vktrace_trace_get_trace_file());
+                vktrace_delete_trace_packet(&pHeader);
+                objCopy++;
+            }
+
+            // end command buffer packets
+            pHeader = generate::vkEndCommandBuffer(false, commandBuffer);
+            vktrace_write_trace_packet(pHeader, vktrace_trace_get_trace_file());
+            vktrace_delete_trace_packet(&pHeader);
+
+            // submit command buffer
+            VkSubmitInfo submitInfo = {VK_STRUCTURE_TYPE_SUBMIT_INFO, NULL, 0, NULL, NULL, 1, &commandBuffer, 0, NULL};
+            pHeader = generate::vkQueueSubmit(false, queue, 1, &submitInfo, VK_NULL_HANDLE);
+            vktrace_write_trace_packet(pHeader, vktrace_trace_get_trace_file());
+            vktrace_delete_trace_packet(&pHeader);
+
+            // wait queue idle
+            pHeader = generate::vkQueueWaitIdle(false, queue);
+            vktrace_write_trace_packet(pHeader, vktrace_trace_get_trace_file());
+            vktrace_delete_trace_packet(&pHeader);
+        }
+
+        // destroy scratch buffers
+        for (uint32_t i = 0; i < scratch_buffers.size(); i++) {
+            generate_destroy_shader_device_buffer(device, scratch_buffers[i]);
+        }
+
+        // destroy AS input staging buffers
+        for (auto obj = stateTracker.cmdBuildAccelerationStructures.begin(); obj != stateTracker.cmdBuildAccelerationStructures.end(); obj++)  {
+            generate_buildas_destroy_inputs(device, *obj);
+        }
+
+        // destory command buffer packets
+        pHeader = generate::vkFreeCommandBuffers(true, device, commandPool, 1, &commandBuffer);
+        vktrace_write_trace_packet(pHeader, vktrace_trace_get_trace_file());
+        vktrace_delete_trace_packet(&pHeader);
+
+        // destroy command pool packets
+        pHeader = generate::vkResetCommandPool(false, device, commandPool, VK_COMMAND_POOL_RESET_RELEASE_RESOURCES_BIT);
+        vktrace_write_trace_packet(pHeader, vktrace_trace_get_trace_file());
+        vktrace_delete_trace_packet(&pHeader);
+        pHeader = generate::vkDestroyCommandPool(false, device, commandPool, NULL);
+        vktrace_write_trace_packet(pHeader, vktrace_trace_get_trace_file());
+        vktrace_delete_trace_packet(&pHeader);
+    }
+}
+
 void generateCmdBuildAsWorkflow(cmdBuildASPacketInfo& packetInfo) {
     vktrace_trace_packet_header* pOrigHeader = packetInfo.pHeader;
     VkCommandPool commandPool = packetInfo.commandPool;
+    VkBuildAccelerationStructureModeKHR mode = packetInfo.mode;
+    if (commandPool == VK_NULL_HANDLE) {
+        // if commandPool is null, the packet is GetAccelerationStructureBuildSizesKHR
+        vktrace_write_trace_packet(pOrigHeader, vktrace_trace_get_trace_file());
+        vktrace_delete_trace_packet(&pOrigHeader);
+        return;
+    }
     trim::ObjectInfo* pPoolInfo = trim::get_CommandPool_objectInfo(commandPool);
     if (pPoolInfo == nullptr) {
         vktrace_LogError("Can't find the command pool, gid = %llu.", pOrigHeader->global_packet_index);
@@ -4996,20 +5461,33 @@ void generateCmdBuildAsWorkflow(cmdBuildASPacketInfo& packetInfo) {
     VkMemoryBarrier memoryBarrier;
     memoryBarrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
     memoryBarrier.pNext = NULL;
-    memoryBarrier.srcAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR;
-    memoryBarrier.dstAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
-    pHeader = generate::vkCmdPipelineBarrier(false, commandBuffer, VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR, VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR, 0, 1, &memoryBarrier, 0, NULL, 0, NULL);
+    if (mode == VK_BUILD_ACCELERATION_STRUCTURE_MODE_UPDATE_KHR) {
+        memoryBarrier.srcAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT | VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR | VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
+        memoryBarrier.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT | VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR | VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
+        pHeader = generate::vkCmdPipelineBarrier(false, commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR, 0, 1, &memoryBarrier, 0, NULL, 0, NULL);
+    } else {
+        memoryBarrier.srcAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR;
+        memoryBarrier.dstAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
+        pHeader = generate::vkCmdPipelineBarrier(false, commandBuffer, VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR, VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR, 0, 1, &memoryBarrier, 0, NULL, 0, NULL);
+    }
     vktrace_write_trace_packet(pHeader, vktrace_trace_get_trace_file());
     vktrace_delete_trace_packet(&pHeader);
 
+    // the packet maybe is CmdBuildAccelerationStructuresKHR or CmdCopyAccelerationStructuresKHR
     packet_vkCmdBuildAccelerationStructuresKHR* pPacket = (packet_vkCmdBuildAccelerationStructuresKHR*)(((char*)pOrigHeader) + sizeof(vktrace_trace_packet_header));
     pPacket->commandBuffer = commandBuffer;
     vktrace_write_trace_packet(pOrigHeader, vktrace_trace_get_trace_file());
     vktrace_delete_trace_packet(&pOrigHeader);
 
-    memoryBarrier.srcAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
-    memoryBarrier.dstAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR;
-    pHeader = generate::vkCmdPipelineBarrier(false, commandBuffer, VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR, VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR, 0, 1, &memoryBarrier, 0, NULL, 0, NULL);
+    if (mode == VK_BUILD_ACCELERATION_STRUCTURE_MODE_UPDATE_KHR) {
+        memoryBarrier.srcAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT | VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR | VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
+        memoryBarrier.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT | VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR | VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
+        pHeader = generate::vkCmdPipelineBarrier(false, commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR, 0, 1, &memoryBarrier, 0, NULL, 0, NULL);
+    } else {
+        memoryBarrier.srcAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
+        memoryBarrier.dstAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR;
+        pHeader = generate::vkCmdPipelineBarrier(false, commandBuffer, VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR, VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR, 0, 1, &memoryBarrier, 0, NULL, 0, NULL);
+    }
     vktrace_write_trace_packet(pHeader, vktrace_trace_get_trace_file());
     vktrace_delete_trace_packet(&pHeader);
 
@@ -5035,14 +5513,17 @@ void generateCmdBuildAsWorkflow(cmdBuildASPacketInfo& packetInfo) {
 
 }
 
-
 void recreate_allocated_command_buffers(StateTracker &stateTracker) {
     // write out the packets to recreate the command buffers that were allocated
     vktrace_enter_critical_section(&trimCommandBufferPacketLock);
-    for(auto& e: g_cmdBuildASPacket) {
-        generateCmdBuildAsWorkflow(e.second);
+    if (g_TraceEnableCopyAsBuf) {
+        generateCmdBuildAsWorkflow(stateTracker);
+    } else {
+        for(auto& e: g_cmdBuildASPacket) {
+            generateCmdBuildAsWorkflow(e.second);
+        }
+        g_cmdBuildASPacket.clear();
     }
-    g_cmdBuildASPacket.clear();
     // Secondary command buffers should be replayed before primary command buffers.
     // 1. Go through secondary command buffers
     for (auto cmdBuffer = stateTracker.createdCommandBuffers.begin(); cmdBuffer != stateTracker.createdCommandBuffers.end();
@@ -5098,24 +5579,26 @@ void recreate_signalled_semaphores(StateTracker &stateTracker) {
 
             VkSubmitInfo submit_info;
             submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-            if(semaphoreType == -1){
+
+            // according to the spec:
+            // If any element of pWaitSemaphores or pSignalSemaphores was created with a VkSemaphoreType of VK_SEMAPHORE_TYPE_TIMELINE,
+            // then the pNext chain must include a VkTimelineSemaphoreSubmitInfo structure
+            VkTimelineSemaphoreSubmitInfo timelineSemaphoreSubmit_info;
+            timelineSemaphoreSubmit_info.sType = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO;
+            timelineSemaphoreSubmit_info.pNext = NULL;
+            timelineSemaphoreSubmit_info.waitSemaphoreValueCount = 0;
+            timelineSemaphoreSubmit_info.pWaitSemaphoreValues = NULL;
+            timelineSemaphoreSubmit_info.signalSemaphoreValueCount = 1;
+            // temporary value 1, may be adjusted later
+            const uint64_t pSignalSemaphoreValues[1] = {1};
+            timelineSemaphoreSubmit_info.pSignalSemaphoreValues = pSignalSemaphoreValues;
+
+            if (semaphoreType == VK_SEMAPHORE_TYPE_TIMELINE) {
+                submit_info.pNext = (const void*)&timelineSemaphoreSubmit_info;
+            } else {
                 submit_info.pNext = NULL;
             }
-            else if(semaphoreType == VK_SEMAPHORE_TYPE_TIMELINE){
-                // according to the spec:
-                // If any element of pWaitSemaphores or pSignalSemaphores was created with a VkSemaphoreType of VK_SEMAPHORE_TYPE_TIMELINE, 
-                // then the pNext chain must include a VkTimelineSemaphoreSubmitInfo structure
-                VkTimelineSemaphoreSubmitInfo timelineSemaphoreSubmit_info;
-                timelineSemaphoreSubmit_info.sType = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO;
-                timelineSemaphoreSubmit_info.pNext = NULL;
-                timelineSemaphoreSubmit_info.waitSemaphoreValueCount = 0;
-                timelineSemaphoreSubmit_info.pWaitSemaphoreValues = NULL;
-                timelineSemaphoreSubmit_info.signalSemaphoreValueCount = 1;
-                // temporary value 1, may be adjusted later
-                const uint64_t pSignalSemaphoreValues[1] = {1};
-                timelineSemaphoreSubmit_info.pSignalSemaphoreValues = pSignalSemaphoreValues;
-                submit_info.pNext = (const void*)&timelineSemaphoreSubmit_info;
-            }
+
             submit_info.waitSemaphoreCount = 0;
             submit_info.pWaitSemaphores = NULL;
             submit_info.pWaitDstStageMask = NULL;

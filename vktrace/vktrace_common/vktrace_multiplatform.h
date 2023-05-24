@@ -134,7 +134,9 @@ typedef struct VkAndroidHardwareBufferPropertiesANDROID {
     int notYetImplemented;
 } VkAndroidHardwareBufferPropertiesANDROID;
 typedef struct VkMemoryGetAndroidHardwareBufferInfoANDROID {
-    int notYetImplemented;
+    VkStructureType    sType;
+    const void*        pNext;
+    VkDeviceMemory     memory;
 } VkMemoryGetAndroidHardwareBufferInfoANDROID;
 
 typedef VkResult(VKAPI_PTR* PFN_vkGetAndroidHardwareBufferPropertiesANDROID)(VkDevice device, const struct AHardwareBuffer* buffer,

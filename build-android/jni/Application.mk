@@ -19,17 +19,3 @@ APP_PLATFORM := android-26
 APP_STL := c++_static
 NDK_TOOLCHAIN_VERSION := clang
 NDK_MODULE_PATH := .
-APP_CFLAGS += -D_DEBUG -DVKTRACE_VERSION="\"3.4 dev unofficial\""
-APP_CPPFLAGS += -D_DEBUG -DVKTRACE_VERSION="\"3.4 dev unofficial\""
-APP_CFLAGS += -D_DEBUG -DVKTRACE_VERSION="\"3.4 dev unofficial\""
-APP_CPPFLAGS += -D_DEBUG -DVKTRACE_VERSION="\"3.4 dev unofficial\""
-APP_CFLAGS += -D_DEBUG -DVKTRACE_VERSION="\"3.4 dev unofficial\""
-APP_CPPFLAGS += -D_DEBUG -DVKTRACE_VERSION="\"3.4 dev unofficial\""
-APP_CFLAGS += -D_DEBUG -DVKTRACE_VERSION="\"3.4 dev unofficial\""
-APP_CPPFLAGS += -D_DEBUG -DVKTRACE_VERSION="\"3.4 dev unofficial\""
-APP_CFLAGS += -D_DEBUG -DVKTRACE_VERSION="\"3.4 dev unofficial\""
-APP_CPPFLAGS += -D_DEBUG -DVKTRACE_VERSION="\"3.4 dev unofficial\""
-APP_CFLAGS += -D_DEBUG -DVKTRACE_VERSION="\"3.4 dev unofficial\""
-APP_CPPFLAGS += -D_DEBUG -DVKTRACE_VERSION="\"3.4 dev unofficial\""
-APP_CFLAGS += -D_DEBUG -DVKTRACE_VERSION="\"3.4 dev unofficial\""
-APP_CPPFLAGS += -D_DEBUG -DVKTRACE_VERSION="\"3.4 dev unofficial\""

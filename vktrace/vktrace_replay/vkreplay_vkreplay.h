@@ -154,6 +154,7 @@ class vkReplay {
     vkReplayObjMapper* get_ReplayObjMapper() { return &m_objMapper; };
     std::unordered_map<VkDevice, VkPhysicalDevice> &get_ReplayPhysicalDevices () { return replayPhysicalDevices; };
     VkLayerInstanceDispatchTable* get_VkLayerInstanceDispatchTable() { return &m_vkFuncs; };
+    VkLayerDispatchTable* get_VkLayerDispatchTable() { return &m_vkDeviceFuncs; };
 
    private:
     void init_funcs(void* handle);
@@ -166,6 +167,15 @@ class vkReplay {
     VkResult create_headless_surface_ext(VkInstance instance, VkSurfaceKHR* pSurface);
 #endif
     VkLayerDispatchTable m_vkDeviceFuncs;
+#if VK_ANDROID_frame_boundary
+    typedef VkResult (VKAPI_PTR *PFN_vkFrameBoundaryANDROID)(VkDevice device, VkSemaphore semaphore, VkImage image);
+    typedef struct VkLayerDispatchTable_tmp_ {
+        VkLayerDispatchTable m_vkDeviceFuncs;
+        PFN_vkFrameBoundaryANDROID FrameBoundaryANDROID;
+    } VkLayerDispatchTable_tmp;
+
+    VkLayerDispatchTable_tmp m_vkDeviceFuncs_tmp;
+#endif
     vkReplayObjMapper m_objMapper;
     void (*m_pDSDump)(char*);
     void (*m_pCBDump)(char*);
@@ -235,11 +245,16 @@ class vkReplay {
     std::unordered_map<uint32_t, vkReplay::ApiCallStat> m_CallStats;
     bool m_inFrameRange = false;
     bool m_inSkipFenceRange = false;
+    bool m_replayOpenXRContent = false;
 
     VkDebugReportCallbackEXT m_dbgMsgCallbackObj;
 
     std::vector<struct ValidationMsg> m_validationMsgs;
     std::vector<int> m_screenshotFrames;
+
+#if VK_ANDROID_frame_boundary
+    VkResult manually_replay_vkFrameBoundaryANDROID(packet_vkFrameBoundaryANDROID* pPacket);
+#endif
     VkResult manually_replay_vkCreateInstance(packet_vkCreateInstance* pPacket);
     VkResult manually_replay_vkCreateDevice(packet_vkCreateDevice* pPacket);
     VkResult manually_replay_vkCreateBuffer(packet_vkCreateBuffer* pPacket);
@@ -315,6 +330,7 @@ class vkReplay {
     VkResult manually_replay_vkGetPhysicalDeviceSurfaceSupportKHR(packet_vkGetPhysicalDeviceSurfaceSupportKHR* pPacket);
     VkResult manually_replay_vkGetPhysicalDeviceSurfaceCapabilitiesKHR(packet_vkGetPhysicalDeviceSurfaceCapabilitiesKHR* pPacket);
     VkResult manually_replay_vkGetPhysicalDeviceSurfaceFormatsKHR(packet_vkGetPhysicalDeviceSurfaceFormatsKHR* pPacket);
+    VkResult manually_replay_vkGetPhysicalDeviceSurfaceFormats2KHR(packet_vkGetPhysicalDeviceSurfaceFormats2KHR *pPacket);
     VkResult manually_replay_vkGetPhysicalDeviceSurfacePresentModesKHR(packet_vkGetPhysicalDeviceSurfacePresentModesKHR* pPacket);
     VkResult manually_replay_vkCreateSwapchainKHR(packet_vkCreateSwapchainKHR* pPacket);
     void manually_replay_vkDestroySwapchainKHR(packet_vkDestroySwapchainKHR* pPacket);
@@ -379,6 +395,11 @@ class vkReplay {
     VkResult manually_replay_vkGetQueryPoolResults(packet_vkGetQueryPoolResults *pPacket);
     void manually_replay_vkCmdTraceRaysKHR(packet_vkCmdTraceRaysKHR *pPacket);
     void manually_replay_vkCmdCopyBufferRemap(packet_vkCmdCopyBuffer *pPacket);
+    VkResult manually_replay_vkGetMemoryAndroidHardwareBufferANDROID(packet_vkGetMemoryAndroidHardwareBufferANDROID *pPacket);
+    VkResult manually_replay_vkAcquireProfilingLockKHR(packet_vkAcquireProfilingLockKHR* pPacket);
+    void manually_replay_vkCmdPipelineBarrier2KHR(packet_vkCmdPipelineBarrier2KHR *pPacket);
+    void manually_replay_vkCmdPipelineBarrier2(packet_vkCmdPipelineBarrier2 *pPacket);
+
     void process_screenshot_list(const char* list) {
         std::string spec(list), word;
         size_t start = 0, comma = 0;
@@ -545,7 +566,8 @@ class vkReplay {
     std::unordered_map<VkDeviceAddress, objDeviceAddr> traceDeviceAddrToReplayDeviceAddr4Buf;
     std::unordered_map<VkDeviceAddress, objDeviceAddr> traceDeviceAddrToReplayDeviceAddr4AS;
     std::unordered_map<VkBuffer, VkDeviceMemory> traceBufferToReplayMemory;
-    std::unordered_map<VkBuffer, std::vector<VkBuffer>> traceBufferToCopyBuffer;
+    std::unordered_map<VkBuffer, VkBufferUsageFlags> replayBufferToUsageFlag;
+    std::unordered_map<VkDeviceMemory, VkMemoryAllocateFlags> traceMemoryToAllocateFlag;
     std::unordered_map<VkAccelerationStructureKHR, void*> replayASToCopyAddress;
     std::unordered_map<void*, traceMemoryMapInfo> traceAddressToTraceMemoryMapInfo;
     std::unordered_map<VkBuffer, VkDeviceSize> replayBufferToASBuildSizes;
@@ -561,12 +583,24 @@ class vkReplay {
     std::unordered_map<VkBuffer, VkDeviceMemory> replayBufferToReplayDeviceMemory;
     std::unordered_map<VkBuffer, VkDeviceSize> replayBufferToReplayDeviceMemoryOffset;
     std::unordered_map<VkDeviceAddress, objDeviceAddr>::iterator findClosestAddress(VkDeviceAddress addr);
-    std::unordered_map<VkBuffer, objInstanceMemInfo> traceInstanceBufferToMemInfo;
     std::unordered_map<VkImage, virtualFence> virtualImageToDeviceFence;
-    void remapReplayPatternBufferDeviceAddresss(VkDevice remappedDevice, VkDeviceMemory traceBufMemory, void* pData);
-    void remapReplayInstanceBufferDeviceAddresss(VkDevice remappedDevice, VkDeviceMemory dataMemory, VkDeviceSize size, uint64_t offset, VkBool32 arrayOfPointers);
-    void remapInstanceBufferMemoryDeviceAddress(VkBuffer traceBuffer, objInstanceMemInfo instanceMemInfo);
+#if defined(ANDROID)
+    std::unordered_set<VkDeviceMemory> exportedReplayDeviceMemory;
+    std::unordered_map<AHardwareBuffer*, AHardwareBuffer*> traceAHardwareBufferToReplayAHardwareBuffer;
+#endif
+#if defined(ARM_LINUX_64)
+    std::unordered_map<AHardwareBuffer*, int> traceAHardwareBufferToReplayFd;
+    std::unordered_map<VkImage,VkMemoryRequirements> externalImageMemoryRequirements;
+    std::unordered_map<VkDeviceMemory, int> traceDeviceMemoryToDmaBufferFd;
+    std::unordered_map<AHardwareBuffer*, int> traceAHardwareBufferToDmaBufferFd;
+    std::unordered_set<int> openedDmaBufferFd;
+#endif
 
+    void remapInstanceBufferDeviceAddressInMapedMemory(VkDevice remappedDevice, VkDeviceMemory traceMemory, VkDeviceMemory remappedMemory, const void *pSrcData, VkDeviceSize size);
+    void remapInstanceBufferDeviceAddressInFlushMemory(VkDevice remappedDevice, VkDeviceMemory traceMemory, VkDeviceMemory remappedMemory, const void *pSrcData);
+    void remapReplayPatternBufferDeviceAddresss(VkDevice remappedDevice, VkDeviceMemory traceBufMemory, void* pData);
+    void remapReplayInstanceBufferDeviceAddresss(VkDevice remappedDevice, VkDeviceMemory dataMemory, VkDeviceSize size, uint64_t offset);
+    void remapInstanceBufferDeviceAddressInCopyBuffer(VkBuffer traceSrcBuffer, VkBuffer traceDstBuffer, VkDeviceSize srcOffset, VkDeviceSize copySize);
     uint32_t swapchainRefCount = 0;
     uint32_t surfRefCount = 0;
 

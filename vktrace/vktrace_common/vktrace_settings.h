@@ -101,9 +101,10 @@ typedef struct vkreplayer_settings {
     unsigned int skipGetFenceStatus;
     char* skipFenceRanges;
     BOOL finishBeforeSwap;
-    char* forcePipelineShadingRate;
+    char* forceVariableRateShading;
     BOOL enableVirtualSwapchain;
     BOOL enableVscPerfMode;
+    unsigned int forceUseFilter;
 } vkreplayer_settings;
 
 int vktrace_SettingGroup_init(vktrace_SettingGroup* pSettingGroup, FILE* pSettingsFile, int argc, char* argv[],

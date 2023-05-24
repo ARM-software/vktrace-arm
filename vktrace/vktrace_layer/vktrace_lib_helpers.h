@@ -79,9 +79,17 @@ typedef struct _VKMemInfo {
     unsigned int capacity;
 } VKMemInfo;
 
+#if VK_ANDROID_frame_boundary
+#include "vulkan/vulkan.h"
+typedef VkResult (VKAPI_PTR *PFN_vkFrameBoundaryANDROID)(VkDevice device, VkSemaphore semaphore, VkImage image);
+static VKAPI_ATTR VkResult VKAPI_CALL StubFrameBoundaryANDROID(VkDevice device, VkSemaphore semaphore, VkImage image) { vktrace_LogAlways("VKAPI_CALL StubFrameBoundaryANDROID"); return VK_SUCCESS; };
+#endif
 typedef struct _layer_device_data {
     VkLayerDispatchTable devTable;
     bool KHRDeviceSwapchainEnabled;
+#if VK_ANDROID_frame_boundary
+    PFN_vkFrameBoundaryANDROID  FrameBoundaryANDROID;
+#endif
 } layer_device_data;
 
 typedef struct _layer_instance_data {
@@ -225,6 +233,18 @@ static void add_new_handle_to_mem_info(const VkDeviceMemory handle, uint32_t mem
         entry->pData = (uint8_t *)pData;  // NOTE: VKFreeMemory will free this mem, so no malloc()
     }
     vktrace_leave_critical_section(&g_memInfoLock);
+}
+
+static uint32_t find_mem_type_index(const VkMemoryPropertyFlags flags) {
+    uint32_t memTypeIdx = 0;
+    vktrace_enter_critical_section(&g_memInfoLock);
+    for (memTypeIdx = 0; memTypeIdx < g_savedDevMemProps.memoryTypeCount; memTypeIdx++) {
+        if (g_savedDevMemProps.memoryTypes[memTypeIdx].propertyFlags | flags) {
+            break;
+        }
+    }
+    vktrace_leave_critical_section(&g_memInfoLock);
+    return memTypeIdx;
 }
 
 static void add_data_to_mem_info(const VkDeviceMemory handle, VkDeviceSize rangeSize, VkDeviceSize rangeOffset, void *pData) {
@@ -457,6 +477,7 @@ static void add_VkGraphicsPipelineCreateInfos_to_trace_packet(vktrace_trace_pack
 }
 
 uint64_t getVkComputePipelineCreateInfosAdditionalSize(uint32_t createInfoCount, const VkComputePipelineCreateInfo *pCreateInfos);
+uint64_t getVkRayTracingPipelineCreateInfoKHRSize(const VkRayTracingPipelineCreateInfoKHR* pCreateInfos);
 
 static void add_VkComputePipelineCreateInfos_to_trace_packet(vktrace_trace_packet_header *pHeader,
                                                              VkComputePipelineCreateInfo *pPacket,

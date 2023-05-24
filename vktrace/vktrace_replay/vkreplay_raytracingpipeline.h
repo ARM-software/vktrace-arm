@@ -68,6 +68,8 @@ struct RayTracingPipelineShaderInfo {
     }
 
     void createHandleDataBuffer(VkDevice device);
+    void transitionBuffer(VkCommandBuffer commandBuffer, VkBuffer buffer, VkPipelineStageFlags srcStageMask, VkPipelineStageFlags dstStageMask,
+                          VkAccessFlags srcAccessMask, VkAccessFlags dstAccessMask, VkDeviceSize offset, VkDeviceSize size);
     void copySBT_CPU(const VkCommandBuffer &remappedcommandBuffer, const VkDeviceMemory &srcMemory, ShaderType shaderType, int offset);
     void copySBT_GPU(const VkCommandBuffer &remappedCommandBuffer, const VkBuffer &srcBuffer, ShaderType shaderType, int offset);
     void writeSBT_CPU(void *pData, ShaderType shaderType);
@@ -116,6 +118,7 @@ public:
     virtual void addSbtBufferSize(VkBuffer buffer, VkDeviceSize size) = 0;
     virtual void addSbtCandidateMemory(VkDeviceMemory memory, VkDeviceSize origSize) = 0;
     virtual void addSbtBufferAddress(VkBuffer buffer, VkDeviceAddress address) = 0;
+    virtual void delSbtBufferAddress(VkBuffer buffer, VkDeviceAddress address) = 0;
     virtual void addSbtBufferMemory(VkBuffer buffer, VkDeviceMemory memory) = 0;
     virtual VkResult getRayTracingShaderGroupHandles(packet_vkGetRayTracingShaderGroupHandlesKHR *pPacket) = 0;
     virtual VkResult createRayTracingPipelinesKHR(packet_vkCreateRayTracingPipelinesKHR *pPacket) = 0;
@@ -129,6 +132,7 @@ class RayTracingPipelineHandlerVer1 : public RayTracingPipelineHandler {
     void addSbtBufferSize(VkBuffer buffer, VkDeviceSize size);
     void addSbtCandidateMemory(VkDeviceMemory memory, VkDeviceSize origSize);
     void addSbtBufferAddress(VkBuffer buffer, VkDeviceAddress address);
+    void delSbtBufferAddress(VkBuffer buffer, VkDeviceAddress address);
     void addSbtBufferMemory(VkBuffer buffer, VkDeviceMemory memory);
     VkResult getRayTracingShaderGroupHandles(packet_vkGetRayTracingShaderGroupHandlesKHR *pPacket);
     VkResult createRayTracingPipelinesKHR(packet_vkCreateRayTracingPipelinesKHR *pPacket);

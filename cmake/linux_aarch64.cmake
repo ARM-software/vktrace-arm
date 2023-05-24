@@ -21,3 +21,5 @@ SET(CMAKE_ASM_COMPILER aarch64-linux-gnu-as)
 SET(ARCH aarch64)
 
 set(CC_HOST "aarch64-linux-gnu")
+
+add_definitions(-DARM_LINUX_64)

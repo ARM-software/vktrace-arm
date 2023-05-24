@@ -19,6 +19,7 @@
 #include "vktrace_vk_vk_packets.h"
 #include "vktrace_vk_packet_id.h"
 #include "vulkan/vulkan.h"
+#include "vktrace_pageguard_memorycopy.h"
 
 // defined in vktrace_lib_trace.cpp
 extern layer_device_data *mdd(void *object);
@@ -434,6 +435,14 @@ vktrace_trace_packet_header *vkMapMemory(bool makeCall, VkDevice device, VkDevic
     // actually map the memory if it was not already mapped.
     if (makeCall) {
         result = mdd(device)->devTable.MapMemory(device, memory, offset, size, flags, &(*ppData));
+    } else {
+        // When reading buffer resource data from vkMapeMemory ppdata, invalidate non-coherent memory after map
+        VkMappedMemoryRange invalidateRange = { VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE };
+        invalidateRange.pNext = nullptr;
+        invalidateRange.memory = memory;
+        invalidateRange.offset = offset;
+        invalidateRange.size = size;
+        mdd(device)->devTable.InvalidateMappedMemoryRanges(device, 1, &invalidateRange);
     }
 
     vktrace_set_packet_entrypoint_end_time(pHeader);
@@ -470,6 +479,68 @@ vktrace_trace_packet_header *vkUnmapMemory(bool makeCall, VkDeviceSize size, voi
     pPacket->device = device;
     pPacket->memory = memory;
     vktrace_finalize_trace_packet(pHeader);
+    return pHeader;
+}
+
+vktrace_trace_packet_header *vkFlushMappedMemoryRanges( bool makeCall,
+                                                        VkDevice device, 
+                                                        uint32_t memoryRangeCount,
+                                                        const VkMappedMemoryRange* pMemoryRanges,
+                                                        void** ppData,
+                                                        VkDeviceSize* pDataSize)
+{
+    vktrace_trace_packet_header* pHeader;
+    uint64_t rangesSize = sizeof(VkMappedMemoryRange) * memoryRangeCount;
+    uint64_t dataSize = 0;
+    uint32_t i;
+
+    for (i = 0; i < memoryRangeCount; i++)
+    {
+        dataSize += pDataSize[i];
+    }
+
+    CREATE_TRACE_PACKET(vkFlushMappedMemoryRanges, rangesSize + sizeof(void*) * memoryRangeCount + dataSize + sizeof(PageGuardChangedBlockInfo)*2*memoryRangeCount);
+
+    packet_vkFlushMappedMemoryRanges* pPacket = (packet_vkFlushMappedMemoryRanges*)pHeader->pBody;
+    pPacket = interpret_body_as_vkFlushMappedMemoryRanges(pHeader);
+    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pMemoryRanges), rangesSize, pMemoryRanges);
+    vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pMemoryRanges));
+
+    void** ppTmpData = (void**)malloc(memoryRangeCount * sizeof(void*));
+    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->ppData), sizeof(void*) * memoryRangeCount, ppTmpData);
+    free(ppTmpData);
+
+    // The expected memory layout for memory range data
+    // PageGuardChangedBlockInfo[2], the first block contains the overall block info
+    // pData, the real data
+    PageGuardChangedBlockInfo pgBlockInfo[2];
+    memset((void*)pgBlockInfo, 0, sizeof(PageGuardChangedBlockInfo)*2);
+
+    for (i = 0; i < memoryRangeCount; i++)
+    {
+        pgBlockInfo[0].length = pDataSize[i];
+        pgBlockInfo[0].offset = 1;
+        pgBlockInfo[1].length = pDataSize[i];
+        pgBlockInfo[1].offset = pMemoryRanges[i].offset;
+        // As the replayer always think there is a continous memory layout between pgBlockInfo[] and pData
+        // But here we will add pgBlockInfo[] and pData by two vktrace_add_buffer_to_trace_packet calls
+        // and inside vktrace_add_buffer_to_trace_packet, it always want the size to be aligned to 4
+        // this may cause pgBlockInfo[] + pData is not continously, so assert here
+        // If we hit the assert fail, we have to add these two data by one call, which may need a new buffer allocated
+        assert(ROUNDUP_TO_4(sizeof(PageGuardChangedBlockInfo)*2) == sizeof(PageGuardChangedBlockInfo)*2);
+        vktrace_add_buffer_to_trace_packet(pHeader, (void **)&(pPacket->ppData[i]),sizeof(PageGuardChangedBlockInfo)*2, pgBlockInfo);
+        uint8_t* offset = (uint8_t*)pPacket->ppData[i] + sizeof(PageGuardChangedBlockInfo)*2;
+        vktrace_add_buffer_to_trace_packet(pHeader, (void**)&offset, pDataSize[i], ppData[i]);
+        vktrace_finalize_buffer_address(pHeader, (void **)&(pPacket->ppData[i]));
+    }
+    vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->ppData));
+    pPacket->device = device;
+    pPacket->memoryRangeCount = memoryRangeCount;
+    vktrace_finalize_trace_packet(pHeader);
+
+    if (makeCall) {
+       mdd(device)->devTable.FlushMappedMemoryRanges(device,memoryRangeCount,pMemoryRanges);
+    }
     return pHeader;
 }
 
@@ -1306,6 +1377,46 @@ vktrace_trace_packet_header *vkCreateComputePipelines(bool makeCall, VkDevice de
 }
 
 //=====================================================================
+vktrace_trace_packet_header *vkCreateRayTracingPipelinesKHR(bool makeCall, VkDevice device,
+                                                      VkDeferredOperationKHR deferredOperation, VkPipelineCache pipelineCache,
+                                                      uint32_t createInfoCount, const VkRayTracingPipelineCreateInfoKHR *pCreateInfos,
+                                                      const VkAllocationCallbacks *pAllocator, VkPipeline *pPipelines) {
+    VkResult result = VK_SUCCESS;
+    vktrace_trace_packet_header* pHeader;
+    packet_vkCreateRayTracingPipelinesKHR* pPacket = NULL;
+    size_t total_size = 0;
+    for (uint32_t i = 0; i < createInfoCount; i++) {
+        total_size += getVkRayTracingPipelineCreateInfoKHRSize(&pCreateInfos[i]);
+    }
+    CREATE_TRACE_PACKET(vkCreateRayTracingPipelinesKHR, createInfoCount * sizeof(VkRayTracingPipelineCreateInfoKHR) + total_size +
+                                                      sizeof(VkAllocationCallbacks) + createInfoCount * sizeof(VkPipeline));
+
+    if (makeCall) {
+        result = mdd(device)->devTable.CreateRayTracingPipelinesKHR(device, deferredOperation, pipelineCache, createInfoCount, pCreateInfos, pAllocator, pPipelines);
+    }
+    vktrace_set_packet_entrypoint_end_time(pHeader);
+    pPacket = interpret_body_as_vkCreateRayTracingPipelinesKHR(pHeader);
+    pPacket->device = device;
+    pPacket->deferredOperation = deferredOperation;
+    pPacket->pipelineCache = pipelineCache;
+    pPacket->createInfoCount = createInfoCount;
+    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pCreateInfos), createInfoCount * sizeof(VkRayTracingPipelineCreateInfoKHR), pCreateInfos);
+    for (uint32_t i = 0; i < createInfoCount; ++i) {
+        VkRayTracingPipelineCreateInfoKHR* temp = (VkRayTracingPipelineCreateInfoKHR* )&(pPacket->pCreateInfos[i]);
+        add_VkRayTracingPipelineCreateInfoKHR_to_packet(pHeader, (VkRayTracingPipelineCreateInfoKHR**)&temp, (VkRayTracingPipelineCreateInfoKHR*)&pCreateInfos[i]);
+    }
+
+    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pAllocator), sizeof(VkAllocationCallbacks), NULL);
+    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pPipelines), createInfoCount * sizeof(VkPipeline), pPipelines);
+    pPacket->result = result;
+    vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pCreateInfos));
+    vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pAllocator));
+    vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pPipelines));
+    vktrace_finalize_trace_packet(pHeader);
+    return pHeader;
+}
+
+//=====================================================================
 vktrace_trace_packet_header *vkDestroyPipeline(bool makeCall, VkDevice device, VkPipeline pipeline,
                                                const VkAllocationCallbacks *pAllocator) {
     vktrace_trace_packet_header *pHeader;
@@ -1602,6 +1713,42 @@ vktrace_trace_packet_header *vkCmdCopyBufferToImage(bool makeCall, VkCommandBuff
     return pHeader;
 }
 
+//=====================================================================
+vktrace_trace_packet_header * vkGetDeviceQueue(bool makeCall,  VkDevice device, uint32_t queueFamilyIndex, uint32_t queueIndex, VkQueue* pQueue) {
+    if (makeCall) {
+        mdd(device)->devTable.GetDeviceQueue(device, queueFamilyIndex, queueIndex, pQueue);
+    }
+    vktrace_trace_packet_header *pHeader;
+    packet_vkGetDeviceQueue *pPacket = NULL;
+    CREATE_TRACE_PACKET(vkGetDeviceQueue, sizeof(VkQueue));
+    vktrace_set_packet_entrypoint_end_time(pHeader);
+    pPacket = interpret_body_as_vkGetDeviceQueue(pHeader);
+    pPacket->device = device;
+    pPacket->queueFamilyIndex = queueFamilyIndex;
+    pPacket->queueIndex = queueIndex;
+    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pQueue), sizeof(VkQueue), pQueue);
+    vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pQueue));
+    vktrace_finalize_trace_packet(pHeader);
+    return pHeader;
+}
+
+//=====================================================================
+vktrace_trace_packet_header * vkGetBufferDeviceAddressKHR(bool makeCall, VkDevice device, const VkBufferDeviceAddressInfo* pInfo, VkDeviceAddress* addr) {
+    if (makeCall) {
+        *addr = mdd(device)->devTable.GetBufferDeviceAddressKHR(device, pInfo);
+    }
+    vktrace_trace_packet_header *pHeader;
+    packet_vkGetBufferDeviceAddressKHR *pPacket = NULL;
+    CREATE_TRACE_PACKET(vkGetBufferDeviceAddressKHR, sizeof(VkBufferDeviceAddressInfo));
+    pPacket = interpret_body_as_vkGetBufferDeviceAddressKHR(pHeader);
+    pPacket->device = device;
+    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pInfo), sizeof(VkBufferDeviceAddressInfo), pInfo);
+    pPacket->result = *addr;
+    vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pInfo));
+
+    return pHeader;
+
+}
 //=====================================================================
 }  // namespace generate
 }  // namespace trim

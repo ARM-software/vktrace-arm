@@ -81,10 +81,7 @@ struct StringSetting inputFilename;
 const uint32_t MAX_BUFFER_SIZE = 255;
 typedef enum { VK_LOG_NONE = 0, VK_LOG_ERROR, VK_LOG_WARNING, VK_LOG_VERBOSE, VK_LOG_DEBUG } VkLogLevel;
 
-void AndroidGetEnv(const char *key, std::string& value) {
-    std::string command("getprop ");
-    command += key;
-
+void AndroidExec(std::string command, std::string& value) {
     std::string android_env;
     FILE *pipe = popen(command.c_str(), "r");
     if (pipe != nullptr) {
@@ -103,6 +100,18 @@ void AndroidGetEnv(const char *key, std::string& value) {
         value = android_env;
     } else {
         value = "";
+    }
+}
+
+void AndroidGetEnv(const char *key, std::string& value) {
+    std::string command("getprop ");
+    command += key;
+
+    AndroidExec(command, value);
+    if (value.length() <= 0) {
+        std::string debug_command("getprop debug.");
+        debug_command += key;
+        AndroidExec(debug_command, value);
     }
 }
 #endif
@@ -1464,7 +1473,7 @@ VKAPI_ATTR void VKAPI_CALL GetPhysicalDeviceProperties(VkPhysicalDevice physical
     const auto dt = instance_dispatch_table(physicalDevice);
 
     PhysicalDeviceData *pdd = PhysicalDeviceData::Find(physicalDevice);
-    
+
     dt->GetPhysicalDeviceProperties(physicalDevice, pProperties);
     if (pdd) {
         VkPhysicalDeviceType localDeviceType = pProperties->deviceType;

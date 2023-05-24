@@ -67,9 +67,10 @@ static vkreplayer_settings s_defaultVkReplaySettings = {
                                                             .skipGetFenceStatus = 0,
                                                             .skipFenceRanges = NULL,
                                                             .finishBeforeSwap = FALSE,
-                                                            .forcePipelineShadingRate = NULL,
+                                                            .forceVariableRateShading = NULL,
                                                             .enableVirtualSwapchain = FALSE,
                                                             .enableVscPerfMode = FALSE,
+                                                            .forceUseFilter = UINT_MAX,
                                                        };
 
 vktrace_SettingInfo g_vk_settings_info[] = {
@@ -313,14 +314,14 @@ vktrace_SettingInfo g_vk_settings_info[] = {
      {&g_vkReplaySettings.skipGetFenceStatus},
      {&s_defaultVkReplaySettings.skipGetFenceStatus},
      TRUE,
-     "Skip the GetFenceStatus() calls, 0 - Not skip; 1 - Skip all the unsuccess calls; 2 - Skip all calls."},
+     "Skip vkGetFenceStatus() calls, 0 - Not skip; 1 - Skip all unsuccessful calls; 2 - Skip all calls."},
     {"sfr",
      "skipFenceRanges",
      VKTRACE_SETTING_STRING,
      {&g_vkReplaySettings.skipFenceRanges},
      {&s_defaultVkReplaySettings.skipFenceRanges},
      TRUE,
-     "The ranges to skip fences in, defaults to no frames. Has no effect if skipGetFenceStatus is not set. Format is: START_FRAME1-END_FRAME1,START_FRAME2-END_FRAME2,... (all ranges are fully inclusive of both start and end frame)."},
+     "Ranges to skip fences in, defaults to none. No effect if skipGetFenceStatus is not set. Format: START_FRAME1-END_FRAME1,START_FRAME2-END_FRAME2,... (all ranges are fully inclusive of both start and end frame)."},
     {"fbw",
      "finishBeforeSwap",
      VKTRACE_SETTING_BOOL,
@@ -328,13 +329,13 @@ vktrace_SettingInfo g_vk_settings_info[] = {
      {&s_defaultVkReplaySettings.finishBeforeSwap},
      TRUE,
      "inject the vkDeviceWaitIdle function before vkQueuePresent."},
-    {"fpsr",
-     "forcePipelineShadingRate",
+    {"fvrs",
+     "forceVariableRateShading",
      VKTRACE_SETTING_STRING,
-     {&g_vkReplaySettings.forcePipelineShadingRate},
-     {&s_defaultVkReplaySettings.forcePipelineShadingRate},
+     {&g_vkReplaySettings.forceVariableRateShading},
+     {&s_defaultVkReplaySettings.forceVariableRateShading},
      TRUE,
-     "Force enable pipeline shading rate and set fragment size with [width,height], other types of VRS will be overriden."},
+     "Force to enable pipeline shading rate and set fragment size with [width,height], other types of VRS will be overriden."},
     {"evsc",
      "enableVirtualSwapchain",
      VKTRACE_SETTING_BOOL,
@@ -348,7 +349,15 @@ vktrace_SettingInfo g_vk_settings_info[] = {
      {&g_vkReplaySettings.enableVscPerfMode},
      {&s_defaultVkReplaySettings.enableVscPerfMode},
      TRUE,
-     "Enable virtual swapchain performance mode."
+     "Enable virtual swapchain performance mode."},
+    {"fuf",
+     "forceUseFilter",
+     VKTRACE_SETTING_UINT,
+     {&g_vkReplaySettings.forceUseFilter},
+     {&s_defaultVkReplaySettings.forceUseFilter},
+     TRUE,
+     "force filter to fuf value. if NEAREST = 0, LINEAR = 1, CUBIC_EXT = CUBIC_IMG = 2, then only change linear filter to fuf value,\
+      if NEAREST = 256+0, LINEAR = 256+1, CUBIC_EXT = CUBIC_IMG = 256+2, then change any filter to fuf value"
     }
 };
 

@@ -63,6 +63,12 @@ const char* env_var_screenshot_format = "VK_SCREENSHOT_FORMAT";
 const char* env_var_screenshot_prefix = "VK_SCREENSHOT_PREFIX";
 #endif
 
+#if defined(ANDROID)
+static std::string outputfile = "/sdcard/vktrace_result.json";
+#else
+static std::string outputfile = "vktrace_result.json";
+#endif
+
 vktrace_SettingInfo g_settings_info[] = {
     {"o",
      "Open",
@@ -76,7 +82,7 @@ vktrace_SettingInfo g_settings_info[] = {
      VKTRACE_SETTING_STRING,
      {&replaySettings.pTraceFilePath},
      {&replaySettings.pTraceFilePath},
-     TRUE,
+     FALSE,
      "The trace file to open and replay. (Deprecated)"},
     {"pltf",
      "PreloadTraceFile",
@@ -136,10 +142,7 @@ vktrace_SettingInfo g_settings_info[] = {
      {&replaySettings.screenshotList},
      {&replaySettings.screenshotList},
      TRUE,
-     "Generate screenshots. <string> is one of:\n\
-                                         comma separated list of frames\n\
-                                         <start>-<count>-<interval>\n\
-                                         \"all\""},
+     "Make screenshots. <string> is comma separated list of frames, <start>-<count>-<interval>, or \"all\""},
     {"sf",
      "ScreenshotFormat",
      VKTRACE_SETTING_STRING,
@@ -258,7 +261,7 @@ vktrace_SettingInfo g_settings_info[] = {
      {&replaySettings.disableRQAndRTPCaptureReplay},
      {&replaySettings.disableRQAndRTPCaptureReplay},
      TRUE,
-     "Disable ray query and ray tracing capture replay feature,these three values can be combined to use: accelerationStructureCaptureReplay :0x01, bufferDeviceAddressCaptureReplay :0x02, rayTracingPipelineShaderGroupHandleCaptureReplay :0x04."},
+     "Disable capture replay features. Bitfield where accelerationStructure=1, bufferDeviceAddress=2, rayTracingPipelineShaderGroupHandle=4."},
     {"spc",
      "specialPatternConfig",
      VKTRACE_SETTING_UINT,
@@ -335,14 +338,14 @@ vktrace_SettingInfo g_settings_info[] = {
      {&replaySettings.skipGetFenceStatus},
      {&replaySettings.skipGetFenceStatus},
      TRUE,
-     "Skip the GetFenceStatus() calls, 0 - Not skip; 1 - Skip all the unsuccess calls; 2 - Skip all calls."},
+     "Skip vkGetFenceStatus() calls, 0 - Not skip; 1 - Skip all unsuccessful calls; 2 - Skip all calls."},
     {"sfr",
      "skipFenceRanges",
      VKTRACE_SETTING_STRING,
      {&replaySettings.skipFenceRanges},
      {&replaySettings.skipFenceRanges},
      TRUE,
-     "The ranges to skip fences in, defaults to no frames. Has no effect if skipGetFenceStatus is not set. Format is: START_FRAME1-END_FRAME1,START_FRAME2-END_FRAME2,..."},
+     "Ranges to skip fences in, defaults to none. No effect if skipGetFenceStatus is not set. Format: START_FRAME1-END_FRAME1,START_FRAME2-END_FRAME2,..."},
     {"fbw",
      "finishBeforeSwap",
      VKTRACE_SETTING_BOOL,
@@ -350,13 +353,13 @@ vktrace_SettingInfo g_settings_info[] = {
      {&replaySettings.finishBeforeSwap},
      TRUE,
      "inject the vkDeviceWaitIdle function before vkQueuePresent."},
-    {"fpsr",
-     "forcePipelineShadingRate",
+    {"fvrs",
+     "forceVariableRateShading",
      VKTRACE_SETTING_STRING,
-     {&replaySettings.forcePipelineShadingRate},
-     {&replaySettings.forcePipelineShadingRate},
+     {&replaySettings.forceVariableRateShading},
+     {&replaySettings.forceVariableRateShading},
      TRUE,
-     "Force enable pipeline shading rate and set fragment size with [width,height], other types of VRS will be overriden."},
+     "Force to enable pipeline shading rate and set fragment size with [width,height], other types of VRS will be overriden."},
     {"evsc",
      "enableVirtualSwapchain",
      VKTRACE_SETTING_BOOL,
@@ -371,8 +374,16 @@ vktrace_SettingInfo g_settings_info[] = {
      {&replaySettings.enableVscPerfMode},
      TRUE,
      "Enable virtual swapchain performance mode."
+    },
+    {"fuf",
+     "forceUseFilter",
+     VKTRACE_SETTING_UINT,
+     {&replaySettings.forceUseFilter},
+     {&replaySettings.forceUseFilter},
+     TRUE,
+     "force filter to fuf value. if NEAREST = 0, LINEAR = 1, CUBIC_EXT = CUBIC_IMG = 2, then only change linear filter to fuf value,\
+      if NEAREST = 256+0, LINEAR = 256+1, CUBIC_EXT = CUBIC_IMG = 256+2, then change any filter to fuf value"
     }
-
 };
 
 vktrace_SettingGroup g_replaySettingGroup = {"vkreplay", sizeof(g_settings_info) / sizeof(g_settings_info[0]), &g_settings_info[0], nullptr};
@@ -598,11 +609,11 @@ int main_loop(vktrace_replay::ReplayDisplay display, Sequencer& seq, vktrace_tra
                         if (frameNumber > skipFenceRanges[currentSkipRange].second) {
                             currentSkipRange += 1;
                             g_replayer_interface->SetInSkipFenceRange(false);
-                            vktrace_LogAlways("Disabling fence skip at start of frame: %d\n", frameNumber);
+                            vktrace_LogAlways("Disabling fence skip at start of frame: %d", frameNumber);
                         }
                         if ((currentSkipRange < skipFenceRanges.size()) && (frameNumber >= skipFenceRanges[currentSkipRange].first)) {
                             g_replayer_interface->SetInSkipFenceRange(true);
-                            vktrace_LogAlways("Enabling fence skip at start of frame: %d\n", frameNumber);
+                            vktrace_LogAlways("Enabling fence skip at start of frame: %d", frameNumber);
                         }
                     }
 
@@ -718,6 +729,12 @@ int main_loop(vktrace_replay::ReplayDisplay display, Sequencer& seq, vktrace_tra
                 vktrace_LogAlways("The frame range can be preloaded completely!");
             else
                 vktrace_LogAlways("The frame range can't be preloaded completely!");
+        }
+        FILE* fp = fopen(outputfile.c_str(), "w");
+        if (fp)
+        {
+            fprintf(fp, "{ \"result\" : [ { \"fps\" : %f, \"seconds\" : %f, \"start_frame\": %u, \"end_frame\": %u } ] }", fps, static_cast<double>(end_time - start_time) / NANOSEC_IN_ONE_SEC, (unsigned)start_frame, (unsigned)end_frame);
+            fclose(fp);
         }
     } else {
         vktrace_LogError("fps error!");
@@ -847,7 +864,7 @@ static bool readPortabilityTable() {
         if (!vktrace_FileLike_ReadRaw(traceFile, &portabilityTable[0], sizeof(uint64_t) * tableSize)) return false;
     }
     if (!vktrace_FileLike_SetCurrentPosition(traceFile, originalFilePos)) return false;
-    vktrace_LogDebug("portabilityTable size=%" PRIu64 "\n", tableSize);
+    vktrace_LogDebug("portabilityTable size=%" PRIu64, tableSize);
     return true;
 }
 
@@ -1352,6 +1369,42 @@ int vkreplay_main(int argc, char** argv, vktrace_replay::ReplayDisplayImp* pDisp
     uint64_t filesize = (pFileHeader->compress_type == VKTRACE_COMPRESS_TYPE_NONE) ? traceFile->mFileLen : fileHeader.decompress_file_size;
     Sequencer sequencer(traceFile, g_decompressor, filesize);
     err = vktrace_replay::main_loop(disp, sequencer, replayer);
+
+    std::string replayCommand;
+    for (int i = 0; i < argc; ++i) {
+        replayCommand += argv[i];
+        if (i != argc - 1)
+            replayCommand += " ";
+    }
+    vktrace_LogAlways("Replay command: %s", replayCommand.c_str());
+    Json::Value replayOptionsJson;
+    for (int i = 0; i < pAllSettings->numSettings; ++i) {
+        if (strcmp(pAllSettings->pSettings[i].pLongName, "TraceFile") == 0) {   // "TraceFile" has already been deprecated
+            continue;
+        }
+        if (*pAllSettings->pSettings[i].Data.ppChar)
+            replayOptionsJson[pAllSettings->pSettings[i].pShortName] = *pAllSettings->pSettings[i].Data.ppChar;
+        else
+            replayOptionsJson[pAllSettings->pSettings[i].pShortName] = "";
+        unsigned long parameterValue = 0;
+        try {
+            parameterValue = std::stoul(replayOptionsJson[pAllSettings->pSettings[i].pShortName].asString());
+        }
+        catch (std::invalid_argument) { // If the parameter is not a number, std::invalid_argument will be thrown
+            parameterValue = 0;
+        }
+        catch (...) {
+            parameterValue = 0;
+        }
+        if (parameterValue == UINT_MAX) {
+            replayOptionsJson[pAllSettings->pSettings[i].pShortName] = "UINT_MAX";
+        }
+        else if (parameterValue == INT_MAX) {
+            replayOptionsJson[pAllSettings->pSettings[i].pShortName] = "INT_MAX";
+        }
+    }
+
+    vktrace_LogAlways("ReplayOptions: %s", replayOptionsJson.toStyledString().c_str());
 
     for (int i = 0; i < VKTRACE_MAX_TRACER_ID_ARRAY_SIZE; i++) {
         if (replayer[i] != NULL) {

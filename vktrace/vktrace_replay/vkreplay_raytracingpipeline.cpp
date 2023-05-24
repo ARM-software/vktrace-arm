@@ -41,7 +41,7 @@ VkResult vkReplay::manually_replay_vkCreateRayTracingPipelinesKHR(packet_vkCreat
         return VK_ERROR_VALIDATION_FAILED_EXT;
     }
     if (!RayTracingPipelineHandler::platformsCompatible()) {
-        vktrace_LogDebug("Now we require VkPhysicalDeviceRayTracingPipelinePropertiesKHR of trace platform be equal to that of replay platform. So this trace file cannot be replayed.");
+        vktrace_LogError("Now we require VkPhysicalDeviceRayTracingPipelinePropertiesKHR of trace platform be equal to that of replay platform. So this trace file cannot be replayed.");
     }
 
     std::vector<std::vector<VkRayTracingShaderGroupCreateInfoKHR>> modifiedGroups;
@@ -102,9 +102,9 @@ void vkReplay::manually_replay_vkCmdTraceRaysKHR(packet_vkCmdTraceRaysKHR *pPack
 unsigned int findMappableMemoryIdx(VkDevice device) {
     VkPhysicalDevice physicalDevice = g_replay->get_ReplayPhysicalDevices().find(device)->second;
     VkPhysicalDeviceMemoryProperties memoryProperties;
-    vkGetPhysicalDeviceMemoryProperties(physicalDevice, &memoryProperties);
+    g_replay->get_VkLayerInstanceDispatchTable()->GetPhysicalDeviceMemoryProperties(physicalDevice, &memoryProperties);
     for (unsigned int i = 0; i < memoryProperties.memoryTypeCount; ++i) {
-        if (memoryProperties.memoryTypes[i].propertyFlags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT)
+        if (memoryProperties.memoryTypes[i].propertyFlags & (VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT))
             return i;
     }
     return 0;
@@ -123,13 +123,13 @@ void RayTracingPipelineShaderInfo::createHandleDataBuffer(VkDevice device) {
                                   0,
                                   NULL
                                   };
-    VkResult result = vkCreateBuffer(device, &createInfo, NULL, &handleDataBuffer);
+    VkResult result = g_replay->get_VkLayerDispatchTable()->CreateBuffer(device, &createInfo, NULL, &handleDataBuffer);
     if (result != VK_SUCCESS) {
         vktrace_LogError("Error when vkCreateBuffer in line %d of %s, result = %d", __LINE__, __func__, result);
     }
 
     VkMemoryRequirements requirements;
-    vkGetBufferMemoryRequirements(device, handleDataBuffer, &requirements);
+    g_replay->get_VkLayerDispatchTable()->GetBufferMemoryRequirements(device, handleDataBuffer, &requirements);
 
     unsigned int mappableMemoryIdx = findMappableMemoryIdx(device);
 
@@ -139,23 +139,41 @@ void RayTracingPipelineShaderInfo::createHandleDataBuffer(VkDevice device) {
         requirements.size,
         mappableMemoryIdx
     };
-    result = vkAllocateMemory(device, &allocateInfo, NULL, &handleDataMemory);
+    result = g_replay->get_VkLayerDispatchTable()->AllocateMemory(device, &allocateInfo, NULL, &handleDataMemory);
     if (result != VK_SUCCESS) {
         vktrace_LogError("Error when vkAllocateMemory in line %d of %s, result = %d", __LINE__, __func__, result);
     }
 
-    result = vkBindBufferMemory(device, handleDataBuffer, handleDataMemory, 0);
+    result = g_replay->get_VkLayerDispatchTable()->BindBufferMemory(device, handleDataBuffer, handleDataMemory, 0);
     if (result != VK_SUCCESS) {
         vktrace_LogError("Error when vkBindBufferMemory in line %d of %s, result = %d", __LINE__, __func__, result);
     }
 
     void *pData;
-    result = vkMapMemory(device, handleDataMemory, 0, VK_WHOLE_SIZE, 0, &pData);
+    result = g_replay->get_VkLayerDispatchTable()->MapMemory(device, handleDataMemory, 0, VK_WHOLE_SIZE, 0, &pData);
     if (result != VK_SUCCESS) {
         vktrace_LogError("Error when vkMapMemory in line %d of %s, result = %d", __LINE__, __func__, result);
     }
     memcpy(pData, handleData.data(), handleData.size());
-    vkUnmapMemory(device, handleDataMemory);
+    g_replay->get_VkLayerDispatchTable()->UnmapMemory(device, handleDataMemory);
+}
+
+void RayTracingPipelineShaderInfo::transitionBuffer(VkCommandBuffer commandBuffer, VkBuffer buffer, VkPipelineStageFlags srcStageMask, VkPipelineStageFlags dstStageMask,
+                                                    VkAccessFlags srcAccessMask, VkAccessFlags dstAccessMask, VkDeviceSize offset, VkDeviceSize size) {
+
+    // Create a pipeline barrier to make it host readable
+    VkBufferMemoryBarrier bufferMemoryBarrier;
+    bufferMemoryBarrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
+    bufferMemoryBarrier.pNext = NULL;
+    bufferMemoryBarrier.srcAccessMask = srcAccessMask;
+    bufferMemoryBarrier.dstAccessMask = dstAccessMask;
+    bufferMemoryBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    bufferMemoryBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    bufferMemoryBarrier.buffer = buffer;
+    bufferMemoryBarrier.offset = offset;
+    bufferMemoryBarrier.size = size;
+
+    g_replay->get_VkLayerDispatchTable()->CmdPipelineBarrier(commandBuffer, srcStageMask, dstStageMask, 0, 0, NULL, 1, &bufferMemoryBarrier, 0, NULL);
 }
 
 void RayTracingPipelineShaderInfo::copySBT_CPU(const VkCommandBuffer &remappedcommandBuffer, const VkDeviceMemory &srcMemory, ShaderType shaderType, int offset) {
@@ -165,14 +183,14 @@ void RayTracingPipelineShaderInfo::copySBT_CPU(const VkCommandBuffer &remappedco
         replayDevice = it_device->second;
 
     void *pDst;
-    VkResult result = vkMapMemory(replayDevice, shaderBindingTableMemory[shaderType], 0, VK_WHOLE_SIZE, 0, &pDst);
+    VkResult result = g_replay->get_VkLayerDispatchTable()->MapMemory(replayDevice, shaderBindingTableMemory[shaderType], 0, VK_WHOLE_SIZE, 0, &pDst);
     if (result != VK_SUCCESS) {
         vktrace_LogError("Error when vkMapMemory in line %d of %s, result = %d", __LINE__, __func__, result);
     }
 
     devicememoryObj local_mem = g_replay->m_objMapper.find_devicememory(srcMemory);
     void *pSrc;
-    result = vkMapMemory(replayDevice, local_mem.replayDeviceMemory, 0, VK_WHOLE_SIZE, 0, &pSrc);
+    result = g_replay->get_VkLayerDispatchTable()->MapMemory(replayDevice, local_mem.replayDeviceMemory, 0, VK_WHOLE_SIZE, 0, &pSrc);
     if (result != VK_SUCCESS) {
         vktrace_LogError("Error when vkMapMemory in line %d of %s, result = %d", __LINE__, __func__, result);
     }
@@ -189,8 +207,8 @@ void RayTracingPipelineShaderInfo::copySBT_CPU(const VkCommandBuffer &remappedco
 
     writeSBT_CPU(pDst, shaderType);
 
-    vkUnmapMemory(replayDevice, shaderBindingTableMemory[shaderType]);
-    vkUnmapMemory(replayDevice, local_mem.replayDeviceMemory);
+    g_replay->get_VkLayerDispatchTable()->UnmapMemory(replayDevice, shaderBindingTableMemory[shaderType]);
+    g_replay->get_VkLayerDispatchTable()->UnmapMemory(replayDevice, local_mem.replayDeviceMemory);
 }
 
 void RayTracingPipelineShaderInfo::copySBT_GPU(const VkCommandBuffer &remappedCommandBuffer, const VkBuffer &srcBuffer, ShaderType shaderType, int offset) {
@@ -212,36 +230,13 @@ void RayTracingPipelineShaderInfo::copySBT_GPU(const VkCommandBuffer &remappedCo
     else if (shaderType == RayTracingPipelineShaderInfo::CALLABLE)
         pRegions.size = callableSize;
 
-    VkBufferMemoryBarrier bufferMemoryBarrier {
-            VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
-            NULL,
-            VK_ACCESS_SHADER_READ_BIT,
-            VK_ACCESS_TRANSFER_WRITE_BIT,
-            0,
-            0,
-            shaderBindingTableBuffer[shaderType],
-            0,
-            VK_WHOLE_SIZE
-    };
-    g_replay->m_vkDeviceFuncs.CmdPipelineBarrier(remappedCommandBuffer,
-                                                 VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
-                                                 VK_PIPELINE_STAGE_TRANSFER_BIT,
-                                                 VK_DEPENDENCY_DEVICE_GROUP_BIT,
-                                                 0, NULL,
-                                                 1, &bufferMemoryBarrier,
-                                                 0, NULL);
+    transitionBuffer(remappedCommandBuffer, shaderBindingTableBuffer[shaderType], VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                     VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, 0, VK_WHOLE_SIZE);
 
-    vkCmdCopyBuffer(remappedCommandBuffer, local_buffer, shaderBindingTableBuffer[shaderType], 1, &pRegions);
+    g_replay->get_VkLayerDispatchTable()->CmdCopyBuffer(remappedCommandBuffer, local_buffer, shaderBindingTableBuffer[shaderType], 1, &pRegions);
 
-    bufferMemoryBarrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-    bufferMemoryBarrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-    g_replay->m_vkDeviceFuncs.CmdPipelineBarrier(remappedCommandBuffer,
-                                                 VK_PIPELINE_STAGE_TRANSFER_BIT,
-                                                 VK_PIPELINE_STAGE_TRANSFER_BIT,
-                                                 VK_DEPENDENCY_DEVICE_GROUP_BIT,
-                                                 0, NULL,
-                                                 1, &bufferMemoryBarrier,
-                                                 0, NULL);
+    transitionBuffer(remappedCommandBuffer, shaderBindingTableBuffer[shaderType], VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                     VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, 0, VK_WHOLE_SIZE);
 
     writeSBT_GPU(remappedCommandBuffer, shaderType);
 }
@@ -281,26 +276,15 @@ void RayTracingPipelineShaderInfo::writeSBT_GPU(VkCommandBuffer commandBuffer, S
             pRegions.srcOffset = shaderIndices[shaderType][i] * physicalRtProperties.shaderGroupHandleSize;
             pRegions.dstOffset = i * callableStride;
         }
-        vkCmdCopyBuffer(commandBuffer, handleDataBuffer, shaderBindingTableBuffer[shaderType], 1, &pRegions);
+        g_replay->get_VkLayerDispatchTable()->CmdCopyBuffer(commandBuffer, handleDataBuffer, shaderBindingTableBuffer[shaderType], 1, &pRegions);
+        if (i != shaderIndices[shaderType].size() - 1) {
+            transitionBuffer(commandBuffer, shaderBindingTableBuffer[shaderType], VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                            VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, 0, VK_WHOLE_SIZE);
+        }
     }
-    VkBufferMemoryBarrier bufferMemoryBarrier {
-            VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
-            NULL,
-            VK_ACCESS_TRANSFER_WRITE_BIT,
-            VK_ACCESS_SHADER_READ_BIT,
-            0,
-            0,
-            shaderBindingTableBuffer[shaderType],
-            0,
-            VK_WHOLE_SIZE
-    };
-    g_replay->m_vkDeviceFuncs.CmdPipelineBarrier(commandBuffer,
-                                                 VK_PIPELINE_STAGE_TRANSFER_BIT,
-                                                 VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
-                                                 VK_DEPENDENCY_DEVICE_GROUP_BIT,
-                                                 0, NULL,
-                                                 1, &bufferMemoryBarrier,
-                                                 0, NULL);
+
+    transitionBuffer(commandBuffer, shaderBindingTableBuffer[shaderType], VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
+                    VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT, 0, VK_WHOLE_SIZE);
 }
 
 //==========================================================================================
@@ -333,12 +317,12 @@ void RayTracingPipelineHandler::setCurrentRayTracingPipeline(VkPipeline pipeline
 // Some SBT buffer addresses are offset from other SBT buffer addresses in the same pipeline.
 // So find the closest address of addr
 std::unordered_map<VkDeviceAddress, VkBuffer>::iterator RayTracingPipelineHandler::findClosestAddress(VkDeviceAddress addr) {
-    int delta_min = INT_MAX;
+    uint64_t delta_min = ULONG_LONG_MAX;
     auto it_result = sbtAddressToBuffer.end();
     for (auto it = sbtAddressToBuffer.begin(); it != sbtAddressToBuffer.end(); ++it) {
-        int delta = addr - it->first;
-        if (abs(delta) < delta_min) {
-            delta_min = abs(delta);
+        uint64_t delta = addr - it->first;
+        if (addr >= it->first && delta >= 0 && delta < delta_min) {
+            delta_min = delta;
             it_result = it;
         }
     }
@@ -376,13 +360,13 @@ void RayTracingPipelineHandler::createSBT(RayTracingPipelineShaderInfo &shaderIn
     auto it_device = g_replay->replayCommandBufferToReplayDevice.find(remappedcommandBuffer);
     if (it_device != g_replay->replayCommandBufferToReplayDevice.end())
         replayDevice = it_device->second;
-    VkResult result = vkCreateBuffer(replayDevice, &createInfo, NULL, &shaderInfo.shaderBindingTableBuffer[shaderType]);
+    VkResult result = g_replay->get_VkLayerDispatchTable()->CreateBuffer(replayDevice, &createInfo, NULL, &shaderInfo.shaderBindingTableBuffer[shaderType]);
     if (result != VK_SUCCESS) {
         vktrace_LogError("Error when vkCreateBuffer in line %d of %s, result = %d", __LINE__, __func__, result);
     }
 
     VkMemoryRequirements requirements;
-    vkGetBufferMemoryRequirements(replayDevice, shaderInfo.shaderBindingTableBuffer[shaderType], &requirements);
+    g_replay->get_VkLayerDispatchTable()->GetBufferMemoryRequirements(replayDevice, shaderInfo.shaderBindingTableBuffer[shaderType], &requirements);
 
     unsigned int mappableMemoryIdx = findMappableMemoryIdx(replayDevice);
 
@@ -398,12 +382,12 @@ void RayTracingPipelineHandler::createSBT(RayTracingPipelineShaderInfo &shaderIn
         requirements.size,
         mappableMemoryIdx
     };
-    result = vkAllocateMemory(replayDevice, &allocateInfo, NULL, &shaderInfo.shaderBindingTableMemory[shaderType]);
+    result = g_replay->get_VkLayerDispatchTable()->AllocateMemory(replayDevice, &allocateInfo, NULL, &shaderInfo.shaderBindingTableMemory[shaderType]);
     if (result != VK_SUCCESS) {
         vktrace_LogError("Error when vkAllocateMemory in line %d of %s, result = %d", __LINE__, __func__, result);
     }
 
-    result = vkBindBufferMemory(replayDevice, shaderInfo.shaderBindingTableBuffer[shaderType], shaderInfo.shaderBindingTableMemory[shaderType], 0);
+    result = g_replay->get_VkLayerDispatchTable()->BindBufferMemory(replayDevice, shaderInfo.shaderBindingTableBuffer[shaderType], shaderInfo.shaderBindingTableMemory[shaderType], 0);
     if (result != VK_SUCCESS) {
         vktrace_LogError("Error when vkBindBufferMemory in line %d of %s, result = %d", __LINE__, __func__, result);
     }
@@ -413,7 +397,10 @@ void RayTracingPipelineHandler::createSBT(RayTracingPipelineShaderInfo &shaderIn
         NULL,
         shaderInfo.shaderBindingTableBuffer[shaderType]
     };
-    shaderInfo.shaderBindingTableDeviceAddress[shaderType] = vkGetBufferDeviceAddress(replayDevice, &bufferDeviceInfo);
+    shaderInfo.shaderBindingTableDeviceAddress[shaderType] = g_replay->get_VkLayerDispatchTable()->GetBufferDeviceAddress(replayDevice, &bufferDeviceInfo);
+    if (shaderInfo.shaderBindingTableDeviceAddress[shaderType] == 0) {
+        shaderInfo.shaderBindingTableDeviceAddress[shaderType] = g_replay->get_VkLayerDispatchTable()->GetBufferDeviceAddressKHR(replayDevice, &bufferDeviceInfo);
+    }
 }
 
 //==========================================================================================
@@ -423,6 +410,18 @@ VkResult RayTracingPipelineHandlerVer1::getRayTracingShaderGroupHandles(packet_v
     VkDevice remappeddevice = g_replay->m_objMapper.remap_devices(pPacket->device);
 
     auto it = rayTracingPipelineShaderInfos.find(remappedpipeline);
+    if (it == rayTracingPipelineShaderInfos.end()) {
+        vktrace_LogError("Error detected in GetRayTracingShaderGroupHandlesKHR() due to invalid remapped rayTracingPipelineShaderInfos.");
+        return VK_ERROR_VALIDATION_FAILED_EXT;
+    }
+    if (it->second.shaderGroupCount == 0 || RayTracingPipelineShaderInfo::physicalRtProperties.shaderGroupHandleSize == 0) {
+        vktrace_LogError("Error detected in GetRayTracingShaderGroupHandlesKHR() due to invalid physicalRtProperties.");
+        return VK_ERROR_VALIDATION_FAILED_EXT;
+    }
+    if (it->second.handleDataBuffer != VK_NULL_HANDLE) {
+        return VK_SUCCESS;
+    }
+
     it->second.traceHandleSize = pPacket->dataSize;
     size_t dataSize = it->second.shaderGroupCount * RayTracingPipelineShaderInfo::physicalRtProperties.shaderGroupHandleSize;
     if (dataSize < pPacket->dataSize) {
@@ -431,7 +430,7 @@ VkResult RayTracingPipelineHandlerVer1::getRayTracingShaderGroupHandles(packet_v
     it->second.handleData.resize(dataSize);
 
     // No need to remap pData
-    VkResult replayResult = g_replay->m_vkDeviceFuncs.GetRayTracingShaderGroupHandlesKHR(remappeddevice, remappedpipeline, 0, it->second.shaderGroupCount, dataSize, it->second.handleData.data());
+    VkResult replayResult = g_replay->get_VkLayerDispatchTable()->GetRayTracingShaderGroupHandlesKHR(remappeddevice, remappedpipeline, 0, it->second.shaderGroupCount, dataSize, it->second.handleData.data());
     it->second.createHandleDataBuffer(remappeddevice);
 
     return replayResult;
@@ -500,7 +499,7 @@ VkResult RayTracingPipelineHandlerVer1::createRayTracingPipelinesKHR(packet_vkCr
     // No need to remap createInfoCount
     // No need to remap pAllocator
     VkPipeline *local_pPipelines = (VkPipeline *)vktrace_malloc(pPacket->createInfoCount * sizeof(VkPipeline));
-    VkResult replayResult = g_replay->m_vkDeviceFuncs.CreateRayTracingPipelinesKHR(remappeddevice, remappeddeferredOperation, remappedpipelineCache, pPacket->createInfoCount, pPacket->pCreateInfos, pPacket->pAllocator, local_pPipelines);
+    VkResult replayResult = g_replay->get_VkLayerDispatchTable()->CreateRayTracingPipelinesKHR(remappeddevice, remappeddeferredOperation, remappedpipelineCache, pPacket->createInfoCount, pPacket->pCreateInfos, pPacket->pAllocator, local_pPipelines);
     if (replayResult == VK_SUCCESS) {
         for (unsigned int i = 0; i < pPacket->createInfoCount; ++i) {
             g_replay->m_objMapper.add_to_pipelines_map((pPacket->pPipelines)[i], local_pPipelines[i]);
@@ -547,6 +546,18 @@ void RayTracingPipelineHandlerVer1::addSbtBufferAddress(VkBuffer buffer, VkDevic
     }
 }
 
+void RayTracingPipelineHandlerVer1::delSbtBufferAddress(VkBuffer buffer, VkDeviceAddress address) {
+    auto it1 = sbtBufferToMemory.find(buffer);
+    if (it1 != sbtBufferToMemory.end()) {
+        sbtBufferToMemory.erase(it1);
+    }
+
+    auto it2 = sbtAddressToBuffer.find(address);
+    if (it2 != sbtAddressToBuffer.end()) {
+        sbtAddressToBuffer.erase(it2);
+    }
+}
+
 void RayTracingPipelineHandlerVer1::addSbtBufferMemory(VkBuffer buffer, VkDeviceMemory memory) {
     if (sbtBuffer.find(buffer) != sbtBuffer.end() && sbtCandidateMemory.find(memory) != sbtCandidateMemory.end()) {
         MemoryAndAddress ma(memory);
@@ -572,28 +583,31 @@ void RayTracingPipelineHandlerVer1::cmdTraceRaysKHR(packet_vkCmdTraceRaysKHR *pP
         vktrace_LogError("%llu, %s: Cannot find ray tracing pipeline.", pPacket->header->global_packet_index, "vkCmdTraceRays");
         return;
     }
-    it->second.rayGenSize = pPacket->pRaygenShaderBindingTable->size;
-    it->second.rayGenStride = pPacket->pRaygenShaderBindingTable->stride;
-    it->second.missSize = pPacket->pMissShaderBindingTable->size;
-    it->second.missStride = pPacket->pMissShaderBindingTable->stride;
-    it->second.hitSize = pPacket->pHitShaderBindingTable->size;
-    it->second.hitStride = pPacket->pHitShaderBindingTable->stride;
-    it->second.callableSize = pPacket->pCallableShaderBindingTable->size;
-    it->second.callableStride = pPacket->pCallableShaderBindingTable->stride;
-    if (pPacket->pRaygenShaderBindingTable != nullptr && pPacket->pRaygenShaderBindingTable->deviceAddress) {
+    RayTracingPipelineShaderInfo &rtpInfo = it->second;
+    rtpInfo.rayGenSize = pPacket->pRaygenShaderBindingTable->size;
+    rtpInfo.rayGenStride = pPacket->pRaygenShaderBindingTable->stride;
+    rtpInfo.missSize = pPacket->pMissShaderBindingTable->size;
+    rtpInfo.missStride = pPacket->pMissShaderBindingTable->stride;
+    rtpInfo.hitSize = pPacket->pHitShaderBindingTable->size;
+    rtpInfo.hitStride = pPacket->pHitShaderBindingTable->stride;
+    rtpInfo.callableSize = pPacket->pCallableShaderBindingTable->size;
+    rtpInfo.callableStride = pPacket->pCallableShaderBindingTable->stride;
+    if (pPacket->pRaygenShaderBindingTable->size != 0 && pPacket->pRaygenShaderBindingTable) {
+        assert(pPacket->pRaygenShaderBindingTable->deviceAddress);
         int offset = 0;
         auto it2 = sbtAddressToBuffer.find(pPacket->pRaygenShaderBindingTable->deviceAddress);
         if (it2 == sbtAddressToBuffer.end()) {
             vktrace_LogError("Cannot find address for raygen = %llu", pPacket->pRaygenShaderBindingTable->deviceAddress);
             return;
         }
-        if (it->second.shaderBindingTableBuffer[RayTracingPipelineShaderInfo::RAYGEN] == 0) {
-            createSBT(it->second, remappedcommandBuffer, RayTracingPipelineShaderInfo::RAYGEN);
+        if (rtpInfo.shaderBindingTableBuffer[RayTracingPipelineShaderInfo::RAYGEN] == 0) {
+            createSBT(rtpInfo, remappedcommandBuffer, RayTracingPipelineShaderInfo::RAYGEN);
         }
-        it->second.copySBT_GPU(remappedcommandBuffer, it2->second, RayTracingPipelineShaderInfo::RAYGEN, offset);
-        const_cast<VkStridedDeviceAddressRegionKHR*>(pPacket->pRaygenShaderBindingTable)->deviceAddress = it->second.shaderBindingTableDeviceAddress[RayTracingPipelineShaderInfo::RAYGEN];
+        rtpInfo.copySBT_GPU(remappedcommandBuffer, it2->second, RayTracingPipelineShaderInfo::RAYGEN, offset);
+        const_cast<VkStridedDeviceAddressRegionKHR*>(pPacket->pRaygenShaderBindingTable)->deviceAddress = rtpInfo.shaderBindingTableDeviceAddress[RayTracingPipelineShaderInfo::RAYGEN];
     }
-    if (pPacket->pMissShaderBindingTable != nullptr && pPacket->pMissShaderBindingTable->deviceAddress) {
+    if (pPacket->pMissShaderBindingTable->size != 0 && pPacket->pMissShaderBindingTable) {
+        assert(pPacket->pMissShaderBindingTable->deviceAddress);
         int offset = 0;
         auto it2 = sbtAddressToBuffer.find(pPacket->pMissShaderBindingTable->deviceAddress);
         if (it2 == sbtAddressToBuffer.end()) {
@@ -605,13 +619,14 @@ void RayTracingPipelineHandlerVer1::cmdTraceRaysKHR(packet_vkCmdTraceRaysKHR *pP
             return;
         }
         offset = pPacket->pMissShaderBindingTable->deviceAddress - it2->first;
-        if (it->second.shaderBindingTableBuffer[RayTracingPipelineShaderInfo::MISS] == 0) {
-            createSBT(it->second, remappedcommandBuffer, RayTracingPipelineShaderInfo::MISS);
+        if (rtpInfo.shaderBindingTableBuffer[RayTracingPipelineShaderInfo::MISS] == 0) {
+            createSBT(rtpInfo, remappedcommandBuffer, RayTracingPipelineShaderInfo::MISS);
         }
-        it->second.copySBT_GPU(remappedcommandBuffer, it2->second, RayTracingPipelineShaderInfo::MISS, offset);
-        const_cast<VkStridedDeviceAddressRegionKHR*>(pPacket->pMissShaderBindingTable)->deviceAddress = it->second.shaderBindingTableDeviceAddress[RayTracingPipelineShaderInfo::MISS];
+        rtpInfo.copySBT_GPU(remappedcommandBuffer, it2->second, RayTracingPipelineShaderInfo::MISS, offset);
+        const_cast<VkStridedDeviceAddressRegionKHR*>(pPacket->pMissShaderBindingTable)->deviceAddress = rtpInfo.shaderBindingTableDeviceAddress[RayTracingPipelineShaderInfo::MISS];
     }
-    if (pPacket->pHitShaderBindingTable != nullptr && pPacket->pHitShaderBindingTable->deviceAddress) {
+    if (pPacket->pHitShaderBindingTable->size != 0 && pPacket->pHitShaderBindingTable) {
+        assert(pPacket->pHitShaderBindingTable->deviceAddress);
         int offset = 0;
         auto it2 = sbtAddressToBuffer.find(pPacket->pHitShaderBindingTable->deviceAddress);
         if (it2 == sbtAddressToBuffer.end()) {
@@ -623,13 +638,14 @@ void RayTracingPipelineHandlerVer1::cmdTraceRaysKHR(packet_vkCmdTraceRaysKHR *pP
             return;
         }
         offset = pPacket->pHitShaderBindingTable->deviceAddress - it2->first;
-        if (it->second.shaderBindingTableBuffer[RayTracingPipelineShaderInfo::HIT] == 0) {
-            createSBT(it->second, remappedcommandBuffer, RayTracingPipelineShaderInfo::HIT);
+        if (rtpInfo.shaderBindingTableBuffer[RayTracingPipelineShaderInfo::HIT] == 0) {
+            createSBT(rtpInfo, remappedcommandBuffer, RayTracingPipelineShaderInfo::HIT);
         }
-        it->second.copySBT_GPU(remappedcommandBuffer, it2->second, RayTracingPipelineShaderInfo::HIT, offset);
-        const_cast<VkStridedDeviceAddressRegionKHR*>(pPacket->pHitShaderBindingTable)->deviceAddress = it->second.shaderBindingTableDeviceAddress[RayTracingPipelineShaderInfo::HIT];
+        rtpInfo.copySBT_GPU(remappedcommandBuffer, it2->second, RayTracingPipelineShaderInfo::HIT, offset);
+        const_cast<VkStridedDeviceAddressRegionKHR*>(pPacket->pHitShaderBindingTable)->deviceAddress = rtpInfo.shaderBindingTableDeviceAddress[RayTracingPipelineShaderInfo::HIT];
     }
-    if (pPacket->pCallableShaderBindingTable != nullptr && pPacket->pCallableShaderBindingTable->deviceAddress) {
+    if (pPacket->pCallableShaderBindingTable->size != 0 && pPacket->pCallableShaderBindingTable) {
+        assert(pPacket->pCallableShaderBindingTable->deviceAddress);
         int offset = 0;
         auto it2 = sbtAddressToBuffer.find(pPacket->pCallableShaderBindingTable->deviceAddress);
         if (it2 == sbtAddressToBuffer.end()) {
@@ -637,18 +653,18 @@ void RayTracingPipelineHandlerVer1::cmdTraceRaysKHR(packet_vkCmdTraceRaysKHR *pP
             it2 = findClosestAddress(pPacket->pCallableShaderBindingTable->deviceAddress);
         }
         if (it2 == sbtAddressToBuffer.end()) {
-            vktrace_LogError("Cannot find address for callable = %llu", pPacket->pCallableShaderBindingTable->deviceAddress);
+            vktrace_LogWarning("Cannot find address for callable = %llu", pPacket->pCallableShaderBindingTable->deviceAddress);
             return;
         }
         offset = pPacket->pCallableShaderBindingTable->deviceAddress - it2->first;
-        if (it->second.shaderBindingTableBuffer[RayTracingPipelineShaderInfo::CALLABLE] == 0) {
-            createSBT(it->second, remappedcommandBuffer, RayTracingPipelineShaderInfo::CALLABLE);
+        if (rtpInfo.shaderBindingTableBuffer[RayTracingPipelineShaderInfo::CALLABLE] == 0) {
+            createSBT(rtpInfo, remappedcommandBuffer, RayTracingPipelineShaderInfo::CALLABLE);
         }
-        it->second.copySBT_GPU(remappedcommandBuffer, it2->second, RayTracingPipelineShaderInfo::CALLABLE, offset);
+        rtpInfo.copySBT_GPU(remappedcommandBuffer, it2->second, RayTracingPipelineShaderInfo::CALLABLE, offset);
         const_cast<VkStridedDeviceAddressRegionKHR*>(pPacket->pCallableShaderBindingTable)->deviceAddress = it->second.shaderBindingTableDeviceAddress[RayTracingPipelineShaderInfo::CALLABLE];
     }
     // No need to remap width
     // No need to remap height
     // No need to remap depth
-    g_replay->m_vkDeviceFuncs.CmdTraceRaysKHR(remappedcommandBuffer, pPacket->pRaygenShaderBindingTable, pPacket->pMissShaderBindingTable, pPacket->pHitShaderBindingTable, pPacket->pCallableShaderBindingTable, pPacket->width, pPacket->height, pPacket->depth);
+    g_replay->get_VkLayerDispatchTable()->CmdTraceRaysKHR(remappedcommandBuffer, pPacket->pRaygenShaderBindingTable, pPacket->pMissShaderBindingTable, pPacket->pHitShaderBindingTable, pPacket->pCallableShaderBindingTable, pPacket->width, pPacket->height, pPacket->depth);
 }

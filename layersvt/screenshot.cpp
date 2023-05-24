@@ -105,7 +105,13 @@ char *android_exec(const char *cmd) {
 char *android_getenv(const char *key) {
     std::string command("getprop ");
     command += key;
-    return android_exec(command.c_str());
+    char* envValue = android_exec(command.c_str());
+    if (envValue == nullptr) {
+        std::string debug_command("getprop debug.");
+        debug_command += key;
+        envValue = android_exec(debug_command.c_str());
+    }
+    return envValue;
 }
 
 static inline char *local_getenv(const char *name) { return android_getenv(name); }

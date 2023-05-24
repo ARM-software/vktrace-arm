@@ -170,6 +170,7 @@ void add_VkAccelerationStructureBuildGeometryInfoKHR_to_packet(vktrace_trace_pac
                                                                bool hostAddr, char* geometryDataBit);
 void add_VkInstanceCreateInfo_to_packet(vktrace_trace_packet_header* pHeader, VkInstanceCreateInfo** ppStruct, VkInstanceCreateInfo* pInStruct);
 void add_VkDeviceCreateInfo_to_packet(vktrace_trace_packet_header* pHeader, VkDeviceCreateInfo** ppStruct, const VkDeviceCreateInfo* pInStruct);
+void add_VkDependencyInfo_to_packet(vktrace_trace_packet_header* pHeader, VkDependencyInfo** ppStruct, VkDependencyInfo* pInStruct);
 
 void add_VkRayTracingPipelineCreateInfoKHR_to_packet(vktrace_trace_packet_header* pHeader, VkRayTracingPipelineCreateInfoKHR** ppStruct, VkRayTracingPipelineCreateInfoKHR* pInStruct);
 VkRayTracingPipelineCreateInfoKHR* interpret_VkRayTracingPipelineCreateInfoKHR(vktrace_trace_packet_header* pHeader, intptr_t ptr_variable);
@@ -179,6 +180,7 @@ BOOL vktrace_append_portabilitytable(uint16_t packet_id);
 VkAccelerationStructureBuildGeometryInfoKHR* interpret_VkAccelerationStructureBuildGeometryInfoKHR(vktrace_trace_packet_header* pHeader, intptr_t ptr_variable, bool hostAddress);
 VkDebugUtilsLabelEXT* interpret_VkDebugUtilsLabelEXT(vktrace_trace_packet_header* pHeader, intptr_t ptr_variable);
 VkInstanceCreateInfo* interpret_VkInstanceCreateInfo(vktrace_trace_packet_header* pHeader, intptr_t ptr_variable);
+VkDependencyInfo* interpret_VkDependencyInfo(vktrace_trace_packet_header* pHeader, intptr_t ptr_variable);
 VkDeviceCreateInfo* interpret_VkDeviceCreateInfo(vktrace_trace_packet_header* pHeader, intptr_t ptr_variable);
 void interpret_VkPipelineShaderStageCreateInfo(vktrace_trace_packet_header* pHeader, VkPipelineShaderStageCreateInfo* pShader);
 VkDeviceGroupDeviceCreateInfo* interpret_VkDeviceGroupDeviceCreateInfoKHX(vktrace_trace_packet_header* pHeader,

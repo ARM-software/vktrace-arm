@@ -79,6 +79,7 @@ set (HDR_LIST
     vkreplay_vkreplay.h
     vkreplay_preload.h
     vkreplay_pipelinecache.h
+    vkreplay_dmabuffer.h
     ${SRC_DIR}/../layersvt/screenshot_parsing.h
     ${GENERATED_FILES_DIR}/vkreplay_vk_objmapper.h
     ${GENERATED_FILES_DIR}/vktrace_vk_packet_id.h

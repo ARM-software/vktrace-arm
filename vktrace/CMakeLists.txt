@@ -678,9 +678,6 @@ add_custom_command(
     )
 add_custom_target(vktrace_generate_helper_files
     DEPENDS ${VULKANTOOLS_SCRIPTS_DIR}/vktrace_file_generator.py ${VULKANTOOLS_SCRIPTS_DIR}/vt_genvk.py ${VulkanRegistry_DIR}/vk.xml
-            ${GENERATED_FILES_DIR}/vk_struct_size_helper.h ${GENERATED_FILES_DIR}/vk_struct_size_helper.c ${GENERATED_FILES_DIR}/vktrace_vk_packet_id.h
-            ${GENERATED_FILES_DIR}/vktrace_vk_vk_packets.h ${GENERATED_FILES_DIR}/vktrace_vk_vk.h ${GENERATED_FILES_DIR}/vktrace_vk_vk.cpp
-            ${GENERATED_FILES_DIR}/vkreplay_vk_replay_gen.cpp ${GENERATED_FILES_DIR}/vkreplay_vk_objmapper.h ${GENERATED_FILES_DIR}/vkreplay_vk_func_ptrs.h
     )
 
 add_subdirectory(vktrace_common)
