@@ -2,6 +2,7 @@
  *
  * Copyright 2014-2016 Valve Corporation
  * Copyright (C) 2014-2016 LunarG, Inc.
+ * Copyright (c) 2019-2023 ARM Limited
  * All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -105,6 +106,13 @@ typedef struct vkreplayer_settings {
     BOOL enableVirtualSwapchain;
     BOOL enableVscPerfMode;
     unsigned int forceUseFilter;
+    unsigned int scCompressFlag;
+    unsigned int scCompressRate;
+    unsigned int imgCompressFlag;
+    unsigned int imgCompressRate;
+    BOOL convertAndroidFrameBoundary;
+    BOOL fDevBuild2HostBuild;
+    BOOL useTraceSurfaceTransformFlagBit;
 } vkreplayer_settings;
 
 int vktrace_SettingGroup_init(vktrace_SettingGroup* pSettingGroup, FILE* pSettingsFile, int argc, char* argv[],

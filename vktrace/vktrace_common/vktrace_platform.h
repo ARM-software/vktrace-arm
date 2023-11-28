@@ -2,6 +2,7 @@
  *
  * Copyright 2014-2016 Valve Corporation
  * Copyright (C) 2014-2016 LunarG, Inc.
+ * Copyright (C) 2022-2023 ARM Limited
  * All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -23,6 +24,7 @@
 #pragma once
 
 #define VK_ANDROID_frame_boundary 1
+
 #if defined(PLATFORM_LINUX)
 #define _GNU_SOURCE 1
 #include <unistd.h>

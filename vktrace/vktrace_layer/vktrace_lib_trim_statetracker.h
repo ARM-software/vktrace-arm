@@ -1,5 +1,6 @@
 /*
 * Copyright (c) 2016 Advanced Micro Devices, Inc. All rights reserved.
+* Copyright (C) 2020-2023 ARM Limited
 *
 * Licensed under the Apache License, Version 2.0 (the "License");
 * you may not use this file except in compliance with the License.
@@ -222,6 +223,7 @@ typedef struct _Trim_ObjectInfo {
             VkExtent3D extent;
             uint32_t mipLevels;
             uint32_t arrayLayers;
+            VkImageTiling tiling;
             VkSharingMode sharingMode;
             uint32_t queueFamilyIndex;
             VkAccessFlags accessFlags;
@@ -243,7 +245,6 @@ typedef struct _Trim_ObjectInfo {
             vktrace_trace_packet_header *pUnmapMemoryPacket;
             vktrace_trace_packet_header *pGetBufferDeviceAddressPacket;
             vktrace_trace_packet_header *pGetBufferOpaqueCaptureAddress;
-            vktrace_trace_packet_header *pGetAccelerationStructureBuildSizesKHRPacket;
             uint32_t queueFamilyIndex;
             VkAccessFlags accessFlags;
             VkDeviceMemory memory;
@@ -302,6 +303,7 @@ typedef struct _Trim_ObjectInfo {
             uint32_t shaderModuleCreateInfoCount;
             VkShaderModuleCreateInfo *pShaderModuleCreateInfos;
             uint32_t rayTracingShaderGroupHandlesCount;
+            vktrace_trace_packet_header *pCreatepipeline;
             vktrace_trace_packet_header *pGetRayTracingShaderGroupHandlesKHRPackets[INT8_MAX];
         } Pipeline;
         struct _DescriptorPool {  // VkDescriptorPool
@@ -346,6 +348,7 @@ typedef struct _Trim_ObjectInfo {
             vktrace_trace_packet_header *pCreatePacket;
             const VkAllocationCallbacks *pAllocator;
             vktrace_trace_packet_header *pGetAccelerationStructureDeviceAddressPacket;
+            VkBuffer buffer;
         } AccelerationStructure;
         struct _Semaphore {  // VkSemaphore
             vktrace_trace_packet_header *pCreatePacket;
@@ -508,6 +511,7 @@ class StateTracker {
     void remove_DescriptorPool(const VkDescriptorPool var);
     void remove_RenderPass(const VkRenderPass var);
     void remove_PipelineCache(const VkPipelineCache var);
+    void remove_PipelineCache_later(const VkPipelineCache var);
     void remove_Pipeline(const VkPipeline var);
     void remove_Queue(const VkQueue var);
     void remove_Semaphore(const VkSemaphore var);
@@ -596,5 +600,6 @@ class StateTracker {
     std::vector<cmdCopyAsInfo> cmdCopyAccelerationStructure;
 
     std::unordered_set<VkShaderModule> destroyedShaderModules;
+    std::unordered_set<VkPipelineCache> destroyedPipelineCaches;
 };
 }

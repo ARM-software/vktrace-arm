@@ -1,5 +1,5 @@
 /*
- * (C) COPYRIGHT 2019 ARM Limited
+ * (C) COPYRIGHT 2019-2023 ARM Limited
  * ALL RIGHTS RESERVED
  *
  * Licensed under the Apache License, Version 2.0 (the "License");

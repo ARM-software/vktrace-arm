@@ -2,7 +2,7 @@
  *
  * Copyright 2014-2016 Valve Corporation
  * Copyright (C) 2014-2016 LunarG, Inc.
- * Copyright (C) 2019 ARM Limited.
+ * Copyright (C) 2019-2023 ARM Limited.
  * All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -35,7 +35,6 @@ extern "C" {
 #include <inttypes.h>
 #include <sys/types.h>
 #include <sys/stat.h>
-#include <json/json.h>
 
 #include "screenshot_parsing.h"
 
@@ -251,164 +250,6 @@ void loggingCallback(VktraceLogLevel level, const char* pMessage) {
     OutputDebugString(pMessage);
 #endif
 #endif
-}
-
-uint32_t lastPacketThreadId;
-uint64_t lastPacketIndex;
-uint64_t lastPacketEndTime;
-
-void vktrace_appendPortabilityPacket(FILE* pTraceFile, std::vector<uint64_t>& portabilityTable) {
-    vktrace_trace_packet_header hdr;
-    uint64_t one_64 = 1;
-
-    if (pTraceFile == NULL) {
-        vktrace_LogError("tracefile was not created");
-        return;
-    }
-
-    vktrace_LogVerbose("Post processing trace file");
-
-    // Add a word containing the size of the table to the table.
-    // This will be the last word in the file.
-    portabilityTable.push_back(portabilityTable.size());
-
-    // Append the table packet to the trace file.
-    hdr.size = sizeof(hdr) + portabilityTable.size() * sizeof(uint64_t);
-    hdr.global_packet_index = lastPacketIndex + 1;
-    hdr.tracer_id = VKTRACE_TID_VULKAN;
-    hdr.packet_id = VKTRACE_TPI_PORTABILITY_TABLE;
-    hdr.thread_id = lastPacketThreadId;
-    hdr.vktrace_begin_time = hdr.entrypoint_begin_time = hdr.entrypoint_end_time = hdr.vktrace_end_time = lastPacketEndTime;
-    hdr.next_buffers_offset = 0;
-    hdr.pBody = (uintptr_t)NULL;
-    if (0 == Fseek(pTraceFile, 0, SEEK_END) && 1 == fwrite(&hdr, sizeof(hdr), 1, pTraceFile) &&
-        portabilityTable.size() == fwrite(&portabilityTable[0], sizeof(uint64_t), portabilityTable.size(), pTraceFile)) {
-        // Set the flag in the file header that indicates the portability table has been written
-        if (0 == Fseek(pTraceFile, offsetof(vktrace_trace_file_header, portability_table_valid), SEEK_SET))
-            fwrite(&one_64, sizeof(uint64_t), 1, pTraceFile);
-    }
-    portabilityTable.clear();
-    vktrace_LogVerbose("Post processing of trace file completed");
-}
-
-void vktrace_resetFilesize(FILE* pTraceFile, uint64_t decompressFilesize) {
-    if (0 == Fseek(pTraceFile, offsetof(vktrace_trace_file_header, decompress_file_size), SEEK_SET)) {
-        fwrite(&decompressFilesize, sizeof(uint64_t), 1, pTraceFile);
-    }
-}
-
-uint32_t vktrace_appendMetaData(FILE* pTraceFile, const std::vector<uint64_t>& injectedData, uint64_t &meta_data_offset) {
-    Json::Value root;
-    Json::Value injectedCallList;
-    for (uint32_t i = 0; i < injectedData.size(); i++) {
-        injectedCallList.append(injectedData[i]);
-    }
-    root["injectedCalls"] = injectedCallList;
-    auto str = root.toStyledString();
-    vktrace_LogVerbose("Meta data string: %s", str.c_str());
-
-    vktrace_trace_packet_header hdr;
-    uint64_t meta_data_file_offset = 0;
-    uint32_t meta_data_size = str.size() + 1;
-    meta_data_size = ROUNDUP_TO_8(meta_data_size);
-    char *meta_data_str_json = new char[meta_data_size];
-    memset(meta_data_str_json, 0, meta_data_size);
-    strcpy(meta_data_str_json, str.c_str());
-
-    hdr.size = sizeof(hdr) + meta_data_size;
-    hdr.global_packet_index = lastPacketIndex++;
-    hdr.tracer_id = VKTRACE_TID_VULKAN;
-    hdr.packet_id = VKTRACE_TPI_META_DATA;
-    hdr.thread_id = lastPacketThreadId;
-    hdr.vktrace_begin_time = hdr.entrypoint_begin_time = hdr.entrypoint_end_time = hdr.vktrace_end_time = lastPacketEndTime;
-    hdr.next_buffers_offset = 0;
-    hdr.pBody = (uintptr_t)NULL;
-
-    if (0 == Fseek(pTraceFile, 0, SEEK_END)) {
-        meta_data_file_offset = Ftell(pTraceFile);
-        if (1 == fwrite(&hdr, sizeof(hdr), 1, pTraceFile) &&
-            meta_data_size == fwrite(meta_data_str_json, sizeof(char), meta_data_size, pTraceFile)) {
-            if (0 == Fseek(pTraceFile, offsetof(vktrace_trace_file_header, meta_data_offset), SEEK_SET)) {
-                fwrite(&meta_data_file_offset, sizeof(uint64_t), 1, pTraceFile);
-                vktrace_LogVerbose("Meta data at the file offset %llu", meta_data_file_offset);
-            }
-        }
-        meta_data_offset = meta_data_file_offset;
-    } else {
-        vktrace_LogError("File operation failed during append the meta data");
-    }
-    delete[] meta_data_str_json;
-    return meta_data_size;
-}
-
-uint32_t vktrace_appendDeviceFeatures(FILE* pTraceFile, const std::unordered_map<VkDevice, uint32_t>& deviceToFeatures, uint64_t meta_data_offset) {
-    /**************************************************************
-     * JSON format:
-     * "deviceFeatures" : {
-     *      "device" : [
-     *          {  // device 0
-     *              "accelerationStructureCaptureReplay" : 1,
-     *              "bufferDeviceAddressCaptureReplay" : 0,
-     *              "deviceHandle" : "0xaaaaaaaa"
-     *          }
-     *          {  // device 1
-     *              "accelerationStructureCaptureReplay" : 1,
-     *              "bufferDeviceAddressCaptureReplay" : 1,
-     *              "deviceHandle" : "0xbbbbbbbb"
-     *          }
-     *      ]
-     * }
-     * ***********************************************************/
-    Json::Reader reader;
-    Json::Value metaRoot;
-    Json::Value featuresRoot;
-    for (auto e : deviceToFeatures) {
-        char deviceHandle[32] = {0};
-        sprintf(deviceHandle, "%p", e.first);
-        Json::Value features;
-        features["deviceHandle"] = Json::Value(deviceHandle);
-        features["accelerationStructureCaptureReplay"] = Json::Value((e.second & PACKET_TAG_ASCAPTUREREPLAY) ? 1 : 0);
-        features["bufferDeviceAddressCaptureReplay"] = Json::Value((e.second & PACKET_TAG_BUFFERCAPTUREREPLAY) ? 1 : 0);
-        features["rayTracingPipelineShaderGroupHandleCaptureReplay"] = Json::Value((e.second & PACKET_TAG_RTPSGHCAPTUREREPLAY) ? 1 : 0);
-        featuresRoot["device"].append(features);
-    }
-    FileLike fileLike = { .mMode = FileLike::File, .mFile = pTraceFile, 0, nullptr };
-    vktrace_trace_packet_header hdr = {};
-    uint32_t device_features_string_size = 0;
-    if (vktrace_FileLike_SetCurrentPosition(&fileLike, meta_data_offset)
-        && vktrace_FileLike_ReadRaw(&fileLike, &hdr, sizeof(hdr))
-        && hdr.packet_id == VKTRACE_TPI_META_DATA) {
-        uint64_t meta_data_json_str_size = hdr.size - sizeof(hdr);
-        char* meta_data_json_str = new char[meta_data_json_str_size];
-        memset(meta_data_json_str, 0, meta_data_json_str_size);
-        if (!meta_data_json_str || !vktrace_FileLike_ReadRaw(&fileLike, meta_data_json_str, meta_data_json_str_size)) {
-            vktrace_LogError("Reading meta data of the original file failed");
-            return 0;
-        }
-        reader.parse(meta_data_json_str, metaRoot);
-        metaRoot["deviceFeatures"] = featuresRoot;
-        delete[] meta_data_json_str;
-        auto metaStr = metaRoot.toStyledString();
-        uint64_t metaDataStrSize = metaStr.size();
-        metaDataStrSize = ROUNDUP_TO_8(metaDataStrSize);
-        char* metaDataStr = new char[metaDataStrSize];
-        memset(metaDataStr, 0, metaDataStrSize);
-        memcpy(metaDataStr, metaStr.c_str(), metaStr.size());
-        hdr.size = sizeof(hdr) + metaDataStrSize;
-        device_features_string_size = metaDataStrSize - meta_data_json_str_size;
-        vktrace_FileLike_SetCurrentPosition(&fileLike, meta_data_offset);
-        if (1 == fwrite(&hdr, sizeof(hdr), 1, pTraceFile)) {
-            fwrite(metaDataStr, sizeof(char), metaDataStrSize, pTraceFile);
-        }
-        delete[] metaDataStr;
-        auto featureStr = featuresRoot.toStyledString();
-        vktrace_LogVerbose("Device features: %s", featureStr.c_str());
-    } else {
-        vktrace_LogAlways("Dump device features failed");
-        return 0;
-    }
-
-    return device_features_string_size;
 }
 
 // ------------------------------------------------------------------------------------------------

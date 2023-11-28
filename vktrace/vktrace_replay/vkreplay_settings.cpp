@@ -2,7 +2,7 @@
  *
  * Copyright 2014-2018 Valve Corporation, Inc.
  * Copyright (C) 2014-2018 LunarG, Inc.
- * Copyright (C) 2019 ARM Limited.
+ * Copyright (C) 2019-2023 ARM Limited.
  * All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -71,6 +71,13 @@ static vkreplayer_settings s_defaultVkReplaySettings = {
                                                             .enableVirtualSwapchain = FALSE,
                                                             .enableVscPerfMode = FALSE,
                                                             .forceUseFilter = UINT_MAX,
+                                                            .scCompressFlag = UINT_MAX,
+                                                            .scCompressRate = 0,
+                                                            .imgCompressFlag = UINT_MAX,
+                                                            .imgCompressRate = 0,
+                                                            .convertAndroidFrameBoundary = FALSE,
+                                                            .fDevBuild2HostBuild = FALSE,
+                                                            .useTraceSurfaceTransformFlagBit = FALSE,
                                                        };
 
 vktrace_SettingInfo g_vk_settings_info[] = {
@@ -335,7 +342,8 @@ vktrace_SettingInfo g_vk_settings_info[] = {
      {&g_vkReplaySettings.forceVariableRateShading},
      {&s_defaultVkReplaySettings.forceVariableRateShading},
      TRUE,
-     "Force to enable pipeline shading rate and set fragment size with [width,height], other types of VRS will be overriden."},
+     "Force to enable pipeline shading rate and set fragment size with <width>-<height>-<overrideOnly>.\
+      OverrideOnly means it only overrides pipelines that already set shading rate."},
     {"evsc",
      "enableVirtualSwapchain",
      VKTRACE_SETTING_BOOL,
@@ -358,6 +366,62 @@ vktrace_SettingInfo g_vk_settings_info[] = {
      TRUE,
      "force filter to fuf value. if NEAREST = 0, LINEAR = 1, CUBIC_EXT = CUBIC_IMG = 2, then only change linear filter to fuf value,\
       if NEAREST = 256+0, LINEAR = 256+1, CUBIC_EXT = CUBIC_IMG = 256+2, then change any filter to fuf value"
+    },
+    {"sccf",
+     "scCompressFlag",
+     VKTRACE_SETTING_UINT,
+     {&g_vkReplaySettings.scCompressFlag},
+     {&s_defaultVkReplaySettings.scCompressFlag},
+     TRUE,
+     "Set compression flag for swapchain image during replay."
+    },
+    {"sccr",
+     "scCompressRate",
+     VKTRACE_SETTING_UINT,
+     {&g_vkReplaySettings.scCompressRate},
+     {&s_defaultVkReplaySettings.scCompressRate},
+     TRUE,
+     "Set compression fix-rate for swapchain image during replay."
+    },
+    {"imgcf",
+     "imgCompressFlag",
+     VKTRACE_SETTING_UINT,
+     {&g_vkReplaySettings.imgCompressFlag},
+     {&s_defaultVkReplaySettings.imgCompressFlag},
+     TRUE,
+     "Set compression flag for image during replay."
+    },
+    {"imgcr",
+     "imgCompressRate",
+     VKTRACE_SETTING_UINT,
+     {&g_vkReplaySettings.imgCompressRate},
+     {&s_defaultVkReplaySettings.imgCompressRate},
+     TRUE,
+     "Set compression fix-rate for image during replay."
+    },
+    {"cafb",
+     "convertAndroidFrameBoundary",
+     VKTRACE_SETTING_BOOL,
+     {&g_vkReplaySettings.convertAndroidFrameBoundary},
+     {&s_defaultVkReplaySettings.convertAndroidFrameBoundary},
+     TRUE,
+     "Use ANDROID_frame_boundary extension."
+    },
+    {"fdb2hb",
+     "forceDevBuild2HostBuild",
+     VKTRACE_SETTING_BOOL,
+     {&g_vkReplaySettings.fDevBuild2HostBuild},
+     {&s_defaultVkReplaySettings.fDevBuild2HostBuild},
+     TRUE,
+     "Force device build to host build in FF trace preparing stage. [waring] the parameter should be enabled only for FF trace!"
+    },
+    {"utstf",
+     "useTraceSurfaceTransformFlagBit",
+     VKTRACE_SETTING_BOOL,
+     {&g_vkReplaySettings.useTraceSurfaceTransformFlagBit},
+     {&s_defaultVkReplaySettings.useTraceSurfaceTransformFlagBit},
+     TRUE,
+     "use the SurfaceTransformFlagBit recorded in the trace"
     }
 };
 

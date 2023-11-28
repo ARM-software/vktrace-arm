@@ -1,6 +1,7 @@
 /*
  * Copyright (c) 2016-2019 Advanced Micro Devices, Inc. All rights reserved.
  * Copyright (C) 2015-2017 LunarG, Inc.
+ * Copyright (C) 2019-2023 ARM Limited
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -109,7 +110,7 @@ void pageguardExit();
 
 void setFlagTovkFlushMappedMemoryRangesSpecial(PBYTE pOPTPackageData);
 
-void flushAllChangedMappedMemory(vkFlushMappedMemoryRangesFunc pFunc);
+void flushAllChangedMappedMemory(vkFlushMappedMemoryRangesFunc pFunc, VkDevice device);
 
 void flushTargetChangedMappedMemory(LPPageGuardMappedMemory TargetMappedMemory, vkFlushMappedMemoryRangesFunc pFunc,
                                     VkMappedMemoryRange* pMemoryRanges, bool apiFlush);

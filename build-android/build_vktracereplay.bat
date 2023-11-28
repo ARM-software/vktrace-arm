@@ -26,14 +26,14 @@ call ndk-build -j %num_cpus%              || exit /b 1
 REM
 REM create vkreplay APK
 REM
-call android update project -s -p . -t "android-23" || exit /b 1
+call android update project -s -p . -t "android-29" || exit /b 1
 call ant -buildfile vkreplay debug                  || exit /b 1
 
 REM
 REM build cube-with-layers
 REM
 pushd ..\demos\android                               || exit /b 1
-call android update project -s -p . -t "android-23"  || exit /b 1
+call android update project -s -p . -t "android-29"  || exit /b 1
 call ndk-build -j  %num_cpus%                        || exit /b 1
 call ant -buildfile cube-with-layers debug           || exit /b 1
 popd

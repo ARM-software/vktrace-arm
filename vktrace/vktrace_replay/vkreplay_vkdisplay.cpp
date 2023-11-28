@@ -2,7 +2,7 @@
  *
  * Copyright (C) 2015-2017 Valve Corporation
  * Copyright (C) 2015-2017 LunarG, Inc.
- * Copyright (C) 2019 ARM Limited.
+ * Copyright (C) 2019-2023 ARM Limited.
  * All Rights Reserved
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -56,8 +56,9 @@ int GetDisplayImplementation(const char *displayServer, vktrace_replay::ReplayDi
 #if defined(VK_USE_PLATFORM_WAYLAND_KHR)
         // Attempt to load libvkdisplay_wayland and constructor
         auto wayland_handle = dlopen("libvkdisplay_wayland.so", RTLD_NOW);
-        if (dlerror()) {
-            vktrace_LogError("Unable to load wayland library.");
+        const char* error = dlerror();
+        if (error != nullptr) {
+            vktrace_LogError("Unable to load wayland library, error is %s", error);
             return -1;
         }
         auto CreateVkDisplayWayland = reinterpret_cast<vkDisplayWayland *(*)()>(dlsym(wayland_handle, "CreateVkDisplayWayland"));

@@ -2,7 +2,7 @@
  *
  * Copyright (C) 2015-2018 Valve Corporation
  * Copyright (C) 2015-2018 LunarG, Inc.
- * Copyright (C) 2019 ARM Limited
+ * Copyright (C) 2019-2023 ARM Limited
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -171,7 +171,7 @@ typedef enum colorSpaceFormat {
 colorSpaceFormat userColorSpaceFormat = UNDEFINED;
 
 static int g_frameNumber = 0;
-
+static uint32_t renderPassNumber = 0;
 // Flag indicating we have to dump framebuffer by render pass
 static bool dumpFrameBufferByRenderPass = false;
 static uint32_t dumpRenderPassIndex = UINT32_MAX;
@@ -179,13 +179,86 @@ static uint32_t dumpRenderPassIndex = UINT32_MAX;
 static std::string screenshotPrefix = "";
 
 static std::set<VkImage> renderPassImages;
-static unordered_map<VkCommandBuffer, std::set<VkImage>> commandBufferToImages;
 static unordered_map<VkCommandBuffer, std::set<VkCommandBuffer>> commandBufferToCommandBuffers;
 static unordered_map<VkFramebuffer, std::set<VkImage>> framebufferToImages;
 static unordered_map<VkImageView, VkImage> imageViewToImage;
 static unordered_map<VkImage, VkDeviceMemory> imageToMemory;
 static unordered_map<VkRenderPass, uint32_t> renderPassToIndex;
 static unordered_map<VkCommandBuffer, VkRenderPass> commandBufferToRenderPass;
+
+
+// Track allocated resources in writePPM()
+// and clean them up when they go out of scope.
+struct WritePPMCleanupData {
+    VkDevice device;
+    VkLayerDispatchTable *pTableDevice;
+    VkImage image2;
+    VkImage image3;
+    VkDeviceMemory mem2;
+    VkDeviceMemory mem3;
+    bool mem2mapped;
+    bool mem3mapped;
+    VkCommandBuffer commandBuffer;
+    VkCommandPool commandPool;
+    bool ppmSupport;
+
+    WritePPMCleanupData();
+    void CleanupData();
+};
+
+WritePPMCleanupData::WritePPMCleanupData() {
+    device = VK_NULL_HANDLE;
+    pTableDevice = VK_NULL_HANDLE;
+    image2 = VK_NULL_HANDLE;
+    image3 = VK_NULL_HANDLE;
+    mem2 = VK_NULL_HANDLE;
+    mem3 = VK_NULL_HANDLE;
+    mem2mapped = false;
+    mem3mapped = false;
+    commandBuffer = VK_NULL_HANDLE;
+    commandPool = VK_NULL_HANDLE;
+    ppmSupport = true;
+}
+
+void WritePPMCleanupData::CleanupData() {
+    if (mem2mapped) pTableDevice->UnmapMemory(device, mem2);
+    if (mem2) pTableDevice->FreeMemory(device, mem2, NULL);
+    if (image2) pTableDevice->DestroyImage(device, image2, NULL);
+
+    if (mem3mapped) pTableDevice->UnmapMemory(device, mem3);
+    if (mem3) pTableDevice->FreeMemory(device, mem3, NULL);
+    if (image3) pTableDevice->DestroyImage(device, image3, NULL);
+
+    if (commandBuffer) pTableDevice->FreeCommandBuffers(device, commandPool, 1, &commandBuffer);
+    if (commandPool) pTableDevice->DestroyCommandPool(device, commandPool, NULL);
+}
+
+struct  rp_info
+{
+    uint32_t    frame_index;
+    uint32_t    renderpass_index;
+};
+
+struct  dumpImageInfo
+{
+    VkImage renderpassImage;
+    WritePPMCleanupData copyBufData;
+    char dumpFileName[128];
+    dumpImageInfo();
+};
+
+dumpImageInfo::dumpImageInfo() {
+    renderpassImage = VK_NULL_HANDLE;
+    memset(dumpFileName, 0, 128);
+}
+
+static unordered_map<uint32_t, rp_info> rp_frame_info;
+static unordered_map<VkRenderPass, std::vector<dumpImageInfo>> renderPassToImageInfos;
+static unordered_map<VkCommandBuffer, std::vector<dumpImageInfo>> commandBufferToImages;
+
+static uint32_t last_frame = -1;
+static uint32_t rp_index = 0;
+static uint32_t brp_index = 0;
 
 // unordered map: associates a swap chain with a device, image extent, format,
 // and list of images
@@ -205,6 +278,7 @@ typedef struct {
     bool isSwapchainImage;
     uint32_t renderPassIndex;
     uint32_t imageIndex;
+    VkFormat destFormat;
 } ImageMapStruct;
 static unordered_map<VkImage, ImageMapStruct *> imageMap;
 
@@ -505,35 +579,6 @@ static void init_screenshot() {
     readScreenShotRenderPassENV();
 }
 
-// Track allocated resources in writePPM()
-// and clean them up when they go out of scope.
-struct WritePPMCleanupData {
-    VkDevice device;
-    VkLayerDispatchTable *pTableDevice;
-    VkImage image2;
-    VkImage image3;
-    VkDeviceMemory mem2;
-    VkDeviceMemory mem3;
-    bool mem2mapped;
-    bool mem3mapped;
-    VkCommandBuffer commandBuffer;
-    VkCommandPool commandPool;
-    ~WritePPMCleanupData();
-};
-
-WritePPMCleanupData::~WritePPMCleanupData() {
-    if (mem2mapped) pTableDevice->UnmapMemory(device, mem2);
-    if (mem2) pTableDevice->FreeMemory(device, mem2, NULL);
-    if (image2) pTableDevice->DestroyImage(device, image2, NULL);
-
-    if (mem3mapped) pTableDevice->UnmapMemory(device, mem3);
-    if (mem3) pTableDevice->FreeMemory(device, mem3, NULL);
-    if (image3) pTableDevice->DestroyImage(device, image3, NULL);
-
-    if (commandBuffer) pTableDevice->FreeCommandBuffers(device, commandPool, 1, &commandBuffer);
-    if (commandPool) pTableDevice->DestroyCommandPool(device, commandPool, NULL);
-}
-
 // Save an image to a PPM image file.
 //
 // This function issues commands to copy/convert the swapchain image
@@ -547,10 +592,10 @@ WritePPMCleanupData::~WritePPMCleanupData() {
 // expected to assert.  Recovery and clean up are implemented for image memory
 // allocation failures.
 // (TODO) It would be nice to pass any failure info to DebugReport or something.
-static bool writePPM(const char *filename, VkImage image1) {
+static bool preparePPM(VkCommandBuffer commandBuffer, VkImage image1, WritePPMCleanupData &data) {
     VkResult err;
     bool pass;
-    bool ppmSupport = true;
+    VkCommandBuffer cmdBuf = VK_NULL_HANDLE;
 
     // Bail immediately if we can't find the image.
     if (imageMap.empty() || imageMap.find(image1) == imageMap.end()) return false;
@@ -578,6 +623,11 @@ static bool writePPM(const char *filename, VkImage image1) {
     uint32_t const height = imageMap[image1]->imageExtent.height;
     VkFormat const format = imageMap[image1]->format;
     uint32_t const numChannels = FormatComponentCount(format);
+
+    // By DDK, the Stencil format could not be sampled
+    if (FormatIsStencilOnly(format)) {
+        return false;
+    }
 
     // Initial dest format is undefined as we will look for one
     VkFormat destformat = VK_FORMAT_UNDEFINED;
@@ -742,37 +792,57 @@ static bool writePPM(const char *filename, VkImage image1) {
         switch (numChannels) {
             case 4:
                 destformat = VK_FORMAT_R8G8B8A8_UNORM;
+                break;
             case 3:
                 destformat = VK_FORMAT_R8G8B8_UNORM;
+                break;
             case 2:
                 destformat = VK_FORMAT_R8G8_UNORM;
+                break;
             case 1:
                 destformat = VK_FORMAT_R8_UNORM;
+                break;
         }
     }
 
     if ((FormatCompatibilityClass(destformat) != FormatCompatibilityClass(format))) {
-        if (FormatElementSize(format) != 4) {
-#ifdef ANDROID
-            __android_log_print(ANDROID_LOG_DEBUG, "screenshot", "Format %s NOT supported yet! Won't save data to %s.",
-                                string_VkFormat(format), filename);
-#else
-            fprintf(stderr, "Format %s NOT supported yet! Won't save data to %s.\n", string_VkFormat(format), filename);
-#endif
-            return false;
+        if (FormatElementSize(format) != 4 || FormatComponentCount(format) != 4) {
+            if (FormatIsSRGB(format) || FormatIsSFLOAT(format) || FormatIsSINT(format) || FormatIsSSCALED(format) || FormatIsSNORM(format)) {
+                destformat = VK_FORMAT_R8G8B8A8_SRGB;
+            } else {
+                destformat = VK_FORMAT_R8G8B8A8_UNORM;
+            }
         } else {
+            if (FormatElementSize(format) != 4) {
 #ifdef ANDROID
-            __android_log_print(ANDROID_LOG_DEBUG, "screenshot",
-                                "Dest %s format is not compatible with %s format, will save raw data to %s.",
-                                string_VkFormat(destformat), string_VkFormat(format), filename);
+                __android_log_print(ANDROID_LOG_DEBUG, "screenshot", "Format %s NOT supported yet! Won't save data.",
+                                    string_VkFormat(format));
 #else
-            fprintf(stderr, "Dest %s format is not compatible with %s format, will save raw data to %s.\n",
-                    string_VkFormat(destformat), string_VkFormat(format), filename);
+                fprintf(stderr, "Format %s NOT supported yet! Won't save data.\n", string_VkFormat(format));
 #endif
+            } else {
+#ifdef ANDROID
+                __android_log_print(ANDROID_LOG_DEBUG, "screenshot",
+                                    "Dest %s format is not compatible with %s format, will save raw data.",
+                                    string_VkFormat(destformat), string_VkFormat(format));
+#else
+                fprintf(stderr, "Dest %s format is not compatible with %s format, will save raw data.\n",
+                        string_VkFormat(destformat), string_VkFormat(format));
+#endif
+            }
+            destformat = format;
+            data.ppmSupport = false;
         }
-        destformat = format;
-        ppmSupport = false;
+    } else {
+        if (FormatElementSize(format) != 4 || FormatComponentCount(format) != 4) {
+            if (FormatIsSRGB(format) || FormatIsSFLOAT(format) || FormatIsSINT(format) || FormatIsSSCALED(format) || FormatIsSNORM(format)) {
+                destformat = VK_FORMAT_R8G8B8A8_SRGB;
+            } else {
+                destformat = VK_FORMAT_R8G8B8A8_UNORM;
+            }
+        }
     }
+    imageMap[image1]->destFormat = destformat;
 
     // General Approach
     //
@@ -832,7 +902,6 @@ static bool writePPM(const char *filename, VkImage image1) {
 
     // Put resources that need to be cleaned up in a struct with a destructor
     // so that things get cleaned up when this function is exited.
-    WritePPMCleanupData data = {};
     data.device = device;
     data.pTableDevice = pTableDevice;
 
@@ -849,7 +918,7 @@ static bool writePPM(const char *filename, VkImage image1) {
         1,
         VK_SAMPLE_COUNT_1_BIT,
         VK_IMAGE_TILING_LINEAR,
-        VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+        VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
         VK_SHARING_MODE_EXCLUSIVE,
         0,
         NULL,
@@ -860,7 +929,6 @@ static bool writePPM(const char *filename, VkImage image1) {
     // If we need both images, set up image2 to be read/write and tiled.
     if (need2steps) {
         imgCreateInfo2.tiling = VK_IMAGE_TILING_OPTIMAL;
-        imgCreateInfo2.usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
     }
 
     VkMemoryAllocateInfo memAllocInfo = {
@@ -909,52 +977,58 @@ static bool writePPM(const char *filename, VkImage image1) {
         if (VK_SUCCESS != err) return false;
     }
 
-    // We want to create our own command pool to be sure we can use it from this thread
-    VkCommandPoolCreateInfo cmd_pool_info = {};
-    cmd_pool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
-    cmd_pool_info.pNext = NULL;
-    auto it = queueIndexMap.find(queue);
-    assert(it != queueIndexMap.end());
-    cmd_pool_info.queueFamilyIndex = it->second;
-    cmd_pool_info.flags = 0;
-
-    err = pTableDevice->CreateCommandPool(device, &cmd_pool_info, NULL, &data.commandPool);
-    assert(!err);
-
-    // Set up the command buffer.
-    const VkCommandBufferAllocateInfo allocCommandBufferInfo = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO, NULL,
-                                                                data.commandPool, VK_COMMAND_BUFFER_LEVEL_PRIMARY, 1};
-    err = pTableDevice->AllocateCommandBuffers(device, &allocCommandBufferInfo, &data.commandBuffer);
-    assert(!err);
-    if (VK_SUCCESS != err) return false;
-
-    VkDevice cmdBuf = static_cast<VkDevice>(static_cast<void *>(data.commandBuffer));
-    if (deviceMap.find(cmdBuf) != deviceMap.end()) {
-        // Remove element with key cmdBuf from deviceMap so we can replace it
-        deviceMap.erase(cmdBuf);
-    }
-    deviceMap.emplace(cmdBuf, devMap);
     VkLayerDispatchTable *pTableCommandBuffer;
-    pTableCommandBuffer = get_dev_info(cmdBuf)->device_dispatch_table;
+    if (commandBuffer == VK_NULL_HANDLE) {
+        // We want to create our own command pool to be sure we can use it from this thread
+        VkCommandPoolCreateInfo cmd_pool_info = {};
+        cmd_pool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+        cmd_pool_info.pNext = NULL;
+        auto it = queueIndexMap.find(queue);
+        assert(it != queueIndexMap.end());
+        cmd_pool_info.queueFamilyIndex = it->second;
+        cmd_pool_info.flags = 0;
 
-    // We have just created a dispatchable object, but the dispatch table has
-    // not been placed in the object yet.  When a "normal" application creates
-    // a command buffer, the dispatch table is installed by the top-level api
-    // binding (trampoline.c). But here, we have to do it ourselves.
-    if (!devMap->pfn_dev_init) {
-        *((const void **)data.commandBuffer) = *(void **)device;
-    } else {
-        err = devMap->pfn_dev_init(device, (void *)data.commandBuffer);
+        err = pTableDevice->CreateCommandPool(device, &cmd_pool_info, NULL, &data.commandPool);
         assert(!err);
-    }
 
-    const VkCommandBufferBeginInfo commandBufferBeginInfo = {
-        VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
-        NULL,
-        VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
-    };
-    err = pTableCommandBuffer->BeginCommandBuffer(data.commandBuffer, &commandBufferBeginInfo);
-    assert(!err);
+        // Set up the command buffer.
+        const VkCommandBufferAllocateInfo allocCommandBufferInfo = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO, NULL,
+                                                                    data.commandPool, VK_COMMAND_BUFFER_LEVEL_PRIMARY, 1};
+        err = pTableDevice->AllocateCommandBuffers(device, &allocCommandBufferInfo, &data.commandBuffer);
+        assert(!err);
+        if (VK_SUCCESS != err) return false;
+
+        VkDevice cmdBufToDev = static_cast<VkDevice>(static_cast<void *>(data.commandBuffer));
+        if (deviceMap.find(cmdBufToDev) != deviceMap.end()) {
+            // Remove element with key cmdBufToDev from deviceMap so we can replace it
+            deviceMap.erase(cmdBufToDev);
+        }
+        deviceMap.emplace(cmdBufToDev, devMap);
+        pTableCommandBuffer = get_dev_info(cmdBufToDev)->device_dispatch_table;
+
+        // We have just created a dispatchable object, but the dispatch table has
+        // not been placed in the object yet.  When a "normal" application creates
+        // a command buffer, the dispatch table is installed by the top-level api
+        // binding (trampoline.c). But here, we have to do it ourselves.
+        if (!devMap->pfn_dev_init) {
+            *((const void **)data.commandBuffer) = *(void **)device;
+        } else {
+            err = devMap->pfn_dev_init(device, (void *)data.commandBuffer);
+            assert(!err);
+        }
+
+        const VkCommandBufferBeginInfo commandBufferBeginInfo = {
+            VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO, NULL,
+            VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT, NULL
+        };
+        err = pTableCommandBuffer->BeginCommandBuffer(data.commandBuffer, &commandBufferBeginInfo);
+        assert(!err);
+        cmdBuf = data.commandBuffer;
+    } else {
+        VkDevice cmdBufToDev = static_cast<VkDevice>(static_cast<void *>(commandBuffer));
+        pTableCommandBuffer = get_dev_info(cmdBufToDev)->device_dispatch_table;
+        cmdBuf = commandBuffer;
+    }
 
     VkImageAspectFlags aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     if (FormatIsDepthOnly(destformat)) {
@@ -1011,17 +1085,17 @@ static bool writePPM(const char *filename, VkImage image1) {
 
     // The source image needs to be transitioned from present to transfer
     // source.
-    pTableCommandBuffer->CmdPipelineBarrier(data.commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, dstStages, 0, 0, NULL, 0,
+    pTableCommandBuffer->CmdPipelineBarrier(cmdBuf, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, dstStages, 0, 0, NULL, 0,
                                             NULL, 1, &presentMemoryBarrier);
 
     // image2 needs to be transitioned from its undefined state to transfer
     // destination.
-    pTableCommandBuffer->CmdPipelineBarrier(data.commandBuffer, srcStages, dstStages, 0, 0, NULL, 0, NULL, 1, &destMemoryBarrier);
+    pTableCommandBuffer->CmdPipelineBarrier(cmdBuf, srcStages, dstStages, 0, 0, NULL, 0, NULL, 1, &destMemoryBarrier);
 
     const VkImageCopy imageCopyRegion = {{aspectMask, 0, 0, 1}, {0, 0, 0}, {aspectMask, 0, 0, 1}, {0, 0, 0}, {width, height, 1}};
 
     if (copyOnly) {
-        pTableCommandBuffer->CmdCopyImage(data.commandBuffer, image1, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, data.image2,
+        pTableCommandBuffer->CmdCopyImage(cmdBuf, image1, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, data.image2,
                                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &imageCopyRegion);
     } else {
         VkImageBlit imageBlitRegion = {};
@@ -1029,6 +1103,9 @@ static bool writePPM(const char *filename, VkImage image1) {
         imageBlitRegion.srcSubresource.baseArrayLayer = 0;
         imageBlitRegion.srcSubresource.layerCount = 1;
         imageBlitRegion.srcSubresource.mipLevel = 0;
+        imageBlitRegion.srcOffsets[0].x = 0;
+        imageBlitRegion.srcOffsets[0].y = 0;
+        imageBlitRegion.srcOffsets[0].z = 0;
         imageBlitRegion.srcOffsets[1].x = width;
         imageBlitRegion.srcOffsets[1].y = height;
         imageBlitRegion.srcOffsets[1].z = 1;
@@ -1036,17 +1113,20 @@ static bool writePPM(const char *filename, VkImage image1) {
         imageBlitRegion.dstSubresource.baseArrayLayer = 0;
         imageBlitRegion.dstSubresource.layerCount = 1;
         imageBlitRegion.dstSubresource.mipLevel = 0;
+        imageBlitRegion.dstOffsets[0].x = 0;
+        imageBlitRegion.dstOffsets[0].y = 0;
+        imageBlitRegion.dstOffsets[0].z = 0;
         imageBlitRegion.dstOffsets[1].x = width;
         imageBlitRegion.dstOffsets[1].y = height;
         imageBlitRegion.dstOffsets[1].z = 1;
 
-        pTableCommandBuffer->CmdBlitImage(data.commandBuffer, image1, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, data.image2,
+        pTableCommandBuffer->CmdBlitImage(cmdBuf, image1, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, data.image2,
                                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &imageBlitRegion, VK_FILTER_NEAREST);
         if (need2steps) {
             // image 3 needs to be transitioned from its undefined state to a
             // transfer destination.
             destMemoryBarrier.image = data.image3;
-            pTableCommandBuffer->CmdPipelineBarrier(data.commandBuffer, srcStages, dstStages, 0, 0, NULL, 0, NULL, 1,
+            pTableCommandBuffer->CmdPipelineBarrier(cmdBuf, srcStages, dstStages, 0, 0, NULL, 0, NULL, 1,
                                                     &destMemoryBarrier);
 
             // Transition image2 so that it can be read for the upcoming copy to
@@ -1056,11 +1136,11 @@ static bool writePPM(const char *filename, VkImage image1) {
             destMemoryBarrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
             destMemoryBarrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
             destMemoryBarrier.image = data.image2;
-            pTableCommandBuffer->CmdPipelineBarrier(data.commandBuffer, srcStages, dstStages, 0, 0, NULL, 0, NULL, 1,
+            pTableCommandBuffer->CmdPipelineBarrier(cmdBuf, srcStages, dstStages, 0, 0, NULL, 0, NULL, 1,
                                                     &destMemoryBarrier);
 
             // This step essentially untiles the image.
-            pTableCommandBuffer->CmdCopyImage(data.commandBuffer, data.image2, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, data.image3,
+            pTableCommandBuffer->CmdCopyImage(cmdBuf, data.image2, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, data.image3,
                                               VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &imageCopyRegion);
             generalMemoryBarrier.image = data.image3;
         }
@@ -1068,7 +1148,7 @@ static bool writePPM(const char *filename, VkImage image1) {
 
     // The destination needs to be transitioned from the optimal copy format to
     // the format we can read with the CPU.
-    pTableCommandBuffer->CmdPipelineBarrier(data.commandBuffer, srcStages, dstStages, 0, 0, NULL, 0, NULL, 1,
+    pTableCommandBuffer->CmdPipelineBarrier(cmdBuf, srcStages, dstStages, 0, 0, NULL, 0, NULL, 1,
                                             &generalMemoryBarrier);
 
     // Restore the swap chain image layout to what it was before.
@@ -1082,37 +1162,101 @@ static bool writePPM(const char *filename, VkImage image1) {
     }
     presentMemoryBarrier.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
     presentMemoryBarrier.dstAccessMask = 0;
-    pTableCommandBuffer->CmdPipelineBarrier(data.commandBuffer, srcStages, dstStages, 0, 0, NULL, 0, NULL, 1,
+    pTableCommandBuffer->CmdPipelineBarrier(cmdBuf, srcStages, dstStages, 0, 0, NULL, 0, NULL, 1,
                                             &presentMemoryBarrier);
 
-    err = pTableCommandBuffer->EndCommandBuffer(data.commandBuffer);
-    assert(!err);
+    if (commandBuffer == VK_NULL_HANDLE) {
+        err = pTableCommandBuffer->EndCommandBuffer(data.commandBuffer);
+        assert(!err);
 
-    VkFence nullFence = {VK_NULL_HANDLE};
-    VkSubmitInfo submitInfo;
-    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-    submitInfo.pNext = NULL;
-    submitInfo.waitSemaphoreCount = 0;
-    submitInfo.pWaitSemaphores = NULL;
-    submitInfo.pWaitDstStageMask = NULL;
-    submitInfo.commandBufferCount = 1;
-    submitInfo.pCommandBuffers = &data.commandBuffer;
-    submitInfo.signalSemaphoreCount = 0;
-    submitInfo.pSignalSemaphores = NULL;
+        // Make sure the submitted job is finished
+        err = pTableDevice->DeviceWaitIdle(device);
+        assert(!err);
 
-    err = pTableQueue->QueueSubmit(queue, 1, &submitInfo, nullFence);
-    assert(!err);
+        VkFence nullFence = {VK_NULL_HANDLE};
+        VkSubmitInfo submitInfo;
+        submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+        submitInfo.pNext = NULL;
+        submitInfo.waitSemaphoreCount = 0;
+        submitInfo.pWaitSemaphores = NULL;
+        submitInfo.pWaitDstStageMask = NULL;
+        submitInfo.commandBufferCount = 1;
+        submitInfo.pCommandBuffers = &data.commandBuffer;
+        submitInfo.signalSemaphoreCount = 0;
+        submitInfo.pSignalSemaphores = NULL;
 
-    err = pTableQueue->QueueWaitIdle(queue);
-    assert(!err);
+        err = pTableQueue->QueueSubmit(queue, 1, &submitInfo, nullFence);
+        assert(!err);
 
-    err = pTableDevice->DeviceWaitIdle(device);
-    assert(!err);
+        err = pTableQueue->QueueWaitIdle(queue);
+        assert(!err);
+    }
+
+    return true;
+}
+
+static bool writePPM(const char *filename, VkImage image1, WritePPMCleanupData& data) {
+    VkResult err;
+    // Bail immediately if we can't find the image.
+    if (imageMap.empty() || imageMap.find(image1) == imageMap.end()) return false;
+
+    VkDevice device = imageMap[image1]->device;
+    VkPhysicalDevice physicalDevice = deviceMap[device]->physicalDevice;
+    VkInstance instance = physDeviceMap[physicalDevice]->instance;
+    VkLayerInstanceDispatchTable *pInstanceTable;
+    pInstanceTable = instance_dispatch_table(instance);
+    uint32_t const width = imageMap[image1]->imageExtent.width;
+    uint32_t const height = imageMap[image1]->imageExtent.height;
+    VkFormat const format = imageMap[image1]->format;
+    VkFormat const destformat = imageMap[image1]->destFormat;
+    uint32_t const numChannels = FormatComponentCount(format);
+    DeviceMapStruct *devMap = get_dev_info(device);
+    if (NULL == devMap) {
+        assert(0);
+        return false;
+    }
+
+    VkFormatProperties targetFormatProps;
+    pInstanceTable->GetPhysicalDeviceFormatProperties(physicalDevice, destformat, &targetFormatProps);
+    bool need2steps = false;
+    bool copyOnly = false;
+    if (destformat == format) {
+        copyOnly = true;
+    } else {
+        bool const bltLinear = targetFormatProps.linearTilingFeatures & VK_FORMAT_FEATURE_BLIT_DST_BIT ? true : false;
+        bool const bltOptimal = targetFormatProps.optimalTilingFeatures & VK_FORMAT_FEATURE_BLIT_DST_BIT ? true : false;
+        if (!bltLinear && !bltOptimal) {
+            // Cannot blit to either target tiling type.  It should be pretty
+            // unlikely to have a device that cannot blit to either type.
+            // But punt by just doing a copy and possibly have the wrong
+            // colors.  This should be quite rare.
+            copyOnly = true;
+        } else if (!bltLinear && bltOptimal) {
+            // Cannot blit to a linear target but can blt to optimal, so copy
+            // after blit is needed.
+            need2steps = true;
+        }
+        // Else bltLinear is available and only 1 step is needed.
+    }
+
+    if (copyOnly) {
+        printf("Cannot blit to either target tiling type, so copy is needed! \n");
+    }
+
+    VkLayerDispatchTable *pTableDevice = devMap->device_dispatch_table;
+    VkImageAspectFlags aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    if (FormatIsDepthOnly(destformat)) {
+        aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+    } else if (FormatIsStencilOnly(destformat)) {
+        aspectMask = VK_IMAGE_ASPECT_STENCIL_BIT;
+    } else if (FormatIsDepthAndStencil(destformat)) {
+        aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT;
+    }
 
     // Map the final image so that the CPU can read it.
     const VkImageSubresource sr = {aspectMask, 0, 0};
     VkSubresourceLayout srLayout;
-    const char *ptr;
+    const char *ptr = nullptr;
     if (!need2steps) {
         pTableDevice->GetImageSubresourceLayout(device, data.image2, &sr, &srLayout);
         err = pTableDevice->MapMemory(device, data.mem2, 0, VK_WHOLE_SIZE, 0, (void **)&ptr);
@@ -1127,21 +1271,30 @@ static bool writePPM(const char *filename, VkImage image1) {
         data.mem3mapped = true;
     }
 
+    string strFileName = filename;
+    if (!imageMap[image1]->isSwapchainImage) {
+        size_t pos = strFileName.find_last_of(".");
+        if (pos != string::npos) {
+            strFileName = strFileName.substr(0, pos);
+            strFileName += "_" + to_string(format) + "_" + to_string(destformat) + "_" + to_string(width) + "_" + to_string(height) + ".ppm";
+        }
+    }
+
     // Write the data to a PPM file.
-    ofstream file(filename, ios::binary);
+    ofstream file(strFileName.c_str(), ios::binary);
     assert(file.is_open());
 
     if (!file.is_open()) {
 #ifdef ANDROID
         __android_log_print(ANDROID_LOG_DEBUG, "screenshot",
-                            "Failed to open output file: %s.  Be sure to grant read and write permissions.", filename);
+                            "Failed to open output file: %s.  Be sure to grant read and write permissions.", strFileName.c_str());
 #else
-        fprintf(stderr, "Failed to open output file:%s,  Be sure to grant read and write permissions\n", filename);
+        fprintf(stderr, "Failed to open output file:%s,  Be sure to grant read and write permissions\n", strFileName.c_str());
 #endif
         return false;
     }
 
-    if (ppmSupport) {
+    if (data.ppmSupport) {
         uint32_t bytesPerChannel = FormatElementSize(destformat) / FormatComponentCount(destformat);
         uint32_t maxColorValue = pow(256, bytesPerChannel) - 1;
 
@@ -1177,7 +1330,7 @@ static bool writePPM(const char *filename, VkImage image1) {
             ptr += srLayout.rowPitch;
         }
     } else {
-        if (FormatElementSize(destformat) != 4) {
+        if (FormatElementSize(destformat) > 8) {
 #ifdef ANDROID
             __android_log_print(ANDROID_LOG_DEBUG, "screenshot", "Format %s NOT supported yet!\n", string_VkFormat(destformat));
 #else
@@ -1189,30 +1342,24 @@ static bool writePPM(const char *filename, VkImage image1) {
             file << "# rowPitch: " << srLayout.rowPitch << "\n";
             file << "# width: " << width << "\n";
             file << "# height: " << height << "\n";
-            uint8_t i = 0;
+
+            uint32_t pitch = FormatElementSize(destformat);
+
             ptr += srLayout.offset;
             for (uint32_t y = 0; y < height; y++) {
                 const char *row = (const char *)ptr;
                 for (uint32_t x = 0; x < width; x++) {
-                    uint32_t pixelValue = 0;
-                    memcpy(&pixelValue, row, FormatElementSize(destformat));
-                    file << setfill('0') << setw(8) << hex << pixelValue;
-                    i++;
-                    if (i == 4) {
-                        file << "\n";
-                        i = 0;
-                    } else {
-                        file << " ";
-                    }
-                    row = row + FormatElementSize(destformat);
+                    uint64_t pixelValue = 0;
+                    memcpy(&pixelValue, row, pitch);
+                    file.write((const char *)&pixelValue, pitch);
+                    row = row + pitch;
                 }
                 ptr += srLayout.rowPitch;
             }
         }
     }
-    file.close();
 
-    // Clean up handled by ~WritePPMCleanupData()
+    file.close();
     return true;
 }
 
@@ -1361,11 +1508,13 @@ VKAPI_ATTR void VKAPI_CALL DestroyDevice(VkDevice device, const VkAllocationCall
     loader_platform_thread_unlock_mutex(&globalLock);
 }
 
-VKAPI_ATTR void VKAPI_CALL GetDeviceQueue(VkDevice device, uint32_t queueFamilyIndex, uint32_t queueIndex, VkQueue *pQueue) {
+void OverrideGetDeviceQueue(VkDevice device, uint32_t queueFamilyIndex, uint32_t queueIndex, VkQueue *pQueue) {
     DeviceMapStruct *devMap = get_dev_info(device);
     assert(devMap);
     VkLayerDispatchTable *pDisp = devMap->device_dispatch_table;
-    pDisp->GetDeviceQueue(device, queueFamilyIndex, queueIndex, pQueue);
+    if (pDisp == NULL) {
+        return;
+    }
 
     // Save the device queue in a map if we are taking screenshots.
     loader_platform_thread_lock_mutex(&globalLock);
@@ -1425,6 +1574,24 @@ VKAPI_ATTR void VKAPI_CALL GetDeviceQueue(VkDevice device, uint32_t queueFamilyI
     }
 
     loader_platform_thread_unlock_mutex(&globalLock);
+}
+
+VKAPI_ATTR void VKAPI_CALL GetDeviceQueue(VkDevice device, uint32_t queueFamilyIndex, uint32_t queueIndex, VkQueue *pQueue) {
+    DeviceMapStruct *devMap = get_dev_info(device);
+    assert(devMap);
+    VkLayerDispatchTable *pDisp = devMap->device_dispatch_table;
+    pDisp->GetDeviceQueue(device, queueFamilyIndex, queueIndex, pQueue);
+
+    OverrideGetDeviceQueue(device, queueFamilyIndex, queueIndex, pQueue);
+}
+
+VKAPI_ATTR void VKAPI_CALL GetDeviceQueue2(VkDevice device, const VkDeviceQueueInfo2* pQueueInfo, VkQueue* pQueue) {
+    DeviceMapStruct *devMap = get_dev_info(device);
+    assert(devMap);
+    VkLayerDispatchTable *pDisp = devMap->device_dispatch_table;
+    pDisp->GetDeviceQueue2(device, pQueueInfo, pQueue);
+
+    OverrideGetDeviceQueue(device, pQueueInfo->queueFamilyIndex, pQueueInfo->queueIndex, pQueue);
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL CreateSwapchainKHR(VkDevice device, const VkSwapchainCreateInfoKHR *pCreateInfo,
@@ -1557,12 +1724,15 @@ VKAPI_ATTR VkResult VKAPI_CALL QueuePresentKHR(VkQueue queue, const VkPresentInf
                 // Multiple queues are used
                 pDisp->QueueWaitIdle(queue);
             }
-            bool ret = writePPM(fileName.c_str(), image);
+
+            WritePPMCleanupData copyImageData;
+            bool ret = preparePPM(VK_NULL_HANDLE, image, copyImageData);
+            ret |= writePPM(fileName.c_str(), image, copyImageData);
             if (ret) {
 #ifdef ANDROID
-                __android_log_print(ANDROID_LOG_INFO, "screenshot", "Screen capture file is: %s", fileName.c_str());
+                __android_log_print(ANDROID_LOG_INFO, "screenshot", "QueuePresent Screen capture file is: %s", fileName.c_str());
 #else
-                printf("Screen capture file is: %s \n", fileName.c_str());
+                printf("QueuePresent Screen capture file is: %s \n", fileName.c_str());
 #endif
             } else {
 #ifdef ANDROID
@@ -1571,6 +1741,7 @@ VKAPI_ATTR VkResult VKAPI_CALL QueuePresentKHR(VkQueue queue, const VkPresentInf
                 fprintf(stderr, "Failed to save screenshot to file %s.\n", fileName.c_str());
 #endif
             }
+            copyImageData.CleanupData();
             if (inScreenShotFrames) {
                 screenshotFrames.erase(it);
             }
@@ -1600,6 +1771,8 @@ VKAPI_ATTR VkResult VKAPI_CALL QueuePresentKHR(VkQueue queue, const VkPresentInf
                 framebufferToImages.clear();
                 commandBufferToRenderPass.clear();
                 renderPassToIndex.clear();
+                rp_frame_info.clear();
+                renderPassToImageInfos.clear();
             }
         }
     }
@@ -1641,7 +1814,7 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateRenderPass(VkDevice device, const VkRenderP
         loader_platform_thread_unlock_mutex(&globalLock);
         return result;
     }
-    static uint32_t renderPassNumber = 0;
+
     renderPassToIndex[*pRenderPass] = renderPassNumber;
     renderPassNumber++;
     loader_platform_thread_unlock_mutex(&globalLock);
@@ -1649,12 +1822,56 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateRenderPass(VkDevice device, const VkRenderP
     return result;
 }
 
-VKAPI_ATTR void VKAPI_CALL CmdBeginRenderPass(VkCommandBuffer commandBuffer, const VkRenderPassBeginInfo *pRenderPassBegin,
+VKAPI_ATTR VkResult VKAPI_CALL CreateRenderPass2(VkDevice device, const VkRenderPassCreateInfo2* pCreateInfo,
+                                                const VkAllocationCallbacks* pAllocator, VkRenderPass* pRenderPass) {
+    DeviceMapStruct *devMap = get_dev_info(device);
+    assert(devMap);
+    VkLayerDispatchTable *pDisp = devMap->device_dispatch_table;
+    VkResult result = pDisp->CreateRenderPass2(device, pCreateInfo, pAllocator, pRenderPass);
+
+    loader_platform_thread_lock_mutex(&globalLock);
+    if (!dumpFrameBufferByRenderPass || (screenshotFramesReceived && screenshotFrames.empty() && !screenShotFrameRange.valid)) {
+        // No screenshots in the list to take
+        loader_platform_thread_unlock_mutex(&globalLock);
+        return result;
+    }
+
+    renderPassToIndex[*pRenderPass] = renderPassNumber;
+    renderPassNumber++;
+    loader_platform_thread_unlock_mutex(&globalLock);
+
+    return result;
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL CreateRenderPass2KHR(VkDevice device, const VkRenderPassCreateInfo2* pCreateInfo,
+                                                    const VkAllocationCallbacks* pAllocator, VkRenderPass* pRenderPass) {
+    DeviceMapStruct *devMap = get_dev_info(device);
+    assert(devMap);
+    VkLayerDispatchTable *pDisp = devMap->device_dispatch_table;
+    VkResult result = pDisp->CreateRenderPass2KHR(device, pCreateInfo, pAllocator, pRenderPass);
+
+    loader_platform_thread_lock_mutex(&globalLock);
+    if (!dumpFrameBufferByRenderPass || (screenshotFramesReceived && screenshotFrames.empty() && !screenShotFrameRange.valid)) {
+        // No screenshots in the list to take
+        loader_platform_thread_unlock_mutex(&globalLock);
+        return result;
+    }
+
+    renderPassToIndex[*pRenderPass] = renderPassNumber;
+    renderPassNumber++;
+    loader_platform_thread_unlock_mutex(&globalLock);
+
+    return result;
+}
+
+void OverrideCmdBeginRenderPass(VkCommandBuffer commandBuffer, const VkRenderPassBeginInfo *pRenderPassBegin,
                                               VkSubpassContents contents) {
     DeviceMapStruct *devMap = get_dev_info((VkDevice)commandBuffer);
     assert(devMap);
     VkLayerDispatchTable *pDisp = devMap->device_dispatch_table;
-    pDisp->CmdBeginRenderPass(commandBuffer, pRenderPassBegin, contents);
+    if (pDisp == NULL) {
+        return;
+    }
 
     loader_platform_thread_lock_mutex(&globalLock);
     if (!dumpFrameBufferByRenderPass || (screenshotFramesReceived && screenshotFrames.empty() && !screenShotFrameRange.valid)) {
@@ -1670,6 +1887,13 @@ VKAPI_ATTR void VKAPI_CALL CmdBeginRenderPass(VkCommandBuffer commandBuffer, con
     inScreenShotFrames = (it != screenshotFrames.end());
     isInScreenShotFrameRange(g_frameNumber, &screenShotFrameRange, &inScreenShotFrameRange);
 
+    if (last_frame != g_frameNumber) {
+        last_frame = g_frameNumber;
+        brp_index = 0;
+    } else {
+        brp_index++;
+    }
+
     renderPassImages.clear();
     uint32_t imageIndex = 0;
     for (auto iter = framebufferToImages[pRenderPassBegin->framebuffer].begin();
@@ -1681,24 +1905,126 @@ VKAPI_ATTR void VKAPI_CALL CmdBeginRenderPass(VkCommandBuffer commandBuffer, con
             ((renderPassToIndex[pRenderPassBegin->renderPass] == dumpRenderPassIndex) || (dumpRenderPassIndex == UINT32_MAX))) {
             string fileName;
             // std::to_string is not supported currently on Android
-            char buffer[64];
-            snprintf(buffer, sizeof(buffer), "%d-rp%d-img%d-presubmit", g_frameNumber,
-                     renderPassToIndex[pRenderPassBegin->renderPass], imageIndex);
+            char buffer[128];
+            memset(buffer, 0, 128);
+            rp_info info;
+            if (rp_frame_info.find(renderPassToIndex[pRenderPassBegin->renderPass]) == rp_frame_info.end()) {
+                info.frame_index = g_frameNumber;
+                info.renderpass_index = 0;
+                rp_frame_info[renderPassToIndex[pRenderPassBegin->renderPass]] = info;
+            }
+            info = rp_frame_info[renderPassToIndex[pRenderPassBegin->renderPass]];
+            if (info.frame_index == g_frameNumber) {
+                info.renderpass_index++;
+                rp_frame_info[renderPassToIndex[pRenderPassBegin->renderPass]] = info;
+            } else {
+                info.frame_index = g_frameNumber;
+                info.renderpass_index = 0;
+                rp_frame_info[renderPassToIndex[pRenderPassBegin->renderPass]] = info;
+            }
+
+            if (last_frame != g_frameNumber) {
+                last_frame = g_frameNumber;
+                rp_index = 0;
+            } else {
+                rp_index++;
+            }
+            snprintf(buffer, sizeof(buffer), "%d-%u-bg%u-rp%u-rpidx%u-img%u", g_frameNumber, rp_index,
+                     brp_index, renderPassToIndex[pRenderPassBegin->renderPass], info.renderpass_index, imageIndex);
             std::string base(buffer);
-            fileName = screenshotPrefix + base + ".ppm";
-            bool ret = writePPM(fileName.c_str(), *iter);
+            fileName = screenshotPrefix + base + "-presubmit.ppm";
+
+            dumpImageInfo dumpInfo;
+            dumpInfo.renderpassImage = *iter;
+            strncpy(dumpInfo.dumpFileName, buffer, sizeof(buffer));
+            renderPassToImageInfos[pRenderPassBegin->renderPass].push_back(dumpInfo);
+
+            WritePPMCleanupData copyImageData;
+            bool ret = preparePPM(VK_NULL_HANDLE, *iter, copyImageData);
+            ret |= writePPM(fileName.c_str(), *iter, copyImageData);
             if (ret) {
 #ifdef ANDROID
-                __android_log_print(ANDROID_LOG_INFO, "screenshot", "Screen capture file is: %s", fileName.c_str());
+                __android_log_print(ANDROID_LOG_INFO, "screenshot", "BeginRenderPass Screen capture file is: %s", fileName.c_str());
 #else
-                printf("Screen capture file is: %s \n", fileName.c_str());
+                printf("BeginRenderPass Screen capture file is: %s \n", fileName.c_str());
 #endif
             }
+            copyImageData.CleanupData();
         }
 
         imageIndex++;
     }
     commandBufferToRenderPass[commandBuffer] = pRenderPassBegin->renderPass;
+
+    loader_platform_thread_unlock_mutex(&globalLock);
+}
+
+VKAPI_ATTR void VKAPI_CALL CmdBeginRenderPass(VkCommandBuffer commandBuffer, const VkRenderPassBeginInfo *pRenderPassBegin,
+                                              VkSubpassContents contents) {
+    DeviceMapStruct *devMap = get_dev_info((VkDevice)commandBuffer);
+    assert(devMap);
+    VkLayerDispatchTable *pDisp = devMap->device_dispatch_table;
+    OverrideCmdBeginRenderPass(commandBuffer, pRenderPassBegin, contents);
+
+    pDisp->CmdBeginRenderPass(commandBuffer, pRenderPassBegin, contents);
+}
+
+VKAPI_ATTR void VKAPI_CALL CmdBeginRenderPass2(VkCommandBuffer commandBuffer, const VkRenderPassBeginInfo* pRenderPassBegin,
+                                                const VkSubpassBeginInfo* pSubpassBeginInfo) {
+    DeviceMapStruct *devMap = get_dev_info((VkDevice)commandBuffer);
+    assert(devMap);
+    VkLayerDispatchTable *pDisp = devMap->device_dispatch_table;
+    OverrideCmdBeginRenderPass(commandBuffer, pRenderPassBegin, pSubpassBeginInfo->contents);
+
+    pDisp->CmdBeginRenderPass2(commandBuffer, pRenderPassBegin, pSubpassBeginInfo);
+}
+
+VKAPI_ATTR void VKAPI_CALL CmdBeginRenderPass2KHR(VkCommandBuffer commandBuffer, const VkRenderPassBeginInfo* pRenderPassBegin,
+                                                const VkSubpassBeginInfo* pSubpassBeginInfo) {
+    DeviceMapStruct *devMap = get_dev_info((VkDevice)commandBuffer);
+    assert(devMap);
+    VkLayerDispatchTable *pDisp = devMap->device_dispatch_table;
+    OverrideCmdBeginRenderPass(commandBuffer, pRenderPassBegin, pSubpassBeginInfo->contents);
+
+    pDisp->CmdBeginRenderPass2KHR(commandBuffer, pRenderPassBegin, pSubpassBeginInfo);
+}
+
+void OverrideCmdEndRenderPass(VkCommandBuffer commandBuffer) {
+    DeviceMapStruct *devMap = get_dev_info((VkDevice)commandBuffer);
+    assert(devMap);
+    VkLayerDispatchTable *pDisp = devMap->device_dispatch_table;
+    if (pDisp == NULL) {
+        return;
+    }
+
+    loader_platform_thread_lock_mutex(&globalLock);
+    if (!dumpFrameBufferByRenderPass || (screenshotFramesReceived && screenshotFrames.empty() && !screenShotFrameRange.valid)) {
+        // No screenshots in the list to take
+        loader_platform_thread_unlock_mutex(&globalLock);
+        return;
+    }
+
+    if (renderPassToImageInfos.find(commandBufferToRenderPass[commandBuffer]) == renderPassToImageInfos.end()) {
+        loader_platform_thread_unlock_mutex(&globalLock);
+        return;
+    }
+
+    if (renderPassToIndex[commandBufferToRenderPass[commandBuffer]] == dumpRenderPassIndex || dumpRenderPassIndex == UINT32_MAX) {
+
+        VkRenderPass renderPass = commandBufferToRenderPass[commandBuffer];
+        for (uint32_t i = 0; i < renderPassToImageInfos[renderPass].size(); i++) {
+            VkImage image = renderPassToImageInfos[renderPass][i].renderpassImage;
+            bool ret = preparePPM(commandBuffer, image, renderPassToImageInfos[renderPass][i].copyBufData);
+            if (!ret) {
+#ifdef ANDROID
+                __android_log_print(ANDROID_LOG_INFO, "screenshot", "After EndRenderPass, capture renderpass framebuffer is error, image = %" PRIu64, (VkDeviceAddress)image);
+#else
+                printf("After EndRenderPass, capture renderpass framebuffer is error, image = %" PRIu64 " \n", (VkDeviceAddress)image);
+#endif
+            }
+            commandBufferToImages[commandBuffer].push_back(renderPassToImageInfos[renderPass][i]);
+        }
+    }
 
     loader_platform_thread_unlock_mutex(&globalLock);
 }
@@ -1709,28 +2035,25 @@ VKAPI_ATTR void VKAPI_CALL CmdEndRenderPass(VkCommandBuffer commandBuffer) {
     VkLayerDispatchTable *pDisp = devMap->device_dispatch_table;
     pDisp->CmdEndRenderPass(commandBuffer);
 
-    loader_platform_thread_lock_mutex(&globalLock);
-    if (!dumpFrameBufferByRenderPass || (screenshotFramesReceived && screenshotFrames.empty() && !screenShotFrameRange.valid)) {
-        // No screenshots in the list to take
-        loader_platform_thread_unlock_mutex(&globalLock);
-        return;
-    }
+    OverrideCmdEndRenderPass(commandBuffer);
+}
 
-    if (renderPassToIndex[commandBufferToRenderPass[commandBuffer]] == dumpRenderPassIndex || dumpRenderPassIndex == UINT32_MAX) {
-        uint32_t imageIndex = 0;
-        for (auto iter = renderPassImages.begin(); iter != renderPassImages.end(); ++iter) {
-            VkImage image = *iter;
-            imageMap[image]->imageIndex = imageIndex;
-            imageMap[image]->renderPassIndex = renderPassToIndex[commandBufferToRenderPass[commandBuffer]];
-            if (commandBufferToImages[commandBuffer].find(image) == commandBufferToImages[commandBuffer].end()) {
-                commandBufferToImages[commandBuffer].insert(image);
-            }
-            imageIndex++;
-        }
-    }
-    renderPassImages.clear();
+VKAPI_ATTR void VKAPI_CALL CmdEndRenderPass2(VkCommandBuffer commandBuffer, const VkSubpassEndInfo* pSubpassEndInfo) {
+    DeviceMapStruct *devMap = get_dev_info((VkDevice)commandBuffer);
+    assert(devMap);
+    VkLayerDispatchTable *pDisp = devMap->device_dispatch_table;
+    pDisp->CmdEndRenderPass2(commandBuffer, pSubpassEndInfo);
 
-    loader_platform_thread_unlock_mutex(&globalLock);
+    OverrideCmdEndRenderPass(commandBuffer);
+}
+
+VKAPI_ATTR void VKAPI_CALL CmdEndRenderPass2KHR(VkCommandBuffer commandBuffer, const VkSubpassEndInfo* pSubpassEndInfo) {
+    DeviceMapStruct *devMap = get_dev_info((VkDevice)commandBuffer);
+    assert(devMap);
+    VkLayerDispatchTable *pDisp = devMap->device_dispatch_table;
+    pDisp->CmdEndRenderPass2KHR(commandBuffer, pSubpassEndInfo);
+
+    OverrideCmdEndRenderPass(commandBuffer);
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL BeginCommandBuffer(VkCommandBuffer commandBuffer, const VkCommandBufferBeginInfo *pBeginInfo) {
@@ -1859,11 +2182,11 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateFramebuffer(VkDevice device, const VkFrameb
     return result;
 }
 
-VKAPI_ATTR VkResult VKAPI_CALL QueueSubmit(VkQueue queue, uint32_t submitCount, const VkSubmitInfo *pSubmits, VkFence fence) {
+VkResult OverrideQueueSubmit(VkQueue queue, uint32_t submitCount, const VkSubmitInfo *pSubmits, VkFence fence) {
     DeviceMapStruct *devMap = get_dev_info((VkDevice)queue);
     assert(devMap);
     VkLayerDispatchTable *pDisp = devMap->device_dispatch_table;
-    VkResult result = pDisp->QueueSubmit(queue, submitCount, pSubmits, fence);
+    VkResult result = VK_SUCCESS;
 
     loader_platform_thread_lock_mutex(&globalLock);
     if (!dumpFrameBufferByRenderPass || (screenshotFramesReceived && screenshotFrames.empty() && !screenShotFrameRange.valid)) {
@@ -1890,34 +2213,99 @@ VKAPI_ATTR VkResult VKAPI_CALL QueueSubmit(VkQueue queue, uint32_t submitCount, 
                     VkCommandBuffer cmdBuffer = pSubmits[submitIndex].pCommandBuffers[cmdBufferIndex];
                     for (auto cmdBufferIter = commandBufferToCommandBuffers[cmdBuffer].begin();
                          cmdBufferIter != commandBufferToCommandBuffers[cmdBuffer].end(); ++cmdBufferIter) {
-                        for (auto iter = commandBufferToImages[*cmdBufferIter].begin();
-                             iter != commandBufferToImages[*cmdBufferIter].end(); ++iter) {
+                        if (commandBufferToImages.find(*cmdBufferIter) == commandBufferToImages.end()) {
+                            continue;
+                        }
+
+                        for (uint32_t i = 0; i < commandBufferToImages[*cmdBufferIter].size(); i++) {
                             string fileName;
                             // std::to_string is not supported currently on Android
-                            char buffer[64];
-                            snprintf(buffer, sizeof(buffer), "%d-rp%d-img%d", g_frameNumber, imageMap[*iter]->renderPassIndex,
-                                     imageMap[*iter]->imageIndex);
-                            std::string base(buffer);
+                            std::string base(commandBufferToImages[*cmdBufferIter][i].dumpFileName);
                             fileName = screenshotPrefix + base + ".ppm";
-                            bool ret = writePPM(fileName.c_str(), *iter);
+
+                            bool ret = writePPM(fileName.c_str(), commandBufferToImages[*cmdBufferIter][i].renderpassImage, commandBufferToImages[*cmdBufferIter][i].copyBufData);
                             if (ret) {
 #ifdef ANDROID
-                                __android_log_print(ANDROID_LOG_INFO, "screenshot", "Screen capture file is: %s", fileName.c_str());
+                                __android_log_print(ANDROID_LOG_INFO, "screenshot", "EndRenderPass Screen capture file is: %s", fileName.c_str());
 #else
-                                printf("Screen capture file is: %s \n", fileName.c_str());
+                                printf("EndRenderPass Screen capture file is: %s \n", fileName.c_str());
 #endif
                             }
+                            commandBufferToImages[*cmdBufferIter][i].copyBufData.CleanupData();
                         }
+                        commandBufferToImages[*cmdBufferIter].clear();
                     }
                 }
             }
         }
     }
 
-    commandBufferToImages.clear();
-    commandBufferToCommandBuffers.clear();
-
     loader_platform_thread_unlock_mutex(&globalLock);
+
+    return result;
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL QueueSubmit(VkQueue queue, uint32_t submitCount, const VkSubmitInfo *pSubmits, VkFence fence) {
+    DeviceMapStruct *devMap = get_dev_info((VkDevice)queue);
+    assert(devMap);
+    VkLayerDispatchTable *pDisp = devMap->device_dispatch_table;
+    VkResult result = pDisp->QueueSubmit(queue, submitCount, pSubmits, fence);
+
+    if (result == VK_SUCCESS) {
+        result = OverrideQueueSubmit(queue, submitCount, pSubmits, fence);
+    }
+
+    return result;
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL QueueSubmit2(VkQueue queue, uint32_t submitCount, const VkSubmitInfo2 *pSubmits, VkFence fence) {
+    DeviceMapStruct *devMap = get_dev_info((VkDevice)queue);
+    assert(devMap);
+    VkLayerDispatchTable *pDisp = devMap->device_dispatch_table;
+    VkResult result = pDisp->QueueSubmit2(queue, submitCount, pSubmits, fence);
+
+    if (result == VK_SUCCESS) {
+        std::vector<VkSubmitInfo> submitInfos;
+        submitInfos.resize(submitCount);
+        std::unordered_map<uint32_t, std::vector<VkCommandBuffer>> submitIndexTocommandBuffers;
+
+        for (uint32_t x = 0; x < submitCount; x++) {
+            submitIndexTocommandBuffers[x].resize(pSubmits[x].commandBufferInfoCount);
+            for (uint32_t y = 0; y < pSubmits[x].commandBufferInfoCount; y++) {
+                submitIndexTocommandBuffers[x][y] = pSubmits[x].pCommandBufferInfos[y].commandBuffer;
+            }
+            submitInfos[x].commandBufferCount = pSubmits[x].commandBufferInfoCount;
+            submitInfos[x].pCommandBuffers = (VkCommandBuffer*)submitIndexTocommandBuffers[x].data();
+        }
+
+        result = OverrideQueueSubmit(queue, submitCount, (VkSubmitInfo*)submitInfos.data(), fence);
+    }
+
+    return result;
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL QueueSubmit2KHR(VkQueue queue, uint32_t submitCount, const VkSubmitInfo2 *pSubmits, VkFence fence) {
+    DeviceMapStruct *devMap = get_dev_info((VkDevice)queue);
+    assert(devMap);
+    VkLayerDispatchTable *pDisp = devMap->device_dispatch_table;
+    VkResult result = pDisp->QueueSubmit2KHR(queue, submitCount, pSubmits, fence);
+
+    if (result == VK_SUCCESS) {
+        std::vector<VkSubmitInfo> submitInfos;
+        submitInfos.resize(submitCount);
+        std::unordered_map<uint32_t, std::vector<VkCommandBuffer>> submitIndexTocommandBuffers;
+
+        for (uint32_t x = 0; x < submitCount; x++) {
+            submitIndexTocommandBuffers[x].resize(pSubmits[x].commandBufferInfoCount);
+            for (uint32_t y = 0; y < pSubmits[x].commandBufferInfoCount; y++) {
+                submitIndexTocommandBuffers[x][y] = pSubmits[x].pCommandBufferInfos[y].commandBuffer;
+            }
+            submitInfos[x].commandBufferCount = pSubmits[x].commandBufferInfoCount;
+            submitInfos[x].pCommandBuffers = (VkCommandBuffer*)submitIndexTocommandBuffers[x].data();
+        }
+
+        result = OverrideQueueSubmit(queue, submitCount, (VkSubmitInfo*)submitInfos.data(), fence);
+    }
 
     return result;
 }
@@ -2141,6 +2529,15 @@ static PFN_vkVoidFunction intercept_core_device_command(const char *name) {
         {"vkCreateImageView", reinterpret_cast<PFN_vkVoidFunction>(CreateImageView)},
         {"vkCreateFramebuffer", reinterpret_cast<PFN_vkVoidFunction>(CreateFramebuffer)},
         {"vkQueueSubmit", reinterpret_cast<PFN_vkVoidFunction>(QueueSubmit)},
+        {"vkGetDeviceQueue2", reinterpret_cast<PFN_vkVoidFunction>(GetDeviceQueue2)},
+        {"vkCreateRenderPass2", reinterpret_cast<PFN_vkVoidFunction>(CreateRenderPass2)},
+        {"vkCmdBeginRenderPass2", reinterpret_cast<PFN_vkVoidFunction>(CmdBeginRenderPass2)},
+        {"vkCmdEndRenderPass2", reinterpret_cast<PFN_vkVoidFunction>(CmdEndRenderPass2)},
+        {"vkQueueSubmit2", reinterpret_cast<PFN_vkVoidFunction>(QueueSubmit2)},
+        {"vkCreateRenderPass2KHR", reinterpret_cast<PFN_vkVoidFunction>(CreateRenderPass2KHR)},
+        {"vkCmdBeginRenderPass2KHR", reinterpret_cast<PFN_vkVoidFunction>(CmdBeginRenderPass2KHR)},
+        {"vkCmdEndRenderPass2KHR", reinterpret_cast<PFN_vkVoidFunction>(CmdEndRenderPass2KHR)},
+        {"vkQueueSubmit2KHR", reinterpret_cast<PFN_vkVoidFunction>(QueueSubmit2KHR)},
 #ifdef ANDROID
         {"vkCreateSemaphore", reinterpret_cast<PFN_vkVoidFunction>(CreateSemaphore)},
         {"vkAllocateMemory", reinterpret_cast<PFN_vkVoidFunction>(AllocateMemory)},

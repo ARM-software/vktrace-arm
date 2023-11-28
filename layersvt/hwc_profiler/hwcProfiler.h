@@ -1,5 +1,5 @@
 /*
- * (C) COPYRIGHT 2019 ARM Limited
+ * (C) COPYRIGHT 2019-2023 ARM Limited
  * ALL RIGHTS RESERVED
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -154,7 +154,7 @@ public:
                 Json::Value gpuCounterNames;
                 Json::Value gpuCounterOffset;
                 uint32_t counterIndex = 0;
-                for (const std::pair<hwcpipe::GpuCounter, hwcpipe::Value> &data : *measurements.gpu) {
+                for (const auto &data : *measurements.gpu) {
                     gpuCounterNames[mSupportedGpuCounters[data.first]] = Json::Value(counterIndex);
                     counterIndex++;
                 }
@@ -165,7 +165,7 @@ public:
             }
 
             Json::Value gpuCounters;
-            for (const std::pair<hwcpipe::GpuCounter, hwcpipe::Value> &data : *measurements.gpu) {
+            for (const auto &data : *measurements.gpu) {
                 gpuCounters["data"].append(data.second.get<double>());
             }
 

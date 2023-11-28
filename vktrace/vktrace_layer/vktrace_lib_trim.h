@@ -1,6 +1,6 @@
 /*
 * Copyright (c) 2016 Advanced Micro Devices, Inc. All rights reserved.
-* Copyright (C) 2019 ARM Limited. All rights reserved.
+* Copyright (C) 2019-2023 ARM Limited. All rights reserved.
 *
 * Licensed under the Apache License, Version 2.0 (the "License");
 * you may not use this file except in compliance with the License.
@@ -56,6 +56,7 @@ extern bool g_trimAlreadyFinished;
 extern bool g_TraceLockEnabled;
 extern bool g_TraceEnableCopyAsBuf;
 extern std::unordered_map<VkDevice, VkPhysicalDevice> g_deviceToPhysicalDevice;
+extern std::unordered_map<VkDevice, deviceFeatureSupport> g_deviceToFeatureSupport;
 
 enum QueryCmd {
     QueryCmd_Reset = 0,
@@ -74,10 +75,16 @@ typedef struct _cmdBuildASPacketInfo {
     VkBuildAccelerationStructureModeKHR mode;
     vktrace_trace_packet_header* pHeader;
 } cmdBuildASPacketInfo;
+extern std::map<uint64_t, cmdBuildASPacketInfo> g_cmdBuildASPacket;
+extern std::vector<VkBuffer> g_bufferInCmdBuildAS;
+extern std::vector<VkBuffer> g_scratchBufferInCmdBuildAS;
+extern std::unordered_map<uint64_t, vktrace_trace_packet_header*> g_pGetAccelerationStructureBuildSizePackets;
+
 
 // This mutex is used to protect API calls sequence
 // during trace
 extern std::mutex g_mutex_trace;
+int getReBindMemoryAndAlignedSizeEnable();
 
 namespace trim {
 
@@ -151,7 +158,7 @@ bool is_hotkey_trim_triggered();
 
 VkDeviceSize calculateImageSubResourceSize(VkDevice device, VkImage image, VkImageCreateInfo imageCreateInfo,
                                            uint32_t subresourceIndex);
-bool calculateImageAllSubResourceSize(VkDevice device, VkImage image, VkImageCreateInfo imageCreateInfo,
+bool calculateImageAllSubResourceSize(VkDevice device, VkImageCreateInfo imageCreateInfo, const VkAllocationCallbacks *pAllocator,
                                       std::vector<VkDeviceSize> &subResourceSizes);
 
 void addImageSubResourceSizes(VkImage image, std::vector<VkDeviceSize> subResourceSizes);
@@ -204,10 +211,10 @@ void ClearBufferTransitions(VkCommandBuffer commandBuffer);
 void reset_DescriptorPool(VkDescriptorPool descriptorPool);
 
 VkMemoryPropertyFlags LookUpMemoryProperties(VkDevice device, uint32_t memoryTypeIndex);
+uint32_t FindMemoryTypeIndex(VkDevice device, VkMemoryPropertyFlags propertyFlags);
 
-// check if a memory type on the physical device is only DEVICE_LOCAL and not
-// HOST_VISIBLE
 bool IsMemoryDeviceOnly(VkDeviceMemory memory);
+bool IsImageMemoryDeviceOnly(VkImage image);
 
 VkImageAspectFlags getImageAspectFromFormat(VkFormat format);
 
@@ -372,5 +379,5 @@ void clear_CommandBuffer_calls_by_binding_Pipeline(VkPipeline pipeLine);
 void cancel_ASPacketCreate(vktrace_trace_packet_header* pCreateASPacket);
 
 bool UpdateInvalidDescriptors(const VkWriteDescriptorSet *pDescriptorWrites);
-
+void remove_PipelineCache_object_later(const VkPipelineCache var);
 }  // namespace trim

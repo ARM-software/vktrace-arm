@@ -15,7 +15,7 @@ android {
         externalNativeBuild {
             cmake.arguments '-DANDROID_TOOLCHAIN=clang',
                             '-DANDROID_STL=c++_static',
-                            '-DANDROID_PLATFORM=android-24'
+                            '-DANDROID_PLATFORM=android-29'
         }
     }
     externalNativeBuild {

@@ -2,7 +2,7 @@
  *
  * Copyright 2014-2016 Valve Corporation
  * Copyright (C) 2014-2016 LunarG, Inc.
- * Copyright (C) 2019 ARM Limited
+ * Copyright (C) 2019-2023 ARM Limited
  * All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -142,7 +142,7 @@ void vktrace_finalize_trace_packet(vktrace_trace_packet_header* pHeader);
 
 // Write the trace packet to the filelike thing.
 // This has no knowledge of the details of the packet other than its size.
-void vktrace_write_trace_packet(const vktrace_trace_packet_header* pHeader, FileLike* pFile);
+extern void vktrace_write_trace_packet(const vktrace_trace_packet_header* pHeader, FileLike* pFile);
 
 // Tag the trace packet
 void vktrace_tag_trace_packet(vktrace_trace_packet_header* pHeader, uint32_t tag);
@@ -165,6 +165,10 @@ void* vktrace_trace_packet_interpret_buffer_pointer(vktrace_trace_packet_header*
 // Adding to packets TODO: Move to codegen
 void add_VkApplicationInfo_to_packet(vktrace_trace_packet_header* pHeader, VkApplicationInfo** ppStruct, const VkApplicationInfo* pInStruct);
 void add_VkDebugUtilsLabelEXT_to_packet(vktrace_trace_packet_header* pHeader, VkDebugUtilsLabelEXT** ppStruct, const VkDebugUtilsLabelEXT* pInStruct);
+void add_VkDebugUtilsObjectNameInfoEXT_to_packet(vktrace_trace_packet_header* pHeader, VkDebugUtilsObjectNameInfoEXT** ppStruct, const VkDebugUtilsObjectNameInfoEXT* pInStruct);
+void add_VkDebugUtilsObjectTagInfoEXT_to_packet(vktrace_trace_packet_header* pHeader, VkDebugUtilsObjectTagInfoEXT** ppStruct, const VkDebugUtilsObjectTagInfoEXT* pInStruct);
+void add_VkDebugUtilsMessengerCallbackDataEXT_to_packet(vktrace_trace_packet_header* pHeader, VkDebugUtilsMessengerCallbackDataEXT** ppStruct,
+                                        const VkDebugUtilsMessengerCallbackDataEXT* pInStruct);
 void add_VkAccelerationStructureBuildGeometryInfoKHR_to_packet(vktrace_trace_packet_header* pHeader, VkAccelerationStructureBuildGeometryInfoKHR** ppStruct,
                                                                VkAccelerationStructureBuildGeometryInfoKHR* pInStruct, bool addSelf, const VkAccelerationStructureBuildRangeInfoKHR* pBuildRangeInfos,
                                                                bool hostAddr, char* geometryDataBit);
@@ -179,6 +183,9 @@ BOOL vktrace_append_portabilitytable(uint16_t packet_id);
 // Interpreting packets TODO: Move to codegen
 VkAccelerationStructureBuildGeometryInfoKHR* interpret_VkAccelerationStructureBuildGeometryInfoKHR(vktrace_trace_packet_header* pHeader, intptr_t ptr_variable, bool hostAddress);
 VkDebugUtilsLabelEXT* interpret_VkDebugUtilsLabelEXT(vktrace_trace_packet_header* pHeader, intptr_t ptr_variable);
+VkDebugUtilsObjectNameInfoEXT* interpret_VkDebugUtilsObjectNameInfoEXT(vktrace_trace_packet_header* pHeader, intptr_t ptr_variable);
+VkDebugUtilsObjectTagInfoEXT* interpret_VkDebugUtilsObjectTagInfoEXT(vktrace_trace_packet_header* pHeader, intptr_t ptr_variable);
+VkDebugUtilsMessengerCallbackDataEXT* interpret_VkDebugUtilsMessengerCallbackDataEXT(vktrace_trace_packet_header* pHeader, intptr_t ptr_variable);
 VkInstanceCreateInfo* interpret_VkInstanceCreateInfo(vktrace_trace_packet_header* pHeader, intptr_t ptr_variable);
 VkDependencyInfo* interpret_VkDependencyInfo(vktrace_trace_packet_header* pHeader, intptr_t ptr_variable);
 VkDeviceCreateInfo* interpret_VkDeviceCreateInfo(vktrace_trace_packet_header* pHeader, intptr_t ptr_variable);

@@ -41,6 +41,7 @@ set(SRC_LIST
     vktrace_lib_trim_statetracker.cpp
     vktrace_lib_trim_descriptoriterator.cpp
     vktrace_lib_trim_cmdbuild_as.cpp
+    vktrace_lib_trim_utils.cpp
     vktrace_vk_exts.cpp
     ${GENERATED_FILES_DIR}/vktrace_vk_vk.cpp
 )
@@ -146,6 +147,7 @@ target_link_libraries(${PROJECT_NAME}
     vktrace_common
     ${VKTRACE_VULKAN_LIB}
     ${OS_TRACER_LIBS}
+    ${VkLayer_utils_LIBRARY}
 )
 else()
 if (BUILD_WSI_XCB_SUPPORT)
@@ -155,12 +157,14 @@ target_link_libraries(${PROJECT_NAME}
     xcb-keysyms
     ${VKTRACE_VULKAN_LIB}
     ${OS_TRACER_LIBS}
+    ${VkLayer_utils_LIBRARY}
 )
 else()
 target_link_libraries(${PROJECT_NAME}
     vktrace_common
     ${VKTRACE_VULKAN_LIB}
     ${OS_TRACER_LIBS}
+    ${VkLayer_utils_LIBRARY}
 )
 endif()
 install(TARGETS VkLayer_vktrace_layer DESTINATION ${CMAKE_INSTALL_LIBDIR})

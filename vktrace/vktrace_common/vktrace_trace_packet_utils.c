@@ -3,7 +3,7 @@
  * Copyright 2014-2016 Valve Corporation
  * Copyright (C) 2014-2016 LunarG, Inc.
  * Copyright (C) 2016 Advanced Micro Devices, Inc.
- * Copyright (C) 2019 ARM Limited
+ * Copyright (C) 2019-2023 ARM Limited
  * All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -315,7 +315,7 @@ deviceFeatureSupport query_device_feature(PFN_vkGetPhysicalDeviceFeatures2KHR Ge
         dfs.propertyShaderGroupHandleCaptureReplaySize = rtpProperties.shaderGroupHandleCaptureReplaySize;
     }
 
-    vktrace_LogAlways("Device CaptureReplay: BDA %d, AS %d, RTPSGH %d, SGHSize %llu",
+    vktrace_LogAlways("Query device feature support CaptureReplay: BDA %d, AS %d, RTPSGH %d, SGHSize %llu",
                       dfs.bufferDeviceAddressCaptureReplay, dfs.accelerationStructureCaptureReplay,
                       dfs.rayTracingPipelineShaderGroupHandleCaptureReplay,
                       dfs.propertyShaderGroupHandleCaptureReplaySize);
@@ -460,6 +460,7 @@ void vktrace_add_pnext_structs_to_trace_packet(vktrace_trace_packet_header* pHea
         pInNext = (void*)((VkApplicationInfo*)pIn)->pNext;
         size_t size = 0;
         get_struct_size(pInNext, &size);
+
         if (size > 0) {
             vktrace_add_buffer_to_trace_packet(pHeader, ppOutNext, size, pInNext);
             // TODO: Might be able codegen this switch statement
@@ -588,7 +589,6 @@ void vktrace_add_pnext_structs_to_trace_packet(vktrace_trace_packet_header* pHea
                 case VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR:
                     AddPointerWithCountToTracebuffer(VkPipelineRenderingCreateInfoKHR, VkFormat, pColorAttachmentFormats, colorAttachmentCount);
                     break;
-
                 default:
                     // The cases in this switch statement are only those pnext struct types that have
                     // pointers inside them that need to be added. The pnext list may contain
@@ -615,15 +615,6 @@ void vktrace_finalize_trace_packet(vktrace_trace_packet_header* pHeader) {
         vktrace_set_packet_entrypoint_end_time(pHeader);
     }
     pHeader->vktrace_end_time = vktrace_get_time();
-}
-
-void vktrace_write_trace_packet(const vktrace_trace_packet_header* pHeader, FileLike* pFile) {
-    BOOL res = vktrace_FileLike_WriteRaw(pFile, pHeader, (size_t)pHeader->size);
-    if (!res && pHeader->packet_id != VKTRACE_TPI_MARKER_TERMINATE_PROCESS) {
-        // We don't retry on failure because vktrace_FileLike_WriteRaw already retried and gave up.
-        vktrace_LogWarning("Failed to write trace packet.");
-        exit(1);
-    }
 }
 
 void vktrace_tag_trace_packet(vktrace_trace_packet_header* pHeader, uint32_t tag) {
@@ -921,6 +912,75 @@ void add_VkDebugUtilsLabelEXT_to_packet(vktrace_trace_packet_header* pHeader, Vk
     vktrace_finalize_buffer_address(pHeader, (void**)ppStruct);
 }
 
+void add_VkDebugUtilsObjectNameInfoEXT_to_packet(vktrace_trace_packet_header* pHeader, VkDebugUtilsObjectNameInfoEXT** ppStruct,
+                                                const VkDebugUtilsObjectNameInfoEXT* pInStruct) {
+    vktrace_add_buffer_to_trace_packet(pHeader, (void**)ppStruct, sizeof(VkDebugUtilsObjectNameInfoEXT), pInStruct);
+    vktrace_add_pnext_structs_to_trace_packet(pHeader, (void**)ppStruct, (void*)pInStruct);
+    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&((*ppStruct)->pObjectName),
+                                       (pInStruct->pObjectName != NULL) ? strlen(pInStruct->pObjectName) + 1 : 0,
+                                       pInStruct->pObjectName);
+    vktrace_finalize_buffer_address(pHeader, (void**)&((*ppStruct)->pObjectName));
+    vktrace_finalize_buffer_address(pHeader, (void**)ppStruct);
+}
+
+void add_VkDebugUtilsObjectTagInfoEXT_to_packet(vktrace_trace_packet_header* pHeader, VkDebugUtilsObjectTagInfoEXT** ppStruct,
+                                                const VkDebugUtilsObjectTagInfoEXT* pInStruct) {
+    vktrace_add_buffer_to_trace_packet(pHeader, (void**)ppStruct, sizeof(VkDebugUtilsObjectTagInfoEXT), pInStruct);
+    vktrace_add_pnext_structs_to_trace_packet(pHeader, (void**)ppStruct, (void*)pInStruct);
+    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&((*ppStruct)->pTag),
+                                       (pInStruct->pTag != NULL) ? pInStruct->tagSize : 0,
+                                       pInStruct->pTag);
+    vktrace_finalize_buffer_address(pHeader, (void**)&((*ppStruct)->pTag));
+    vktrace_finalize_buffer_address(pHeader, (void**)ppStruct);
+}
+
+void add_VkDebugUtilsMessengerCallbackDataEXT_to_packet(vktrace_trace_packet_header* pHeader, VkDebugUtilsMessengerCallbackDataEXT** ppStruct,
+                                        const VkDebugUtilsMessengerCallbackDataEXT* pInStruct) {
+    vktrace_add_buffer_to_trace_packet(pHeader, (void**)ppStruct, sizeof(VkDebugUtilsMessengerCallbackDataEXT), pInStruct);
+    vktrace_add_pnext_structs_to_trace_packet(pHeader, (void**)ppStruct, (void*)pInStruct);
+    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&((*ppStruct)->pMessageIdName),
+                                       (pInStruct->pMessageIdName != NULL) ? strlen(pInStruct->pMessageIdName) + 1 : 0,
+                                       pInStruct->pMessageIdName);
+    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&((*ppStruct)->pMessage),
+                                       (pInStruct->pMessage != NULL) ? strlen(pInStruct->pMessage) + 1 : 0,
+                                       pInStruct->pMessage);
+    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&((*ppStruct)->pQueueLabels), pInStruct->queueLabelCount * sizeof(VkDebugUtilsLabelEXT), pInStruct->pQueueLabels);
+    uint32_t i = 0;
+    if ((*ppStruct)->pQueueLabels != NULL) {
+        for (i = 0; i < pInStruct->queueLabelCount; i++) {
+            vktrace_add_buffer_to_trace_packet(pHeader, (void**)&((*ppStruct)->pQueueLabels[i].pLabelName),
+                                            (pInStruct->pQueueLabels[i].pLabelName != NULL) ? strlen(pInStruct->pQueueLabels[i].pLabelName) + 1 : 0,
+                                            pInStruct->pQueueLabels[i].pLabelName);
+            vktrace_add_pnext_structs_to_trace_packet(pHeader, (void**)ppStruct, (void*)pInStruct);
+            vktrace_finalize_buffer_address(pHeader, (void**)&((*ppStruct)->pQueueLabels[i].pLabelName));
+        }
+    }
+    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&((*ppStruct)->pCmdBufLabels), pInStruct->cmdBufLabelCount * sizeof(VkDebugUtilsLabelEXT), pInStruct->pCmdBufLabels);
+    if ((*ppStruct)->pCmdBufLabels != NULL) {
+        for (i = 0; i < pInStruct->cmdBufLabelCount; i++) {
+            vktrace_add_buffer_to_trace_packet(pHeader, (void**)&((*ppStruct)->pCmdBufLabels[i].pLabelName),
+                                            (pInStruct->pCmdBufLabels[i].pLabelName != NULL) ? strlen(pInStruct->pCmdBufLabels[i].pLabelName) + 1 : 0,
+                                            pInStruct->pCmdBufLabels[i].pLabelName);
+            vktrace_finalize_buffer_address(pHeader, (void**)&((*ppStruct)->pCmdBufLabels[i].pLabelName));
+        }
+    }
+    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&((*ppStruct)->pObjects), pInStruct->objectCount * sizeof(VkDebugUtilsObjectNameInfoEXT), pInStruct->pObjects);
+    if ((*ppStruct)->pObjects != NULL) {
+        for (i = 0; i < pInStruct->objectCount; i++) {
+            vktrace_add_buffer_to_trace_packet(pHeader, (void**)&((*ppStruct)->pObjects[i].pObjectName),
+                                            (pInStruct->pObjects[i].pObjectName != NULL) ? strlen(pInStruct->pObjects[i].pObjectName) + 1 : 0,
+                                            pInStruct->pObjects[i].pObjectName);
+            vktrace_finalize_buffer_address(pHeader, (void**)&((*ppStruct)->pObjects[i].pObjectName));
+        }
+    }
+    vktrace_finalize_buffer_address(pHeader, (void**)&((*ppStruct)->pObjects));
+    vktrace_finalize_buffer_address(pHeader, (void**)&((*ppStruct)->pCmdBufLabels));
+    vktrace_finalize_buffer_address(pHeader, (void**)&((*ppStruct)->pQueueLabels));
+    vktrace_finalize_buffer_address(pHeader, (void**)&((*ppStruct)->pMessage));
+    vktrace_finalize_buffer_address(pHeader, (void**)&((*ppStruct)->pMessageIdName));
+    vktrace_finalize_buffer_address(pHeader, (void**)ppStruct);
+}
+
 void add_VkInstanceCreateInfo_to_packet(vktrace_trace_packet_header* pHeader, VkInstanceCreateInfo** ppStruct,
                                         VkInstanceCreateInfo* pInStruct) {
     vktrace_add_buffer_to_trace_packet(pHeader, (void**)ppStruct, sizeof(VkInstanceCreateInfo), pInStruct);
@@ -1053,6 +1113,44 @@ VkAccelerationStructureBuildGeometryInfoKHR* interpret_VkAccelerationStructureBu
     return pVkASBuildGeometryInfoKHR;
 }
 
+VkDebugUtilsMessengerCallbackDataEXT* interpret_VkDebugUtilsMessengerCallbackDataEXT(vktrace_trace_packet_header* pHeader, intptr_t ptr_variable) {
+    VkDebugUtilsMessengerCallbackDataEXT* pVkDebugUtilsMessengerCallbackDataEXT = (VkDebugUtilsMessengerCallbackDataEXT*)vktrace_trace_packet_interpret_buffer_pointer(pHeader, (intptr_t)ptr_variable);
+    if (pVkDebugUtilsMessengerCallbackDataEXT != NULL) {
+        vkreplay_interpret_pnext_pointers(pHeader, (void*)pVkDebugUtilsMessengerCallbackDataEXT);
+        pVkDebugUtilsMessengerCallbackDataEXT->pMessageIdName = (const char*)vktrace_trace_packet_interpret_buffer_pointer(pHeader, (intptr_t)pVkDebugUtilsMessengerCallbackDataEXT->pMessageIdName);
+        pVkDebugUtilsMessengerCallbackDataEXT->pMessage = (const char*)vktrace_trace_packet_interpret_buffer_pointer(pHeader, (intptr_t)pVkDebugUtilsMessengerCallbackDataEXT->pMessage);
+        uint32_t i = 0;
+        if (pVkDebugUtilsMessengerCallbackDataEXT->queueLabelCount > 0) {
+            pVkDebugUtilsMessengerCallbackDataEXT->pQueueLabels = (const VkDebugUtilsLabelEXT*)vktrace_trace_packet_interpret_buffer_pointer(pHeader, (intptr_t)pVkDebugUtilsMessengerCallbackDataEXT->pQueueLabels);
+            for (i = 0; i < pVkDebugUtilsMessengerCallbackDataEXT->queueLabelCount; i++) {
+                vkreplay_interpret_pnext_pointers(pHeader, (void*)&(pVkDebugUtilsMessengerCallbackDataEXT->pQueueLabels[i]));
+                ((VkDebugUtilsLabelEXT*)(pVkDebugUtilsMessengerCallbackDataEXT->pQueueLabels))[i].pLabelName = (const char*)vktrace_trace_packet_interpret_buffer_pointer(pHeader, (intptr_t)pVkDebugUtilsMessengerCallbackDataEXT->pQueueLabels[i].pLabelName);
+                float *pColor = &(((VkDebugUtilsLabelEXT*)(pVkDebugUtilsMessengerCallbackDataEXT->pQueueLabels))[i].color[0]);
+                float **ppColor = &pColor;
+                *ppColor = (float*)vktrace_trace_packet_interpret_buffer_pointer(pHeader, (intptr_t)(pVkDebugUtilsMessengerCallbackDataEXT->pQueueLabels[i].color));
+            }
+        }
+        if (pVkDebugUtilsMessengerCallbackDataEXT->cmdBufLabelCount > 0) {
+            pVkDebugUtilsMessengerCallbackDataEXT->pCmdBufLabels = (const VkDebugUtilsLabelEXT*)vktrace_trace_packet_interpret_buffer_pointer(pHeader, (intptr_t)pVkDebugUtilsMessengerCallbackDataEXT->pCmdBufLabels);
+            for (i = 0; i < pVkDebugUtilsMessengerCallbackDataEXT->cmdBufLabelCount; i++) {
+                vkreplay_interpret_pnext_pointers(pHeader, (void*)&(pVkDebugUtilsMessengerCallbackDataEXT->pCmdBufLabels[i]));
+                ((VkDebugUtilsLabelEXT*)(pVkDebugUtilsMessengerCallbackDataEXT->pCmdBufLabels))[i].pLabelName = (const char*)vktrace_trace_packet_interpret_buffer_pointer(pHeader, (intptr_t)pVkDebugUtilsMessengerCallbackDataEXT->pCmdBufLabels[i].pLabelName);
+                float *pColor = &(((VkDebugUtilsLabelEXT*)(pVkDebugUtilsMessengerCallbackDataEXT->pCmdBufLabels))[i].color[0]);
+                float **ppColor = &pColor;
+                *ppColor = (float*)vktrace_trace_packet_interpret_buffer_pointer(pHeader, (intptr_t)(pVkDebugUtilsMessengerCallbackDataEXT->pCmdBufLabels[i].color));
+            }
+        }
+        if (pVkDebugUtilsMessengerCallbackDataEXT->objectCount > 0) {
+            pVkDebugUtilsMessengerCallbackDataEXT->pObjects = (const VkDebugUtilsObjectNameInfoEXT*)vktrace_trace_packet_interpret_buffer_pointer(pHeader, (intptr_t)pVkDebugUtilsMessengerCallbackDataEXT->pObjects);
+            for (i = 0; i < pVkDebugUtilsMessengerCallbackDataEXT->objectCount; i++) {
+                vkreplay_interpret_pnext_pointers(pHeader, (void*)&(pVkDebugUtilsMessengerCallbackDataEXT->pObjects[i]));
+                ((VkDebugUtilsObjectNameInfoEXT*)(pVkDebugUtilsMessengerCallbackDataEXT->pObjects))[i].pObjectName = (const char*)vktrace_trace_packet_interpret_buffer_pointer(pHeader, (intptr_t)(pVkDebugUtilsMessengerCallbackDataEXT->pObjects[i].pObjectName));
+            }
+        }
+    }
+    return pVkDebugUtilsMessengerCallbackDataEXT;
+}
+
 VkDebugUtilsLabelEXT* interpret_VkDebugUtilsLabelEXT(vktrace_trace_packet_header* pHeader, intptr_t ptr_variable) {
     VkDebugUtilsLabelEXT* pVkDebugUtilsLabelEXT =
         (VkDebugUtilsLabelEXT*)vktrace_trace_packet_interpret_buffer_pointer(pHeader, (intptr_t)ptr_variable);
@@ -1060,6 +1158,26 @@ VkDebugUtilsLabelEXT* interpret_VkDebugUtilsLabelEXT(vktrace_trace_packet_header
         pVkDebugUtilsLabelEXT->pLabelName = (const char*)vktrace_trace_packet_interpret_buffer_pointer(pHeader, (intptr_t)pVkDebugUtilsLabelEXT->pLabelName);
     }
     return pVkDebugUtilsLabelEXT;
+}
+
+VkDebugUtilsObjectNameInfoEXT* interpret_VkDebugUtilsObjectNameInfoEXT(vktrace_trace_packet_header* pHeader, intptr_t ptr_variable) {
+    VkDebugUtilsObjectNameInfoEXT* pVkDebugUtilsObjectNameInfoEXT =
+        (VkDebugUtilsObjectNameInfoEXT*)vktrace_trace_packet_interpret_buffer_pointer(pHeader, (intptr_t)ptr_variable);
+    if (pVkDebugUtilsObjectNameInfoEXT != NULL) {
+        vkreplay_interpret_pnext_pointers(pHeader, (void*)pVkDebugUtilsObjectNameInfoEXT);
+        pVkDebugUtilsObjectNameInfoEXT->pObjectName = (const char*)vktrace_trace_packet_interpret_buffer_pointer(pHeader, (intptr_t)pVkDebugUtilsObjectNameInfoEXT->pObjectName);
+    }
+    return pVkDebugUtilsObjectNameInfoEXT;
+}
+
+VkDebugUtilsObjectTagInfoEXT* interpret_VkDebugUtilsObjectTagInfoEXT(vktrace_trace_packet_header* pHeader, intptr_t ptr_variable) {
+    VkDebugUtilsObjectTagInfoEXT* pVkDebugUtilsObjectTagInfoEXT =
+        (VkDebugUtilsObjectTagInfoEXT*)vktrace_trace_packet_interpret_buffer_pointer(pHeader, (intptr_t)ptr_variable);
+    if (pVkDebugUtilsObjectTagInfoEXT != NULL) {
+        vkreplay_interpret_pnext_pointers(pHeader, (void*)pVkDebugUtilsObjectTagInfoEXT);
+        pVkDebugUtilsObjectTagInfoEXT->pTag = (const char*)vktrace_trace_packet_interpret_buffer_pointer(pHeader, (intptr_t)pVkDebugUtilsObjectTagInfoEXT->pTag);
+    }
+    return pVkDebugUtilsObjectTagInfoEXT;
 }
 
 VkInstanceCreateInfo* interpret_VkInstanceCreateInfo(vktrace_trace_packet_header* pHeader, intptr_t ptr_variable) {
@@ -1347,7 +1465,10 @@ BOOL vktrace_append_portabilitytable(uint16_t packet_id) {
         packet_id == VKTRACE_TPI_VK_vkBindBufferMemory || packet_id == VKTRACE_TPI_VK_vkBindBufferMemory2 || packet_id == VKTRACE_TPI_VK_vkBindBufferMemory2KHR ||
         packet_id == VKTRACE_TPI_VK_vkAllocateMemory || packet_id == VKTRACE_TPI_VK_vkDestroyImage ||
         packet_id == VKTRACE_TPI_VK_vkDestroyBuffer || packet_id == VKTRACE_TPI_VK_vkFreeMemory ||
-        packet_id == VKTRACE_TPI_VK_vkCreateBuffer || packet_id == VKTRACE_TPI_VK_vkCreateImage) {
+        packet_id == VKTRACE_TPI_VK_vkCreateBuffer || packet_id == VKTRACE_TPI_VK_vkCreateImage ||
+        packet_id == VKTRACE_TPI_VK_vkCreateWeightsARM || packet_id == VKTRACE_TPI_VK_vkCreateTensorEXT ||
+        packet_id == VKTRACE_TPI_VK_vkDestroyWeightsARM || packet_id == VKTRACE_TPI_VK_vkDestroyTensorEXT ||
+        packet_id == VKTRACE_TPI_VK_vkBindWeightsMemoryARM || packet_id == VKTRACE_TPI_VK_vkBindTensorMemoryEXT) {
         return TRUE;
     }
     return FALSE;

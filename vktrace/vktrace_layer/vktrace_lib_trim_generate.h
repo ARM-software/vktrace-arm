@@ -1,5 +1,6 @@
 /*
 * Copyright (c) 2016 Advanced Micro Devices, Inc. All rights reserved.
+* Copyright (C) 2021-2023 ARM Limited
 *
 * Licensed under the Apache License, Version 2.0 (the "License");
 * you may not use this file except in compliance with the License.
@@ -104,6 +105,9 @@ vktrace_trace_packet_header *vkSetEvent(bool makeCall, VkDevice device, VkEvent 
 
 vktrace_trace_packet_header *vkDestroyBuffer(bool makeCall, VkDevice device, VkBuffer buffer,
                                              const VkAllocationCallbacks *pAllocator);
+
+vktrace_trace_packet_header *vkDestroyAccelerationStructureKHR(bool makeCall, VkDevice device, VkAccelerationStructureKHR accelerationStructure,
+                                                               const VkAllocationCallbacks* pAllocator);
 
 vktrace_trace_packet_header *vkDestroyBufferView(bool makeCall, VkDevice device, VkBufferView bufferView,
                                                  const VkAllocationCallbacks *pAllocator);

@@ -3,7 +3,7 @@
     "layer" : {
         "name": "VK_LAYER_LUNARG_vktrace",
         "type": "GLOBAL",
-        "library_path": "@RELATIVE_LAYER_BINARY@",
+        "library_path": "./@RELATIVE_LAYER_BINARY@",
         "api_version": "@VK_VERSION@",
         "implementation_version": "1",
         "description": "Vktrace tracing library",

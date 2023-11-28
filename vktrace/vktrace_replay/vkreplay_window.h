@@ -2,6 +2,7 @@
  *
  * Copyright 2015-2016 Valve Corporation
  * Copyright (C) 2015-2016 LunarG, Inc.
+ * Copyright (C) 2021-2023 ARM Limited
  * All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -35,7 +36,7 @@ extern "C" {
 #elif defined(VK_USE_PLATFORM_XLIB_KHR)
 // TODO
 #elif defined(VK_USE_PLATFORM_WAYLAND_KHR)
-#include <wayland-client.h>
+#include <xdg-shell-client-protocol.h>
 #endif
 #endif
 #elif defined(WIN32)

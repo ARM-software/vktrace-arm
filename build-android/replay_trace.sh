@@ -66,7 +66,7 @@ fi
 
 function printvkreplayBuild() {
     echo "To build vkreplay apk"
-    echo "android update project -s -p . -t \"android-23\""
+    echo "android update project -s -p . -t \"android-29\""
     echo "ndk-build -j"
     echo "ant -buildfile vkreplay debug"
 }

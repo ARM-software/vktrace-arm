@@ -9,6 +9,8 @@ set(SRC_LIST
     vktrace.cpp
     vktrace_process.h
     vktrace_process.cpp
+    ${SRC_DIR}/vktrace_common/vktrace_metadata.h
+    ${SRC_DIR}/vktrace_common/vktrace_metadata.cpp
     ${SRC_DIR}/../layersvt/screenshot_parsing.h
     ${SRC_DIR}/../layersvt/screenshot_parsing.cpp
 )

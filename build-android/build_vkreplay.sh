@@ -1,6 +1,7 @@
 #!/bin/bash
 
 # Copyright 2017 The Android Open Source Project
+# Copyright (C) 2018-2023 ARM Limited
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -40,7 +41,7 @@ echo LAYER_BUILD_DIR="${LAYER_BUILD_DIR}"
 LIBCOLLECTOR_LAYER_DIR=${LAYER_BUILD_DIR}/../external/submodules/libcollector
 
 function create_APK() {
-    aapt package -f -M AndroidManifest.xml -I "$ANDROID_SDK_HOME/platforms/android-23/android.jar" -S res -F bin/$1-unaligned.apk bin/libs
+    aapt package -f -M AndroidManifest.xml -I "$ANDROID_SDK_HOME/platforms/android-29/android.jar" -S res -F bin/$1-unaligned.apk bin/libs
     # update this logic to detect if key is already there.  If so, use it, otherwise create it.
     jarsigner -verbose -keystore ~/.android/debug.keystore -storepass android -keypass android  bin/$1-unaligned.apk androiddebugkey
     zipalign -f 4 bin/$1-unaligned.apk bin/$1.apk

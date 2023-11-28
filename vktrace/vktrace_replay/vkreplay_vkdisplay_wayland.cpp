@@ -2,6 +2,7 @@
  *
  * Copyright (C) 2015-2018 Valve Corporation
  * Copyright (C) 2015-2018 LunarG, Inc.
+ * Copyright (C) 2021-2023 ARM Limited
  * All Rights Reserved
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -25,34 +26,27 @@
 extern "C" {
 __attribute__((visibility("default"))) vkDisplayWayland *CreateVkDisplayWayland() { return new vkDisplayWayland(); }
 }
-
-vkDisplayWayland::vkDisplayWayland() :
-    m_display(nullptr), m_compositor(nullptr), m_shell(nullptr), m_wl_surface(nullptr), m_shell_surface(nullptr), m_seat(nullptr), \
-    m_pointer(nullptr), m_keyboard(nullptr), m_output(nullptr), \
-    m_windowWidth(0), m_windowHeight(0) {
+struct xdg_wm_base_listener vkDisplayWayland::xdg_shell_listener;
+struct xdg_surface_listener vkDisplayWayland::surface_listener;
+vkDisplayWayland::vkDisplayWayland() {
     memset(&m_surface, 0, sizeof(VkIcdSurfaceWayland));
-
-    shell_surface_listener.ping = handle_ping;
-    shell_surface_listener.configure = handle_configure;
-    shell_surface_listener.popup_done = handle_popup_done;
-
+    xdg_shell_listener.ping = handle_ping;
+    surface_listener.configure = handle_configure;
+    toplevel_listener.configure = handle_toplevel_configure;
+    toplevel_listener.close = handle_toplevel_close;
     pointer_listener.enter = pointer_handle_enter;
     pointer_listener.leave = pointer_handle_leave;
     pointer_listener.motion = pointer_handle_motion;
     pointer_listener.button = pointer_handle_button;
     pointer_listener.axis = pointer_handle_axis;
-
     keyboard_listener.keymap = keyboard_handle_keymap;
     keyboard_listener.enter = keyboard_handle_enter;
     keyboard_listener.leave = keyboard_handle_leave;
     keyboard_listener.key = keyboard_handle_key;
     keyboard_listener.modifiers = keyboard_handle_modifiers;
-
     seat_listener.capabilities = seat_handle_capabilities;
-
-    registry_listener.global = registry_handle_global;
-    registry_listener.global_remove = registry_handle_global_remove;
-
+    registry_listener.global = global_registry_handler;
+    registry_listener.global_remove = global_registry_remover;
     output_listener.geometry = output_handle_geometry;
     output_listener.mode = output_handle_mode;
 }
@@ -61,9 +55,10 @@ vkDisplayWayland::~vkDisplayWayland() {
     if (m_keyboard) wl_keyboard_destroy(m_keyboard);
     if (m_pointer) wl_pointer_destroy(m_pointer);
     if (m_seat) wl_seat_destroy(m_seat);
-    if (m_shell_surface) wl_shell_surface_destroy(m_shell_surface);
-    if (m_wl_surface) wl_surface_destroy(m_wl_surface);
-    if (m_shell) wl_shell_destroy(m_shell);
+    if (window_toplevel)xdg_toplevel_destroy(window_toplevel);
+    if (window_surface) xdg_surface_destroy(window_surface);
+    if (window) wl_surface_destroy(window);
+    if (m_xdg_shell) xdg_wm_base_destroy(m_xdg_shell);
     if (m_compositor) wl_compositor_destroy(m_compositor);
     if (m_registry) wl_registry_destroy(m_registry);
     if (m_display) wl_display_disconnect(m_display);
@@ -74,60 +69,54 @@ int vkDisplayWayland::init(const unsigned int gpu_idx) {
     try {
         m_display = wl_display_connect(NULL);
         if (!m_display) throw std::runtime_error("Wayland failed to connect to the display server");
-
         m_registry = wl_display_get_registry(m_display);
         if (!m_registry) throw std::runtime_error("Wayland failed to get registry");
-
         wl_registry_add_listener(m_registry, &vkDisplayWayland::registry_listener, this);
-        wl_display_roundtrip(m_display);
-
-        if (!m_compositor) throw std::runtime_error("Wayland failed to bind compositor");
-
-        if (!m_shell) throw std::runtime_error("Wayland failed to bind shell");
+        wl_display_dispatch(m_display);
     } catch (const std::runtime_error &ex) {
-        if (m_shell) wl_shell_destroy(m_shell);
-        if (m_compositor) wl_compositor_destroy(m_compositor);
         if (m_registry) wl_registry_destroy(m_registry);
         if (m_display) wl_display_disconnect(m_display);
-
         vktrace_LogError(ex.what());
         return -1;
     }
-
     set_pause_status(false);
     set_quit_status(false);
     return 0;
 }
 
 int vkDisplayWayland::create_window(const unsigned int width, const unsigned int height) {
-    m_wl_surface = wl_compositor_create_surface(m_compositor);
-    if (!m_wl_surface) throw std::runtime_error("failed to create surface");
-
-    m_shell_surface = wl_shell_get_shell_surface(m_shell, m_wl_surface);
-    if (!m_shell_surface) throw std::runtime_error("failed to shell_surface");
-
-    wl_shell_surface_add_listener(m_shell_surface, &vkDisplayWayland::shell_surface_listener, this);
+    window = wl_compositor_create_surface(m_compositor);
+    if (!window) { throw std::runtime_error("failed to create surface");
+        return -1;
+    }
+    window_surface = xdg_wm_base_get_xdg_surface(m_xdg_shell, window);
+    if (!window_surface) {
+        throw std::runtime_error("failed to window_surface");
+        return -1;
+    }
+    window_toplevel = xdg_surface_get_toplevel(window_surface);
+    if (!window_toplevel) {
+        throw std::runtime_error("failed to window_toplevel");
+        return -1;
+    }
+    int res = xdg_surface_add_listener(window_surface, &vkDisplayWayland::surface_listener, this);
+    xdg_toplevel_add_listener(window_toplevel, &toplevel_listener, this);
     // set title
-    // wl_shell_surface_set_title(m_shell_surface, "");
-    wl_shell_surface_set_toplevel(m_shell_surface);
-
+    xdg_toplevel_set_title(window_toplevel, "");
+    wl_surface_commit(window);
+    wl_display_roundtrip(m_display);
     m_surface.base.platform = VK_ICD_WSI_PLATFORM_WAYLAND;
     m_surface.display = m_display;
-    m_surface.surface = m_wl_surface;
-
-    return 0;
+    m_surface.surface = window;
+    return res;
 }
 
 void vkDisplayWayland::resize_window(const unsigned int width, const unsigned int height, VkSurfaceTransformFlagBitsKHR rot, const VkSurfaceCapabilitiesKHR& surf_caps) {
     if (width != m_windowWidth || height != m_windowHeight) {
         m_windowWidth = width;
         m_windowHeight = height;
-        if (width >= m_screenWidth || height >= m_screenHeight) {
-            // Make window full screen
-            wl_shell_surface_set_fullscreen(m_shell_surface, WL_SHELL_SURFACE_FULLSCREEN_METHOD_DEFAULT, m_refresh, m_output);
-        }
+        xdg_surface_set_window_geometry(window_surface, 0, 0, width, height);
 
-        // In Wayland, the shell_surface should resize based on the Vulkan surface automagically
     }
 }
 
@@ -140,45 +129,33 @@ void vkDisplayWayland::set_window_handle(void *pHandle) { m_display = *((wl_disp
 
 // Wayland callbacks, needed to handle events from the display manager.
 // Some stubs here that could be potentially removed
-void vkDisplayWayland::handle_ping(void *data, wl_shell_surface *shell_surface, uint32_t serial) {
-    wl_shell_surface_pong(shell_surface, serial);
+void vkDisplayWayland::handle_ping(void *data, struct xdg_wm_base *xdg_shell, uint32_t serial) {
+    xdg_wm_base_pong(xdg_shell, serial);
 }
 
-void vkDisplayWayland::handle_configure(void *data, wl_shell_surface *shell_surface, uint32_t edges, int32_t width,
-                                        int32_t height) {}
-
-void vkDisplayWayland::handle_popup_done(void *data, wl_shell_surface *shell_surface) {}
-
-struct wl_shell_surface_listener vkDisplayWayland::shell_surface_listener;
-
+void vkDisplayWayland::handle_configure(void *data, struct xdg_surface *surface, uint32_t serial) {
+    vkDisplayWayland *display = (vkDisplayWayland *)data;
+    xdg_surface_ack_configure(surface, serial);
+}
 void vkDisplayWayland::pointer_handle_enter(void *data, struct wl_pointer *pointer, uint32_t serial, struct wl_surface *surface,
                                             wl_fixed_t sx, wl_fixed_t sy) {}
-
 void vkDisplayWayland::pointer_handle_leave(void *data, struct wl_pointer *pointer, uint32_t serial, struct wl_surface *surface) {}
-
 void vkDisplayWayland::pointer_handle_motion(void *data, struct wl_pointer *pointer, uint32_t time, wl_fixed_t sx, wl_fixed_t sy) {}
-
 void vkDisplayWayland::pointer_handle_button(void *data, struct wl_pointer *wl_pointer, uint32_t serial, uint32_t time,
                                              uint32_t button, uint32_t state) {
     if (button == BTN_LEFT && state == WL_POINTER_BUTTON_STATE_PRESSED) {
         vkDisplayWayland *display = (vkDisplayWayland *)data;
-        wl_shell_surface_move(display->m_shell_surface, display->m_seat, serial);
+        xdg_toplevel_move(display->window_toplevel, display->m_seat, serial);
     }
 }
-
 void vkDisplayWayland::pointer_handle_axis(void *data, struct wl_pointer *wl_pointer, uint32_t time, uint32_t axis,
                                            wl_fixed_t value) {}
-
 struct wl_pointer_listener vkDisplayWayland::pointer_listener;
-
 void vkDisplayWayland::keyboard_handle_keymap(void *data, struct wl_keyboard *keyboard, uint32_t format, int fd, uint32_t size) {}
-
 void vkDisplayWayland::keyboard_handle_enter(void *data, struct wl_keyboard *keyboard, uint32_t serial, struct wl_surface *surface,
                                              struct wl_array *keys) {}
-
 void vkDisplayWayland::keyboard_handle_leave(void *data, struct wl_keyboard *keyboard, uint32_t serial,
                                              struct wl_surface *surface) {}
-
 void vkDisplayWayland::keyboard_handle_key(void *data, struct wl_keyboard *keyboard, uint32_t serial, uint32_t time, uint32_t key,
                                            uint32_t state) {
     if (state != WL_KEYBOARD_KEY_STATE_RELEASED) return;
@@ -192,12 +169,10 @@ void vkDisplayWayland::keyboard_handle_key(void *data, struct wl_keyboard *keybo
             break;
     }
 }
-
 void vkDisplayWayland::keyboard_handle_modifiers(void *data, wl_keyboard *keyboard, uint32_t serial, uint32_t mods_depressed,
                                                  uint32_t mods_latched, uint32_t mods_locked, uint32_t group) {}
 
 struct wl_keyboard_listener vkDisplayWayland::keyboard_listener;
-
 void vkDisplayWayland::seat_handle_capabilities(void *data, wl_seat *seat, uint32_t caps) {
     // Subscribe to pointer events
     vkDisplayWayland *display = (vkDisplayWayland *)data;
@@ -219,32 +194,29 @@ void vkDisplayWayland::seat_handle_capabilities(void *data, wl_seat *seat, uint3
 }
 
 struct wl_seat_listener vkDisplayWayland::seat_listener;
-
-void vkDisplayWayland::registry_handle_global(void *data, wl_registry *registry, uint32_t id, const char *interface,
+void vkDisplayWayland::global_registry_handler(void *data, wl_registry *registry, uint32_t id, const char *interface,
                                               uint32_t version) {
     // pickup wayland objects when they appear
     vkDisplayWayland *display = (vkDisplayWayland *)data;
-    if (strcmp(interface, "wl_compositor") == 0) {
+    if (strcmp(interface, wl_compositor_interface.name) == 0) {
         display->m_compositor = (wl_compositor *)wl_registry_bind(registry, id, &wl_compositor_interface, 1);
-    } else if (strcmp(interface, "wl_shell") == 0) {
-        display->m_shell = (wl_shell *)wl_registry_bind(registry, id, &wl_shell_interface, 1);
-    } else if (strcmp(interface, "wl_seat") == 0) {
+    } else if (strcmp(interface, xdg_wm_base_interface.name) == 0) {
+        display->m_xdg_shell = (xdg_wm_base *)wl_registry_bind(registry, id, &xdg_wm_base_interface, 1);
+        xdg_wm_base_add_listener(display->m_xdg_shell, &xdg_shell_listener, NULL);
+    } else if (strcmp(interface, wl_seat_interface.name) == 0) {
         display->m_seat = (wl_seat *)wl_registry_bind(registry, id, &wl_seat_interface, 1);
         wl_seat_add_listener(display->m_seat, &seat_listener, display);
-    } else if (strcmp(interface, "wl_output") == 0) {
+    } else if (strcmp(interface, wl_output_interface.name) == 0) {
         display->m_output = (wl_output *)wl_registry_bind(registry, id, &wl_output_interface, 1);
         wl_output_add_listener(display->m_output, &output_listener, display);
     }
 }
 
-void vkDisplayWayland::registry_handle_global_remove(void *data, wl_registry *registry, uint32_t name) {}
-
+void vkDisplayWayland::global_registry_remover(void *data, wl_registry *registry, uint32_t name) {}
 struct wl_registry_listener vkDisplayWayland::registry_listener;
-
 void vkDisplayWayland::output_handle_geometry(void *data, struct wl_output *wl_output, int x, int y, int physical_width,
                                               int physical_height, int subpixel, const char *make, const char *model,
                                               int transform) {}
-
 void vkDisplayWayland::output_handle_mode(void *data, struct wl_output *wl_output, uint32_t flags, int width, int height,
                                           int refresh) {
     auto *display = (vkDisplayWayland *)data;
@@ -252,5 +224,19 @@ void vkDisplayWayland::output_handle_mode(void *data, struct wl_output *wl_outpu
     display->m_screenHeight = height;
     display->m_refresh = refresh;
 }
-
 struct wl_output_listener vkDisplayWayland::output_listener;
+
+void vkDisplayWayland::handle_toplevel_configure(void *data, xdg_toplevel *xdg_toplevel, int32_t width, int32_t height, struct wl_array *states) {
+    vkDisplayWayland *display = (vkDisplayWayland *)data;
+    if (width > 0) {
+        display->m_windowWidth = width;
+    }
+    if (height > 0) {
+        display->m_windowHeight = height;
+    }
+}
+
+void vkDisplayWayland::handle_toplevel_close(void *data, xdg_toplevel *xdg_toplevel) {
+
+}
+struct xdg_toplevel_listener vkDisplayWayland::toplevel_listener;

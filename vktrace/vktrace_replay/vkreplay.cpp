@@ -2,7 +2,7 @@
  *
  * Copyright 2014-2018 Valve Corporation, Inc.
  * Copyright (C) 2014-2018 LunarG, Inc.
- * Copyright (C) 2019 ARM Limited.
+ * Copyright (C) 2019-2023 ARM Limited.
  * All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -75,6 +75,10 @@ static vkreplayer_settings s_defaultVkReplaySettings = {
                                                             .enableVirtualSwapchain = FALSE,
                                                             .enableVscPerfMode = FALSE,
                                                             .forceUseFilter = UINT_MAX,
+                                                            .scCompressFlag = UINT_MAX,
+                                                            .scCompressRate = 0,
+                                                            .imgCompressFlag = UINT_MAX,
+                                                            .imgCompressRate = 0,
 };
 
 vkReplay* g_pReplayer = NULL;
@@ -105,9 +109,17 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL vkErrorHandler(VkFlags msgFlags, VkDebugRe
         if (g_fpVktraceCallback != NULL) {
             g_fpVktraceCallback(vktrace_replay::VKTRACE_DBG_MSG_WARNING, pMsg);
         }
+        else {
+            vktrace_LogDebug("MsgFlags %d with object %#" PRIxLEAST64 ", location %u returned msgCode %d, layerPrefix %s and msg %s", msgFlags,
+                         srcObjectHandle, location, msgCode, (char*)pLayerPrefix, (char*)pMsg);
+        }
     } else {
         if (g_fpVktraceCallback != NULL) {
             g_fpVktraceCallback(vktrace_replay::VKTRACE_DBG_MSG_INFO, pMsg);
+        }
+        else {
+            vktrace_LogDebug("MsgFlags %d with object %#" PRIxLEAST64 ", location %u returned msgCode %d, layerPrefix %s and msg %s", msgFlags,
+                         srcObjectHandle, location, msgCode, (char*)pLayerPrefix, (char*)pMsg);
         }
     }
     vktrace_leave_critical_section(&g_handlerLock);

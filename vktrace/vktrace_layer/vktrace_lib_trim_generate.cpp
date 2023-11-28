@@ -1,5 +1,6 @@
 /*
 * Copyright (c) 2016 Advanced Micro Devices, Inc. All rights reserved.
+* Copyright (C) 2021-2023 ARM Limited
 *
 * Licensed under the Apache License, Version 2.0 (the "License");
 * you may not use this file except in compliance with the License.
@@ -18,6 +19,7 @@
 #include "vktrace_lib_helpers.h"
 #include "vktrace_vk_vk_packets.h"
 #include "vktrace_vk_packet_id.h"
+#include "vktrace_lib_trim.h"
 #include "vulkan/vulkan.h"
 #include "vktrace_pageguard_memorycopy.h"
 
@@ -435,16 +437,7 @@ vktrace_trace_packet_header *vkMapMemory(bool makeCall, VkDevice device, VkDevic
     // actually map the memory if it was not already mapped.
     if (makeCall) {
         result = mdd(device)->devTable.MapMemory(device, memory, offset, size, flags, &(*ppData));
-    } else {
-        // When reading buffer resource data from vkMapeMemory ppdata, invalidate non-coherent memory after map
-        VkMappedMemoryRange invalidateRange = { VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE };
-        invalidateRange.pNext = nullptr;
-        invalidateRange.memory = memory;
-        invalidateRange.offset = offset;
-        invalidateRange.size = size;
-        mdd(device)->devTable.InvalidateMappedMemoryRanges(device, 1, &invalidateRange);
     }
-
     vktrace_set_packet_entrypoint_end_time(pHeader);
 
     pPacket = interpret_body_as_vkMapMemory(pHeader);
@@ -483,7 +476,7 @@ vktrace_trace_packet_header *vkUnmapMemory(bool makeCall, VkDeviceSize size, voi
 }
 
 vktrace_trace_packet_header *vkFlushMappedMemoryRanges( bool makeCall,
-                                                        VkDevice device, 
+                                                        VkDevice device,
                                                         uint32_t memoryRangeCount,
                                                         const VkMappedMemoryRange* pMemoryRanges,
                                                         void** ppData,
@@ -551,17 +544,41 @@ vktrace_trace_packet_header *vkCreateBuffer(bool makeCall, VkDevice device, cons
     vktrace_trace_packet_header *pHeader;
     packet_vkCreateBuffer *pPacket = NULL;
     CREATE_TRACE_PACKET(vkCreateBuffer,
-                        get_struct_chain_size((void *)pCreateInfo) + sizeof(VkAllocationCallbacks) + sizeof(VkBuffer));
+                        get_struct_chain_size((void *)pCreateInfo) + ROUNDUP_TO_4(sizeof(VkBufferOpaqueCaptureAddressCreateInfo)) + sizeof(VkAllocationCallbacks) + sizeof(VkBuffer));
 
     if (makeCall) {
         result = mdd(device)->devTable.CreateBuffer(device, pCreateInfo, pAllocator, pBuffer);
     }
     vktrace_set_packet_entrypoint_end_time(pHeader);
+
+    VkBufferOpaqueCaptureAddressCreateInfo captureAddressCreateInfo = {};
+    if (pCreateInfo->flags & VK_BUFFER_CREATE_DEVICE_ADDRESS_CAPTURE_REPLAY_BIT_EXT) {
+        VkBufferDeviceAddressInfo addressInfo = {VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO, nullptr, *pBuffer};
+        uint64_t captureAddress = mdd(device)->devTable.GetBufferOpaqueCaptureAddress(device,&addressInfo);
+        if (captureAddress == 0) {
+            captureAddress = mdd(device)->devTable.GetBufferOpaqueCaptureAddressKHR(device,&addressInfo);
+        }
+        VkBufferOpaqueCaptureAddressCreateInfo *pCaptureAddressCreateInfo = (VkBufferOpaqueCaptureAddressCreateInfo*)find_ext_struct((const vulkan_struct_header*)pCreateInfo->pNext, VK_STRUCTURE_TYPE_BUFFER_OPAQUE_CAPTURE_ADDRESS_CREATE_INFO);
+        if (pCaptureAddressCreateInfo == nullptr) {
+            pCaptureAddressCreateInfo = (VkBufferOpaqueCaptureAddressCreateInfo*)find_ext_struct((const vulkan_struct_header*)pCreateInfo->pNext, VK_STRUCTURE_TYPE_BUFFER_OPAQUE_CAPTURE_ADDRESS_CREATE_INFO_KHR);
+        }
+        if (pCaptureAddressCreateInfo != nullptr) {
+            pCaptureAddressCreateInfo->opaqueCaptureAddress = captureAddress;
+        } else {
+            captureAddressCreateInfo.sType = VK_STRUCTURE_TYPE_BUFFER_OPAQUE_CAPTURE_ADDRESS_CREATE_INFO;
+            captureAddressCreateInfo.opaqueCaptureAddress = captureAddress;
+            const void* temp = pCreateInfo->pNext;
+            const_cast<VkBufferCreateInfo*>(pCreateInfo)->pNext = (const void*)&captureAddressCreateInfo;
+            captureAddressCreateInfo.pNext = temp;
+        }
+    }
+
     pPacket = interpret_body_as_vkCreateBuffer(pHeader);
     pPacket->device = device;
     vktrace_add_buffer_to_trace_packet(pHeader, (void **)&(pPacket->pCreateInfo), sizeof(VkBufferCreateInfo), pCreateInfo);
     vktrace_add_buffer_to_trace_packet(pHeader, (void **)&(pPacket->pCreateInfo->pQueueFamilyIndices),
                                        sizeof(uint32_t) * pCreateInfo->queueFamilyIndexCount, pCreateInfo->pQueueFamilyIndices);
+    if (pCreateInfo) vktrace_add_pnext_structs_to_trace_packet(pHeader, (void*)pPacket->pCreateInfo, pCreateInfo);
     vktrace_add_buffer_to_trace_packet(pHeader, (void **)&(pPacket->pAllocator), sizeof(VkAllocationCallbacks), NULL);
     vktrace_add_buffer_to_trace_packet(pHeader, (void **)&(pPacket->pBuffer), sizeof(VkBuffer), pBuffer);
     pPacket->result = result;
@@ -601,15 +618,42 @@ vktrace_trace_packet_header *vkAllocateMemory(bool makeCall, VkDevice device, co
     vktrace_trace_packet_header *pHeader;
     packet_vkAllocateMemory *pPacket = NULL;
     CREATE_TRACE_PACKET(vkAllocateMemory,
-                        get_struct_chain_size((void *)pAllocateInfo) + sizeof(VkAllocationCallbacks) + sizeof(VkDeviceMemory));
+                        get_struct_chain_size((void *)pAllocateInfo) + ROUNDUP_TO_4(sizeof(VkMemoryOpaqueCaptureAddressAllocateInfo)) + sizeof(VkAllocationCallbacks) + sizeof(VkDeviceMemory)* 2);
     if (makeCall) {
         result = mdd(device)->devTable.AllocateMemory(device, pAllocateInfo, pAllocator, pMemory);
     }
     vktrace_set_packet_entrypoint_end_time(pHeader);
+
+    VkMemoryOpaqueCaptureAddressAllocateInfo captureAddressAllocateInfo = {};
+    VkMemoryAllocateFlagsInfo *allocateFlagInfo = (VkMemoryAllocateFlagsInfo*)find_ext_struct((const vulkan_struct_header*)pAllocateInfo->pNext, VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO);
+    if (allocateFlagInfo == nullptr) {
+        allocateFlagInfo = (VkMemoryAllocateFlagsInfo*)find_ext_struct((const vulkan_struct_header*)pAllocateInfo->pNext, VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO_KHR);
+    }
+    if (allocateFlagInfo != nullptr && (allocateFlagInfo->flags & VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_CAPTURE_REPLAY_BIT_KHR)) {
+        VkDeviceMemoryOpaqueCaptureAddressInfo memoryAddressInfo = {VK_STRUCTURE_TYPE_DEVICE_MEMORY_OPAQUE_CAPTURE_ADDRESS_INFO, nullptr, *pMemory};
+        uint64_t captureAddress = mdd(device)->devTable.GetDeviceMemoryOpaqueCaptureAddressKHR(device,&memoryAddressInfo);
+        if (captureAddress == 0) {
+            captureAddress = mdd(device)->devTable.GetDeviceMemoryOpaqueCaptureAddress(device,&memoryAddressInfo);
+        }
+        VkMemoryOpaqueCaptureAddressAllocateInfo *pCaptureAddressAllocateInfo = (VkMemoryOpaqueCaptureAddressAllocateInfo*)find_ext_struct((const vulkan_struct_header*)pAllocateInfo->pNext, VK_STRUCTURE_TYPE_MEMORY_OPAQUE_CAPTURE_ADDRESS_ALLOCATE_INFO);
+        if (pCaptureAddressAllocateInfo == nullptr) {
+            pCaptureAddressAllocateInfo = (VkMemoryOpaqueCaptureAddressAllocateInfo*)find_ext_struct((const vulkan_struct_header*)pAllocateInfo->pNext, VK_STRUCTURE_TYPE_MEMORY_OPAQUE_CAPTURE_ADDRESS_ALLOCATE_INFO_KHR);
+        }
+        if (pCaptureAddressAllocateInfo != nullptr) {
+            pCaptureAddressAllocateInfo->opaqueCaptureAddress = captureAddress;
+        } else {
+            captureAddressAllocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_OPAQUE_CAPTURE_ADDRESS_ALLOCATE_INFO;
+            captureAddressAllocateInfo.opaqueCaptureAddress = captureAddress;
+            const void* temp = pAllocateInfo->pNext;
+            const_cast<VkMemoryAllocateInfo*>(pAllocateInfo)->pNext = (const void*)&captureAddressAllocateInfo;
+            captureAddressAllocateInfo.pNext = temp;
+        }
+    }
+
     pPacket = interpret_body_as_vkAllocateMemory(pHeader);
     pPacket->device = device;
     vktrace_add_buffer_to_trace_packet(pHeader, (void **)&(pPacket->pAllocateInfo), sizeof(VkMemoryAllocateInfo), pAllocateInfo);
-    vktrace_add_pnext_structs_to_trace_packet(pHeader, (void *)pPacket->pAllocateInfo, (void *)pAllocateInfo);
+    if (pAllocateInfo) vktrace_add_pnext_structs_to_trace_packet(pHeader, (void*)pPacket->pAllocateInfo, pAllocateInfo);
     vktrace_add_buffer_to_trace_packet(pHeader, (void **)&(pPacket->pAllocator), sizeof(VkAllocationCallbacks), NULL);
     vktrace_add_buffer_to_trace_packet(pHeader, (void **)&(pPacket->pMemory), sizeof(VkDeviceMemory), pMemory);
     pPacket->result = result;
@@ -781,6 +825,25 @@ vktrace_trace_packet_header *vkDestroyBuffer(bool makeCall, VkDevice device, VkB
     pPacket->buffer = buffer;
     vktrace_add_buffer_to_trace_packet(pHeader, (void **)&(pPacket->pAllocator), sizeof(VkAllocationCallbacks), NULL);
     vktrace_finalize_buffer_address(pHeader, (void **)&(pPacket->pAllocator));
+    vktrace_finalize_trace_packet(pHeader);
+    return pHeader;
+}
+
+//=====================================================================
+vktrace_trace_packet_header *vkDestroyAccelerationStructureKHR(bool makeCall, VkDevice device, VkAccelerationStructureKHR accelerationStructure,
+                                                               const VkAllocationCallbacks* pAllocator) {
+    vktrace_trace_packet_header* pHeader;
+    packet_vkDestroyAccelerationStructureKHR* pPacket = NULL;
+    CREATE_TRACE_PACKET(vkDestroyAccelerationStructureKHR, sizeof(VkAllocationCallbacks));
+    if (makeCall) {
+        mdd(device)->devTable.DestroyAccelerationStructureKHR(device, accelerationStructure, pAllocator);
+    }
+    vktrace_set_packet_entrypoint_end_time(pHeader);
+    pPacket = interpret_body_as_vkDestroyAccelerationStructureKHR(pHeader);
+    pPacket->device = device;
+    pPacket->accelerationStructure = accelerationStructure;
+    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pAllocator), sizeof(VkAllocationCallbacks), NULL);
+    vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pAllocator));
     vktrace_finalize_trace_packet(pHeader);
     return pHeader;
 }

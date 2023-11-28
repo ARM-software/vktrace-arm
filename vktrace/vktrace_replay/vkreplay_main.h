@@ -2,7 +2,7 @@
  *
  * Copyright 2015-2018 Valve Corporation
  * Copyright (C) 2015-2018 LunarG, Inc.
- * Copyright (C) 2019 ARM Limited.
+ * Copyright (C) 2019-2023 ARM Limited.
  * All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -31,6 +31,15 @@ extern std::vector<uintptr_t> portabilityTablePackets;
 extern FileLike* traceFile;
 extern vkreplayer_settings replaySettings;
 extern bool timer_started;
+
+enum DEVBUILD_TO_HOSTBUILD_STATE {
+    DEVBUILD_TO_HOSTBUILD_NONE,
+    DEVBUILD_TO_HOSTBUILD_REQUESTED,
+    DEVBUILD_TO_HOSTBUILD_RUNNING,
+    DEVBUILD_TO_HOSTBUILD_DONE
+};
+
+extern enum DEVBUILD_TO_HOSTBUILD_STATE g_devBuild2HostBuild_state;
 
 namespace vktrace_replay {
     bool timerStarted();

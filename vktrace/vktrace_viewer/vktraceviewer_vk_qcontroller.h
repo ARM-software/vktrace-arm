@@ -1,6 +1,8 @@
 /**************************************************************************
  *
- * Copyright 2014 Valve Software. All Rights Reserved.
+ * Copyright 2014 Valve Software.
+ * Copyright (C) 2021-2023 ARM Limited
+ * All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.

@@ -2,6 +2,7 @@
  *
  * Copyright 2014-2016 Valve Corporation
  * Copyright (C) 2014-2016 LunarG, Inc.
+ * Copyright (C) 2020-2023 ARM Limited
  * All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -540,11 +541,38 @@ typedef enum _VKTRACE_TRACE_PACKET_ID_VK {
     VKTRACE_TPI_VK_vkEnumeratePhysicalDeviceQueueFamilyPerformanceQueryCountersKHR = 455,
     VKTRACE_TPI_VK_vkGetPhysicalDeviceQueueFamilyPerformanceQueryPassesKHR = 456,
     VKTRACE_TPI_VK_vkReleaseProfilingLockKHR = 457,
+    VKTRACE_TPI_VK_vkGetImageSubresourceLayout2EXT = 458,
+
+    VKTRACE_TPI_VK_vkCreateTensorEXT = 6000,
+    VKTRACE_TPI_VK_vkDestroyTensorEXT = 6001,
+    VKTRACE_TPI_VK_vkCreateTensorViewEXT = 6002,
+    VKTRACE_TPI_VK_vkDestroyTensorViewEXT = 6003,
+    VKTRACE_TPI_VK_vkGetTensorMemoryRequirementsEXT = 6004,
+    VKTRACE_TPI_VK_vkBindTensorMemoryEXT = 6005,
+    VKTRACE_TPI_VK_vkGetDeviceTensorMemoryRequirementsEXT = 6006,
+    VKTRACE_TPI_VK_vkCmdCopyTensorEXT = 6007,
+    VKTRACE_TPI_VK_vkCreateNEPipelinesARM = 6008,
+    VKTRACE_TPI_VK_vkCmdDispatchNEARM = 6009,
+    VKTRACE_TPI_VK_vkCreateWeightsARM = 6010,
+    VKTRACE_TPI_VK_vkDestroyWeightsARM = 6011,
+    VKTRACE_TPI_VK_vkGetWeightsMemoryRequirementsARM = 6012,
+    VKTRACE_TPI_VK_vkBindWeightsMemoryARM = 6013,
+    VKTRACE_TPI_VK_vkGetWeightsDeviceAddressARM = 6014,
+    VKTRACE_TPI_VK_vkGetTensorDeviceAddressARM = 6015,
+    VKTRACE_TPI_VK_vkGetPhysicalDeviceGraphInstructionSetsEXT = 6016,
+    VKTRACE_TPI_VK_vkCreateGraphPipelinesEXT = 6017,
+    VKTRACE_TPI_VK_vkCreateGraphPipelineSessionEXT = 6018,
+    VKTRACE_TPI_VK_vkGetGraphPipelineSessionMemoryRequirementsEXT = 6019,
+    VKTRACE_TPI_VK_vkBindGraphPipelineSessionMemoryEXT = 6020,
+    VKTRACE_TPI_VK_vkDestroyGraphPipelineSessionEXT = 6021,
+    VKTRACE_TPI_VK_vkCmdDispatchGraphEXT = 6022,
 
 #if VK_ANDROID_frame_boundary
     VKTRACE_TPI_VK_vkFrameBoundaryANDROID = 0xFFEB,              // non-standard API derived
 #endif
 
+    VKTRACE_TPI_VK_vkUnmapMemoryRemapAsInstanceSGHandle = 0xFFE9,
+    VKTRACE_TPI_VK_vkFlushMappedMemoryRangesRemapAsInstanceSGHandle = 0xFFEA,
     VKTRACE_TPI_VK_vkCmdPushConstantsRemap = 0xFFEC,            // non-standard API derived from vkCmdPushConstants
     VKTRACE_TPI_VK_vkFlushMappedMemoryRangesRemap = 0xFFED,     // non-standard API derived from vkFlushMappedMemoryRanges
     VKTRACE_TPI_VK_vkCmdCopyBufferRemapBuffer = 0xFFEE,         // non-standard API derived from vkCmdCopyBuffer
@@ -593,8 +621,14 @@ typedef enum VKTRACE_TRACER_FEATURE {
 } VKTRACE_TRACER_FEATURE;
 
 typedef enum VKTRACE_FILE_HEADER_FLAG {
-    VKTRACE_USE_ACCELERATION_STRUCTURE_API_BIT        = 0x1
+    VKTRACE_USE_ACCELERATION_STRUCTURE_API_BIT        = 0x1,
+    VKTRACE_RQ_POSTPROCESSED_BIT                      = 0x2             // This trace file is post-processed by vktrace_rq_pp
 } VKTRACE_FILE_HEADER_FLAG;
+
+typedef enum VKTRACE_VKBUFFER_USAGE_FLAG {
+    VK_BUFFER_USAGE_EXTRA_MARK_ASBUFFER = 0x1,
+    VK_BUFFER_USAGE_EXTRA_MARK_SCRATCH  = 0x2,
+} VKTRACE_VKBUFFER_USAGE_FLAG;
 
 typedef struct _deviceFeatureSupport{
     uint32_t propertyShaderGroupHandleCaptureReplaySize;

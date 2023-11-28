@@ -4,6 +4,7 @@
 # Copyright (c) 2015-2018 Valve Corporation
 # Copyright (c) 2015-2018 LunarG, Inc.
 # Copyright (c) 2015-2018 Google Inc.
+# Copyright (C) 2020-2023 ARM Limited
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.

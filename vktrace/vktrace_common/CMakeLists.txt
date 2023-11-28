@@ -11,6 +11,7 @@ include_directories(
     ${CMAKE_BINARY_DIR}/vktrace
     ${Vulkan-ValidationLayers_INCLUDE_DIR}
     ${SRC_DIR}/../external/submodules/lz4/lib/
+    ${JSONCPP_INCLUDE_DIR}
 )
 
 if (${CMAKE_SYSTEM_NAME} MATCHES "Linux")
@@ -45,6 +46,7 @@ set(SRC_LIST
 
 set (CXX_SRC_LIST
      vktrace_pageguard_memorycopy.cpp
+     vktrace_metadata.cpp
      ${JSONCPP_SOURCE_DIR}/jsoncpp.cpp
      compression/compressor.cpp
      compression/decompressor.cpp

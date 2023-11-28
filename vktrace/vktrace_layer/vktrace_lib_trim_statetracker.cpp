@@ -1,5 +1,6 @@
 /*
 * Copyright (c) 2016 Advanced Micro Devices, Inc. All rights reserved.
+* Copyright (C) 2020-2023 ARM Limited
 *
 * Licensed under the Apache License, Version 2.0 (the "License");
 * you may not use this file except in compliance with the License.
@@ -628,6 +629,7 @@ StateTracker &StateTracker::operator=(const StateTracker &other) {
 
     createdPipelines = other.createdPipelines;
     for (auto obj = createdPipelines.begin(); obj != createdPipelines.end(); obj++) {
+        COPY_PACKET(obj->second.ObjectInfo.Pipeline.pCreatepipeline);
         VkShaderModuleCreateInfo *pShaderModuleCreateInfos =
             VKTRACE_NEW_ARRAY(VkShaderModuleCreateInfo, obj->second.ObjectInfo.Pipeline.shaderModuleCreateInfoCount);
         for (uint32_t stageIndex = 0; stageIndex < obj->second.ObjectInfo.Pipeline.shaderModuleCreateInfoCount; stageIndex++) {
@@ -710,7 +712,6 @@ StateTracker &StateTracker::operator=(const StateTracker &other) {
         COPY_PACKET(obj->second.ObjectInfo.Buffer.pUnmapMemoryPacket);
         COPY_PACKET(obj->second.ObjectInfo.Buffer.pGetBufferDeviceAddressPacket);
         COPY_PACKET(obj->second.ObjectInfo.Buffer.pGetBufferOpaqueCaptureAddress);
-        COPY_PACKET(obj->second.ObjectInfo.Buffer.pGetAccelerationStructureBuildSizesKHRPacket);
     }
 
     createdAccelerationStructures = other.createdAccelerationStructures;
@@ -1800,7 +1801,6 @@ void StateTracker::remove_Buffer(const VkBuffer var) {
         vktrace_delete_trace_packet(&pInfo->ObjectInfo.Buffer.pUnmapMemoryPacket);
         vktrace_delete_trace_packet(&pInfo->ObjectInfo.Buffer.pGetBufferDeviceAddressPacket);
         vktrace_delete_trace_packet(&pInfo->ObjectInfo.Buffer.pGetBufferOpaqueCaptureAddress);
-        vktrace_delete_trace_packet(&pInfo->ObjectInfo.Buffer.pGetAccelerationStructureBuildSizesKHRPacket);
     }
     createdBuffers.erase(var);
 }
@@ -1887,9 +1887,14 @@ void StateTracker::remove_PipelineCache(const VkPipelineCache var) {
     createdPipelineCaches.erase(var);
 }
 
+void StateTracker::remove_PipelineCache_later(const VkPipelineCache var) {
+    destroyedPipelineCaches.insert(var);
+}
+
 void StateTracker::remove_Pipeline(const VkPipeline var) {
     ObjectInfo *pInfo = get_Pipeline(var);
     if (pInfo != nullptr) {
+        vktrace_delete_trace_packet(&pInfo->ObjectInfo.Pipeline.pCreatepipeline);
         for (uint32_t i = 0; i < pInfo->ObjectInfo.Pipeline.shaderModuleCreateInfoCount; i++) {
             delete_VkShaderModuleCreateInfo(&pInfo->ObjectInfo.Pipeline.pShaderModuleCreateInfos[i]);
         }

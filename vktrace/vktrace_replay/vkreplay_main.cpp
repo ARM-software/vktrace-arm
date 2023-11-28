@@ -2,7 +2,7 @@
  *
  * Copyright 2015-2018 Valve Corporation
  * Copyright (C) 2015-2018 LunarG, Inc.
- * Copyright (C) 2019 ARM Limited.
+ * Copyright (C) 2019-2023 ARM Limited.
  * All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -359,7 +359,8 @@ vktrace_SettingInfo g_settings_info[] = {
      {&replaySettings.forceVariableRateShading},
      {&replaySettings.forceVariableRateShading},
      TRUE,
-     "Force to enable pipeline shading rate and set fragment size with [width,height], other types of VRS will be overriden."},
+     "Force to enable pipeline shading rate and set fragment size with <width>-<height>-<overrideOnly>.\
+      OverrideOnly means it only overrides pipelines that already set shading rate."},
     {"evsc",
      "enableVirtualSwapchain",
      VKTRACE_SETTING_BOOL,
@@ -383,6 +384,62 @@ vktrace_SettingInfo g_settings_info[] = {
      TRUE,
      "force filter to fuf value. if NEAREST = 0, LINEAR = 1, CUBIC_EXT = CUBIC_IMG = 2, then only change linear filter to fuf value,\
       if NEAREST = 256+0, LINEAR = 256+1, CUBIC_EXT = CUBIC_IMG = 256+2, then change any filter to fuf value"
+    },
+    {"sccf",
+     "scCompressFlag",
+     VKTRACE_SETTING_UINT,
+     {&replaySettings.scCompressFlag},
+     {&replaySettings.scCompressFlag},
+     TRUE,
+     "Set compression flag for swapchain image during replay."
+    },
+    {"sccr",
+     "scCompressRate",
+     VKTRACE_SETTING_UINT,
+     {&replaySettings.scCompressRate},
+     {&replaySettings.scCompressRate},
+     TRUE,
+     "Set compression fix-rate for swapchain image during replay."
+    },
+    {"imgcf",
+     "imgCompressFlag",
+     VKTRACE_SETTING_UINT,
+     {&replaySettings.imgCompressFlag},
+     {&replaySettings.imgCompressFlag},
+     TRUE,
+     "Set compression flag for image during replay."
+    },
+    {"imgcr",
+     "imgCompressRate",
+     VKTRACE_SETTING_UINT,
+     {&replaySettings.imgCompressRate},
+     {&replaySettings.imgCompressRate},
+     TRUE,
+     "Set compression fix-rate for image during replay."
+    },
+    {"cafb",
+     "convertAndroidFrameBoundary",
+     VKTRACE_SETTING_BOOL,
+     {&replaySettings.convertAndroidFrameBoundary},
+     {&replaySettings.convertAndroidFrameBoundary},
+     TRUE,
+     "Convert Android frame boundary to vkQueuePresent"
+    },
+    {"fdb2hb",
+     "forceDevBuild2HostBuild",
+     VKTRACE_SETTING_BOOL,
+     {&replaySettings.fDevBuild2HostBuild},
+     {&replaySettings.fDevBuild2HostBuild},
+     TRUE,
+     "Force device build to host build in FF trace preparing stage. [waring] the parameter should be enabled only for FF trace!"
+    },
+    {"utstf",
+     "useTraceSurfaceTransformFlagBit",
+     VKTRACE_SETTING_BOOL,
+     {&replaySettings.useTraceSurfaceTransformFlagBit},
+     {&replaySettings.useTraceSurfaceTransformFlagBit},
+     TRUE,
+     "use the SurfaceTransformFlagBit recorded in the trace"
     }
 };
 
@@ -436,6 +493,10 @@ std::vector<std::pair<uint64_t, uint64_t>> getSkipRanges(const char* rangeString
 {
     std::vector<std::pair<uint64_t, uint64_t>> merged_ranges;
 
+    if(rangeString == nullptr) {
+        vktrace_LogError("No skip fence ranges set, disabling fence skip functionality.");
+        return merged_ranges;
+    }
     std::vector<std::string> str_ranges = splitString(std::string(rangeString), ',');
     if (str_ranges.size() == 0) {
         vktrace_LogError("No skip fence ranges set, skipFenceRanges was probably not specified or had an invalid format (must be a comma separated list of integer pairs where each pair is separated by a dash eg. 0-10,20-22,...), disabling fence skip functionality.");
@@ -505,7 +566,7 @@ int main_loop(vktrace_replay::ReplayDisplay display, Sequencer& seq, vktrace_tra
         skipFenceRanges = getSkipRanges(replaySettings.skipFenceRanges);
 
         if (skipFenceRanges.size() == 0) {
-            replaySettings.skipGetFenceStatus = false;
+            replaySettings.skipGetFenceStatus = 0;
         }
     }
 
@@ -1405,6 +1466,9 @@ int vkreplay_main(int argc, char** argv, vktrace_replay::ReplayDisplayImp* pDisp
     }
 
     vktrace_LogAlways("ReplayOptions: %s", replayOptionsJson.toStyledString().c_str());
+    if (g_replay->isTraceFilePostProcessedByRqpp()) {
+        vktrace_LogAlways("This file is post-processed by our vktrace_rq_pp tool");
+    }
 
     for (int i = 0; i < VKTRACE_MAX_TRACER_ID_ARRAY_SIZE; i++) {
         if (replayer[i] != NULL) {

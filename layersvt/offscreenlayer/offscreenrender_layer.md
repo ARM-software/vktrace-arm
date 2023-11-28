@@ -9,7 +9,7 @@
 [3]: https://i.creativecommons.org/l/by-nd/4.0/88x31.png "Creative Commons License"
 [4]: https://creativecommons.org/licenses/by-nd/4.0/
 
-Copyright &copy; 2019-2021 ARM Limited.
+Copyright &copy; 2019-2023 ARM Limited.
 
 # VK\_LAYER\_offscreenrender
 The `VK_LAYER_offscreenrender` layer records frames to image files.

@@ -1,7 +1,7 @@
 /*
  * Copyright (c) 2016-2019 Advanced Micro Devices, Inc. All rights reserved.
  * Copyright (C) 2015-2017 LunarG, Inc.
- * Copyright (C) 2019 ARM Limited. All rights reserved.
+ * Copyright (C) 2019-2023 ARM Limited. All rights reserved.
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
@@ -52,6 +52,7 @@ extern std::unordered_map<VkBuffer, DeviceMemory> g_bufferToDeviceMemory;
 extern std::unordered_map<VkAccelerationStructureKHR, VkBuffer> g_AStoBuffer;
 #endif
 extern std::unordered_map<VkDeviceAddress, VkBuffer> g_BuftoDeviceAddrRev;
+extern std::unordered_map<VkDeviceAddress, VkBuffer> g_AStoDeviceAddrRev;
 
 void pageguardEnter() {
     // Reference this variable to avoid compiler warnings
@@ -342,7 +343,7 @@ void flushTargetChangedMappedMemory(LPPageGuardMappedMemory TargetMappedMemory, 
     }
 }
 
-void flushAllChangedMappedMemory(vkFlushMappedMemoryRangesFunc pFunc) {
+void flushAllChangedMappedMemory(vkFlushMappedMemoryRangesFunc pFunc, VkDevice device) {
     LPPageGuardMappedMemory pMappedMemoryTemp;
     uint64_t amount = getPageGuardControlInstance().getMapMemory().size();
     std::vector<LPPageGuardMappedMemory> cachedMemory;
@@ -354,6 +355,9 @@ void flushAllChangedMappedMemory(vkFlushMappedMemoryRangesFunc pFunc) {
              it != getPageGuardControlInstance().getMapMemory().end(); it++) {
             VKAllocInfo* pEntry = find_mem_info_entry(it->first);
             pMappedMemoryTemp = &(it->second);
+            if (device != pMappedMemoryTemp->getMappedDevice()) {
+                continue;
+            }
             if ((pEntry->didFlush == ApiFlush) && (pEntry->props & VK_MEMORY_PROPERTY_HOST_CACHED_BIT)) {
                 cachedAllocInfo.push_back(pEntry);
                 cachedMemory.push_back(pMappedMemoryTemp);
@@ -534,24 +538,6 @@ void disableHandlerCheck() {
 
 extern std::unordered_map<VkDeviceMemory, VkBuffer> g_shaderDeviceAddrBufferToMemRev;
 
-bool getFlushMappedMemoryRangesRemapEnableFlag() {
-    static bool EnableBuffer = false;
-    static bool FirstTimeRun = true;
-    if (FirstTimeRun) {
-        FirstTimeRun = false;
-        const char* env_remap_buffer_enable = vktrace_get_global_var(VKTRACE_ENABLE_VKFLUSHMAPPEDMEMORYRANGES_REMAP_ENV);
-        if (env_remap_buffer_enable) {
-            int envvalue;
-            if (sscanf(env_remap_buffer_enable, "%d", &envvalue) == 1) {
-                if (envvalue != 0) {
-                    EnableBuffer = true;
-                }
-            }
-        }
-    }
-    return EnableBuffer;
-}
-
 // The function source code is modified from __HOOKED_vkFlushMappedMemoryRanges
 // for coherent map, need this function to dump data so simulate target application write data when playback.
 VkResult vkFlushMappedMemoryRangesWithoutAPICall(VkDevice device, uint32_t memoryRangeCount,
@@ -595,7 +581,6 @@ VkResult vkFlushMappedMemoryRangesWithoutAPICall(VkDevice device, uint32_t memor
 
     // now the actual memory
     vktrace_enter_critical_section(&g_memInfoLock);
-    bool deviceAddrFound = false;
     for (iter = 0; iter < memoryRangeCount; iter++) {
         VkMappedMemoryRange* pRange = (VkMappedMemoryRange*)&pMemoryRanges[iter];
         VKAllocInfo* pEntry = find_mem_info_entry(pRange->memory);
@@ -638,18 +623,9 @@ VkResult vkFlushMappedMemoryRangesWithoutAPICall(VkDevice device, uint32_t memor
             vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->ppData[iter]), pRange->size,
                                                pEntry->pData + pRange->offset);
 #endif
-            if (getFlushMappedMemoryRangesRemapEnableFlag() && g_shaderDeviceAddrBufferToMemRev.find(pMemoryRanges[iter].memory) != g_shaderDeviceAddrBufferToMemRev.end()) {
-                VkDeviceAddress* pDeviceAddress = (VkDeviceAddress *)pPacket->ppData[iter];
-                for (unsigned long j = 0; j < actualSize / sizeof(VkDeviceAddress); ++j) {
-                    auto it0 = g_BuftoDeviceAddrRev.find(pDeviceAddress[j]);
-                    if (it0 != g_BuftoDeviceAddrRev.end()) {
-                        deviceAddrFound = true;
-                        break;
-                    }
-                }
-            }
             vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->ppData[iter]));
             pEntry->didFlush = InternalFlush;
+            vktrace_LogDebug("InternalFlush size=%u", actualSize);
         } else {
             vktrace_LogError("Failed to copy app memory into trace packet (idx = %u) on vkFlushedMappedMemoryRanges",
                              pHeader->global_packet_index);
@@ -659,11 +635,6 @@ VkResult vkFlushMappedMemoryRangesWithoutAPICall(VkDevice device, uint32_t memor
     delete[] ppPackageData;
 #endif
     vktrace_leave_critical_section(&g_memInfoLock);
-
-    if (deviceAddrFound) {
-        vktrace_LogDebug("Created a VKTRACE_TPI_VK_vkFlushMappedMemoryRangesRemap packet");
-        pHeader->packet_id = VKTRACE_TPI_VK_vkFlushMappedMemoryRangesRemap;
-    }
 
     // now finalize the ppData array since it is done being updated
     vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->ppData));

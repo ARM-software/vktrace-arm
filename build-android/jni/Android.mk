@@ -1,7 +1,7 @@
 # Copyright 2015-2019 The Android Open Source Project
 # Copyright (C) 2015-2019 Valve Corporation
 # Copyright (C) 2015-2019 LunarG, Inc.
-# Copyright (C) 2019 ARM Limited
+# Copyright (C) 2019-2023 ARM Limited
 
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -213,6 +213,8 @@ LOCAL_SRC_FILES += $(SRC_DIR)/vktrace/vktrace_common/vktrace_process.c
 LOCAL_SRC_FILES += $(SRC_DIR)/vktrace/vktrace_common/vktrace_settings.c
 LOCAL_SRC_FILES += $(SRC_DIR)/vktrace/vktrace_common/vktrace_tracelog.c
 LOCAL_SRC_FILES += $(SRC_DIR)/vktrace/vktrace_common/vktrace_pageguard_memorycopy.cpp
+LOCAL_SRC_FILES += $(ANDROID_DIR)/third_party/jsoncpp/dist/jsoncpp.cpp
+LOCAL_SRC_FILES += $(SRC_DIR)/vktrace/vktrace_common/vktrace_metadata.cpp
 LOCAL_SRC_FILES += $(SRC_DIR)/vktrace/vktrace_common/compression/compressor.cpp
 LOCAL_SRC_FILES += $(SRC_DIR)/vktrace/vktrace_common/compression/lz4compressor.cpp
 LOCAL_SRC_FILES += $(SRC_DIR)/vktrace/vktrace_layer/vktrace_lib_trace.cpp
@@ -227,11 +229,14 @@ LOCAL_SRC_FILES += $(SRC_DIR)/vktrace/vktrace_layer/vktrace_lib_trim_generate.cp
 LOCAL_SRC_FILES += $(SRC_DIR)/vktrace/vktrace_layer/vktrace_lib_trim_statetracker.cpp
 LOCAL_SRC_FILES += $(SRC_DIR)/vktrace/vktrace_layer/vktrace_lib_trim_descriptoriterator.cpp
 LOCAL_SRC_FILES += $(SRC_DIR)/vktrace/vktrace_layer/vktrace_lib_trim_cmdbuild_as.cpp
+LOCAL_SRC_FILES += $(SRC_DIR)/vktrace/vktrace_layer/vktrace_lib_trim_utils.cpp
 
 LOCAL_C_INCLUDES += $(LOCAL_PATH)/$(SRC_DIR)/vktrace/include \
                     $(LOCAL_PATH)/$(THIRD_PARTY)/Vulkan-Headers/include \
                     $(LOCAL_PATH)/$(THIRD_PARTY)/Vulkan-Headers/include/vulkan \
                     $(LOCAL_PATH)/$(LVL_DIR)/layers \
+                    $(LOCAL_PATH)/$(LVL_DIR)/layers/generated \
+                    $(LOCAL_PATH)/$(ANDROID_DIR)/third_party/jsoncpp/dist \
                     $(LOCAL_PATH)/$(LAYER_DIR)/include \
                     $(LOCAL_PATH)/$(SRC_DIR)/external/submodules/lz4/lib \
                     $(LOCAL_PATH)/$(SRC_DIR)/vktrace/vktrace_common \
@@ -239,9 +244,10 @@ LOCAL_C_INCLUDES += $(LOCAL_PATH)/$(SRC_DIR)/vktrace/include \
                     $(LOCAL_PATH)/$(SRC_DIR)/vktrace/vktrace_layer/vktrace_lib_pageguardmappedmemory.h \
                     $(LOCAL_PATH)/$(SRC_DIR)/vktrace/vktrace_layer/vktrace_lib_pageguardcapture.h \
                     $(LOCAL_PATH)/$(SRC_DIR)/vktrace/vktrace_layer/vktrace_lib_pageguard.h \
-                    $(LOCAL_PATH)/$(SRC_DIR)/vktrace/vktrace_common/vktrace_pageguard_memorycopy.h
+                    $(LOCAL_PATH)/$(SRC_DIR)/vktrace/vktrace_common/vktrace_pageguard_memorycopy.h \
+                    $(LOCAL_PATH)/$(SRC_DIR)/vktrace/vktrace_common/vktrace_metadata.h
 LOCAL_STATIC_LIBRARIES += layer_utils
-LOCAL_CPPFLAGS += -std=c++11 -Wall -Werror -Wno-unused-function -Wno-unused-const-variable -Wno-unused-result -Wno-switch -mxgot
+LOCAL_CPPFLAGS += -std=c++11 -Wall -Werror -Wno-unused-function -Wno-unused-const-variable -Wno-unused-result -Wno-switch -mxgot -fexceptions
 LOCAL_CPPFLAGS += -DVK_ENABLE_BETA_EXTENSIONS -DVK_USE_PLATFORM_ANDROID_KHR
 LOCAL_CPPFLAGS += -DPLATFORM_LINUX=1
 LOCAL_CPPFLAGS += -DPAGEGUARD_MEMCPY_USE_PPL_LIB

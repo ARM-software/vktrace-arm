@@ -3,7 +3,7 @@
 # Copyright (c) 2015-2016, 2019 Valve Corporation
 # Copyright (c) 2015-2016, 2019 LunarG, Inc.
 # Copyright (c) 2015-2016, 2019 Google Inc.
-# Copyright (C) 2019 ARM Limited
+# Copyright (C) 2019-2023 ARM Limited
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -504,6 +504,7 @@ std::ostream& dump_text_{sctName}(const {sctName}& object, const ApiDumpSettings
 std::ostream& dump_text_{unName}(const {unName}& object, const ApiDumpSettings& settings, int indents);
 @end union
 
+
 template <typename T>
 inline void dump_text_double_pointer(const T *const* pointer, const ApiDumpSettings &settings, const char *type_string, const char *name, int indents) {{
     settings.formatNameType(settings.stream(), indents, name, type_string);
@@ -580,6 +581,7 @@ std::ostream& dump_text_pNext_struct_name(const void* object, const ApiDumpSetti
         break;
         @end if
     @end struct
+
     case 47: // VK_STRUCTURE_TYPE_LOADER_INSTANCE_CREATE_INFO
     case 48: // VK_STRUCTURE_TYPE_LOADER_DEVICE_CREATE_INFO
         settings.formatNameType(settings.stream(), indents, "pNext", "const void*");
@@ -672,6 +674,25 @@ std::ostream& dump_text_{enumName}({enumName} object, const ApiDumpSettings& set
         settings.stream() << "{optName} (";
         break;
     @end option
+    @if('{enumName}' == 'VkDescriptorType')
+
+    @end if
+
+    @if('{enumName}' == 'VkFormat')
+
+    @end if
+
+    @if('{enumName}' == 'VkPipelineBindPoint')
+
+    @end if
+
+    @if('{enumName}' == 'VkFrameBoundaryFlagsEXT')
+
+    @end if
+
+    @if('{enumName}' == 'VkStructureType')
+
+    @end if
     default:
         settings.stream() << "UNKNOWN (";
     }}
@@ -718,6 +739,8 @@ inline std::ostream& dump_text_{flagName}({flagName} object, const ApiDumpSettin
     return settings.stream() << object;
 }}
 @end flag
+
+
 
 //======================= Func Pointer Implementations ======================//
 
@@ -853,6 +876,8 @@ std::ostream& dump_text_VkPhysicalDeviceGroupProperties(const VkPhysicalDeviceGr
     return settings.stream();
 }}
 
+
+
 //========================== Union Implementations ==========================//
 
 @foreach union
@@ -943,6 +968,50 @@ std::ostream& dump_text_head_{funcName}Remap(ApiDumpInstance& dump_inst, {funcTy
         settings.stream() << ":\\n";
     }}
     settings.stream() << "{funcName}Remap({funcNamedParams}) returns {funcReturn}";
+
+    return settings.shouldFlush() ? settings.stream() << std::flush : settings.stream();
+}}
+@end function
+
+@foreach function where('{funcName}' in ['vkFlushMappedMemoryRanges'])
+std::ostream& dump_text_head_{funcName}RemapAsInstanceSGHandle(ApiDumpInstance& dump_inst, {funcTypedParams})
+{{
+    const ApiDumpSettings& settings(dump_inst.settings());
+    if (settings.showThreadAndFrame()) {{
+        settings.stream() << "Thread " << dump_inst.threadID() << ", Frame " << dump_inst.frameCount();
+    }}
+    if(settings.showTimestamp() && settings.showThreadAndFrame()) {{
+        settings.stream() << ", ";
+    }}
+    if (settings.showTimestamp()) {{
+        settings.stream() << "Time " << dump_inst.current_time_since_start().count() << " us";
+    }}
+    if (settings.showTimestamp() || settings.showThreadAndFrame()) {{
+        settings.stream() << ":\\n";
+    }}
+    settings.stream() << "{funcName}RemapAsInstanceSGHandle({funcNamedParams}) returns {funcReturn}";
+
+    return settings.shouldFlush() ? settings.stream() << std::flush : settings.stream();
+}}
+@end function
+
+@foreach function where('{funcName}' in ['vkUnmapMemory'])
+std::ostream& dump_text_head_{funcName}RemapAsInstanceSGHandle(ApiDumpInstance& dump_inst, {funcTypedParams})
+{{
+    const ApiDumpSettings& settings(dump_inst.settings());
+    if (settings.showThreadAndFrame()) {{
+        settings.stream() << "Thread " << dump_inst.threadID() << ", Frame " << dump_inst.frameCount();
+    }}
+    if(settings.showTimestamp() && settings.showThreadAndFrame()) {{
+        settings.stream() << ", ";
+    }}
+    if (settings.showTimestamp()) {{
+        settings.stream() << "Time " << dump_inst.current_time_since_start().count() << " us";
+    }}
+    if (settings.showTimestamp() || settings.showThreadAndFrame()) {{
+        settings.stream() << ":\\n";
+    }}
+    settings.stream() << "{funcName}RemapAsInstanceSGHandle({funcNamedParams}) returns {funcReturn}";
 
     return settings.shouldFlush() ? settings.stream() << std::flush : settings.stream();
 }}
@@ -1441,6 +1510,38 @@ std::ostream& dump_html_head_{funcName}Remap(ApiDumpInstance& dump_inst, {funcTy
         settings.stream() << "<div class='time'>Time: " << dump_inst.current_time_since_start().count() << " us</div>";
     settings.stream() << "<details class='fn'><summary>";
     dump_html_nametype(settings.stream(), settings.showType(), "{funcName}Remap({funcNamedParams})", "{funcReturn}");
+
+    return settings.shouldFlush() ? settings.stream() << std::flush : settings.stream();
+}}
+@end function
+
+@foreach function where('{funcName}' in ['vkFlushMappedMemoryRanges'])
+std::ostream& dump_html_head_{funcName}RemapAsInstanceSGHandle(ApiDumpInstance& dump_inst, {funcTypedParams})
+{{
+    const ApiDumpSettings& settings(dump_inst.settings());
+    if (settings.showThreadAndFrame()){{
+        settings.stream() << "<div class='thd'>Thread: " << dump_inst.threadID() << "</div>";
+    }}
+    if(settings.showTimestamp())
+        settings.stream() << "<div class='time'>Time: " << dump_inst.current_time_since_start().count() << " us</div>";
+    settings.stream() << "<details class='fn'><summary>";
+    dump_html_nametype(settings.stream(), settings.showType(), "{funcName}RemapAsInstanceSGHandle({funcNamedParams})", "{funcReturn}");
+
+    return settings.shouldFlush() ? settings.stream() << std::flush : settings.stream();
+}}
+@end function
+
+@foreach function where('{funcName}' in ['vkUnmapMemory'])
+std::ostream& dump_html_head_{funcName}RemapAsInstanceSGHandle(ApiDumpInstance& dump_inst, {funcTypedParams})
+{{
+    const ApiDumpSettings& settings(dump_inst.settings());
+    if (settings.showThreadAndFrame()){{
+        settings.stream() << "<div class='thd'>Thread: " << dump_inst.threadID() << "</div>";
+    }}
+    if(settings.showTimestamp())
+        settings.stream() << "<div class='time'>Time: " << dump_inst.current_time_since_start().count() << " us</div>";
+    settings.stream() << "<details class='fn'><summary>";
+    dump_html_nametype(settings.stream(), settings.showType(), "{funcName}RemapAsInstanceSGHandle({funcNamedParams})", "{funcReturn}");
 
     return settings.shouldFlush() ? settings.stream() << std::flush : settings.stream();
 }}
@@ -2012,6 +2113,68 @@ std::ostream& dump_json_head_{funcName}Remap(ApiDumpInstance& dump_inst, {funcTy
     // Display apicall name
     settings.stream() << settings.indentation(2) << "{{\\n";
     settings.stream() << settings.indentation(3) << "\\\"name\\\" : \\\"{funcName}Remap\\\",\\n";
+
+    // Display thread info
+    if (settings.showThreadAndFrame()){{
+        settings.stream() << settings.indentation(3) << "\\\"thread\\\" : \\\"Thread " << dump_inst.threadID() << "\\\",\\n";
+    }}
+
+    // Display elapsed time
+    if(settings.showTimestamp()) {{
+        settings.stream() << settings.indentation(3) << "\\\"time\\\" : \\\""<< dump_inst.current_time_since_start().count() << " us\\\",\\n";
+    }}
+
+    // Display return value
+    settings.stream() << settings.indentation(3) << "\\\"returnType\\\" : " << "\\\"{funcReturn}\\\",\\n";
+
+    return settings.shouldFlush() ? settings.stream() << std::flush : settings.stream();
+}}
+@end function
+
+@foreach function where('{funcName}' in ['vkFlushMappedMemoryRanges'])
+std::ostream& dump_json_head_{funcName}RemapAsInstanceSGHandle(ApiDumpInstance& dump_inst, {funcTypedParams})
+{{
+    const ApiDumpSettings& settings(dump_inst.settings());
+
+    if(dump_inst.firstFunctionCallOnFrame())
+        needFuncComma = false;
+
+    if (needFuncComma) settings.stream() << ",\\n";
+
+    // Display apicall name
+    settings.stream() << settings.indentation(2) << "{{\\n";
+    settings.stream() << settings.indentation(3) << "\\\"name\\\" : \\\"{funcName}RemapAsInstanceSGHandle\\\",\\n";
+
+    // Display thread info
+    if (settings.showThreadAndFrame()){{
+        settings.stream() << settings.indentation(3) << "\\\"thread\\\" : \\\"Thread " << dump_inst.threadID() << "\\\",\\n";
+    }}
+
+    // Display elapsed time
+    if(settings.showTimestamp()) {{
+        settings.stream() << settings.indentation(3) << "\\\"time\\\" : \\\""<< dump_inst.current_time_since_start().count() << " us\\\",\\n";
+    }}
+
+    // Display return value
+    settings.stream() << settings.indentation(3) << "\\\"returnType\\\" : " << "\\\"{funcReturn}\\\",\\n";
+
+    return settings.shouldFlush() ? settings.stream() << std::flush : settings.stream();
+}}
+@end function
+
+@foreach function where('{funcName}' in ['vkUnmapMemory'])
+std::ostream& dump_json_head_{funcName}RemapAsInstanceSGHandle(ApiDumpInstance& dump_inst, {funcTypedParams})
+{{
+    const ApiDumpSettings& settings(dump_inst.settings());
+
+    if(dump_inst.firstFunctionCallOnFrame())
+        needFuncComma = false;
+
+    if (needFuncComma) settings.stream() << ",\\n";
+
+    // Display apicall name
+    settings.stream() << settings.indentation(2) << "{{\\n";
+    settings.stream() << settings.indentation(3) << "\\\"name\\\" : \\\"{funcName}RemapAsInstanceSGHandle\\\",\\n";
 
     // Display thread info
     if (settings.showThreadAndFrame()){{

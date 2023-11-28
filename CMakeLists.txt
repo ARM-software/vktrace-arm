@@ -6,6 +6,7 @@ project (VULKAN_TOOLS)
 
 set(THREADS_PTHREAD_ARG "2" CACHE STRING "Forcibly set by CMakeLists.txt." FORCE)
 set(CMAKE_SKIP_RPATH TRUE CACHE BOOL "Force skip rpath." FORCE)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 if (ARCH STREQUAL "arm" OR ARCH STREQUAL "aarch64")
     message(STATUS "ARM arch build ...")
@@ -148,7 +149,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
 
     if (BUILD_WSI_WAYLAND_SUPPORT)
         find_package(Wayland REQUIRED)
-        include_directories(${WAYLAND_CLIENT_INCLUDE_DIR})
+        include_directories(${WAYLAND_CLIENT_INCLUDE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/arm_wayland/include)
         message(STATUS "BUILD WITH WSI WAYLAND SUPPORT")
     endif()
 elseif(CMAKE_SYSTEM_NAME STREQUAL "Darwin")

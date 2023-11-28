@@ -2,6 +2,7 @@
  *
  * Copyright 2014-2016 Valve Corporation
  * Copyright (C) 2014-2016 LunarG, Inc.
+ * Copyright (C) 2022-2023 ARM Limited
  * All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -181,8 +182,9 @@ vktrace_thread_id vktrace_platform_get_thread_id() {
 }
 
 #if defined(ANDROID)
+#define _MAX_BUFFER_SIZE 255
 const uint32_t MAX_BUFFER_SIZE = 255;
-static char android_env[MAX_BUFFER_SIZE] = {};
+static char android_env[_MAX_BUFFER_SIZE] = {};
 char* AndroidGetEnv(const char* key) {
     const char* command = "getprop ";
     const size_t len_command = strlen(command);

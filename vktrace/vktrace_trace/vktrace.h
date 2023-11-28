@@ -2,6 +2,7 @@
  *
  * Copyright 2014-2016 Valve Corporation
  * Copyright (C) 2014-2016 LunarG, Inc.
+ * Copyright (C) 2018-2023 ARM Limited
  * All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -23,10 +24,6 @@
 extern "C" {
 #include "vktrace_settings.h"
 }
-
-#include <vector>
-#include <unordered_map>
-#include "vktrace_trace_packet_identifiers.h"
 
 #if defined(WIN32)
 #define VKTRACE_WM_COMPLETE (WM_USER + 0)
@@ -54,11 +51,3 @@ typedef struct vktrace_settings {
 } vktrace_settings;
 
 extern vktrace_settings g_settings;
-extern uint32_t lastPacketThreadId;
-extern uint64_t lastPacketIndex;
-extern uint64_t lastPacketEndTime;
-
-void vktrace_appendPortabilityPacket(FILE* pTraceFile, std::vector<uint64_t>& portabilityTable);
-uint32_t vktrace_appendMetaData(FILE* pTraceFile, const std::vector<uint64_t>& injectedData, uint64_t &meta_data_offset);
-uint32_t vktrace_appendDeviceFeatures(FILE* pTraceFile, const std::unordered_map<VkDevice, uint32_t>& deviceToFeatures, uint64_t meta_data_offset);
-void vktrace_resetFilesize(FILE* pTraceFile, uint64_t decompressFilesize);

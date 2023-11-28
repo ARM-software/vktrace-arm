@@ -2,7 +2,7 @@
  *
  * Copyright (C) 2015-2017 Valve Corporation
  * Copyright (C) 2015-2017 LunarG, Inc.
- * Copyright (C) 2019 ARM Limited.
+ * Copyright (C) 2019-2023 ARM Limited.
  * All Rights Reserved
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -156,6 +156,12 @@ class vkReplay {
     VkLayerInstanceDispatchTable* get_VkLayerInstanceDispatchTable() { return &m_vkFuncs; };
     VkLayerDispatchTable* get_VkLayerDispatchTable() { return &m_vkDeviceFuncs; };
 
+    bool isTraceFilePostProcessedByRqpp() {
+        if (m_pFileHeader->bit_flags & VKTRACE_RQ_POSTPROCESSED_BIT)
+            return true;
+        return false;
+    }
+
    private:
     void init_funcs(void* handle);
     void* m_libHandle;
@@ -215,12 +221,17 @@ class vkReplay {
             // vkGetPhysicalDeviceProperties has not yet been called. We'll consider it a non-match, but will keep checking for
             // non-zero on subsequent calls.
             // We save the result of the compare so we don't have to keep doing this complex compare.
-            m_platformMatch = (m_replay_endianess == m_pFileHeader->endianess) & (m_replay_ptrsize == m_pFileHeader->ptrsize) &
-                              (m_replay_arch == m_pFileHeader->arch) & (m_replay_os == m_pFileHeader->os) &
-                              (m_replay_gpu == m_pGpuinfo->gpu_id) & (m_replay_drv_vers == m_pGpuinfo->gpu_drv_vers) &
-                              (m_pGpuinfo->gpu_id != 0) & (m_pGpuinfo->gpu_drv_vers != 0) & (strlen((char*)&m_replay_arch) != 0) &
-                              (strlen((char*)&m_replay_os) != 0) & (strlen((char*)&m_pFileHeader->arch) != 0) &
+            bool matched = (m_replay_endianess == m_pFileHeader->endianess) && (m_replay_ptrsize == m_pFileHeader->ptrsize) &&
+                              (m_replay_arch == m_pFileHeader->arch) && (m_replay_os == m_pFileHeader->os) &&
+                              (m_replay_gpu == m_pGpuinfo->gpu_id) && (m_replay_drv_vers == m_pGpuinfo->gpu_drv_vers) &&
+                              (m_pGpuinfo->gpu_id != 0) && (m_pGpuinfo->gpu_drv_vers != 0) && (strlen((char*)&m_replay_arch) != 0) &&
+                              (strlen((char*)&m_replay_os) != 0) && (strlen((char*)&m_pFileHeader->arch) != 0) &&
                               (strlen((char*)&m_pFileHeader->os) != 0);
+            if (matched) {
+                m_platformMatch = 1;
+            } else {
+                m_platformMatch = 0;
+            }
         }
         return (m_platformMatch == 1);
     }
@@ -243,6 +254,14 @@ class vkReplay {
         uint32_t total = 0;
     };
     std::unordered_map<uint32_t, vkReplay::ApiCallStat> m_CallStats;
+
+    // for forcing pipeline shading rate
+    struct _fragmentSize {
+        uint32_t width;
+        uint32_t height;
+    } m_fragmentSize;
+    bool m_fvrsOverrideOnly = false;
+
     bool m_inFrameRange = false;
     bool m_inSkipFenceRange = false;
     bool m_replayOpenXRContent = false;
@@ -303,7 +322,9 @@ class vkReplay {
     void manually_replay_vkFreeMemory(packet_vkFreeMemory* pPacket);
     VkResult manually_replay_vkMapMemory(packet_vkMapMemory* pPacket);
     void manually_replay_vkUnmapMemory(packet_vkUnmapMemory* pPacket);
+    VkResult manually_replay_vkUnmapMemoryRemapAsInstanceSGHandle(packet_vkUnmapMemoryRemapAsInstanceSGHandle* pPacket);
     VkResult manually_replay_vkFlushMappedMemoryRanges(packet_vkFlushMappedMemoryRanges* pPacket);
+    VkResult manually_replay_vkFlushMappedMemoryRangesRemapAsInstanceSGHandle(packet_vkFlushMappedMemoryRangesRemapAsInstanceSGHandle* pPacket);
     VkResult manually_replay_vkFlushMappedMemoryRangesPremapped(packet_vkFlushMappedMemoryRanges* pPacket);
     void manually_replay_vkCmdDrawIndexedPremapped(packet_vkCmdDrawIndexed* pPacket);
     VkResult manually_replay_vkInvalidateMappedMemoryRanges(packet_vkInvalidateMappedMemoryRanges* pPacket);
@@ -352,6 +373,12 @@ class vkReplay {
     VkResult manually_replay_vkCreateAndroidSurfaceKHR(packet_vkCreateAndroidSurfaceKHR* pPacket);
     VkResult manually_replay_vkCreateDebugReportCallbackEXT(packet_vkCreateDebugReportCallbackEXT* pPacket);
     void manually_replay_vkDestroyDebugReportCallbackEXT(packet_vkDestroyDebugReportCallbackEXT* pPacket);
+    VkResult manually_replay_vkCreateDebugUtilsMessengerEXT(packet_vkCreateDebugUtilsMessengerEXT *pPacket);
+    void manually_replay_vkDestroyDebugUtilsMessengerEXT(packet_vkDestroyDebugUtilsMessengerEXT *pPacket);
+    void manually_replay_vkSubmitDebugUtilsMessageEXT(packet_vkSubmitDebugUtilsMessageEXT *pPacket);
+    VkResult manually_replay_vkSetDebugUtilsObjectNameEXT(packet_vkSetDebugUtilsObjectNameEXT *pPacket);
+    VkResult manually_replay_vkSetDebugUtilsObjectTagEXT(packet_vkSetDebugUtilsObjectTagEXT *pPacket);
+    uint64_t remapObjectHandleWithVkObjectType(uint64_t objectHandle, VkObjectType objectType);
     VkResult manually_replay_vkCreateDescriptorUpdateTemplate(packet_vkCreateDescriptorUpdateTemplate* pPacket);
     VkResult manually_replay_vkCreateDescriptorUpdateTemplateKHR(packet_vkCreateDescriptorUpdateTemplateKHR* pPacket);
     void manually_replay_vkDestroyDescriptorUpdateTemplate(packet_vkDestroyDescriptorUpdateTemplate* pPacket);
@@ -399,6 +426,7 @@ class vkReplay {
     VkResult manually_replay_vkAcquireProfilingLockKHR(packet_vkAcquireProfilingLockKHR* pPacket);
     void manually_replay_vkCmdPipelineBarrier2KHR(packet_vkCmdPipelineBarrier2KHR *pPacket);
     void manually_replay_vkCmdPipelineBarrier2(packet_vkCmdPipelineBarrier2 *pPacket);
+    VkResult manually_replay_vkWaitSemaphoresKHR(packet_vkWaitSemaphoresKHR* pPacket);
 
     void process_screenshot_list(const char* list) {
         std::string spec(list), word;
@@ -467,7 +495,6 @@ class vkReplay {
     std::unordered_map<VkPipeline, VkDevice> replayRayTracingPipelinesNVToDevice;
     std::unordered_map<VkPrivateDataSlot, VkDevice> replayPrivateDataSlotToDevice;
     std::unordered_map<VkPrivateDataSlotEXT, VkDevice> replayPrivateDataSlotEXTToDevice;
-
     // Map VkSwapchainKHR to vector of VkImage, so we can unmap swapchain images at vkDestroySwapchainKHR
     std::unordered_map<VkSwapchainKHR, std::vector<VkImage>> traceSwapchainToImages;
     std::unordered_map<VkSwapchainKHR, std::vector<VkImage>> traceSwapchainToReplayImages;
@@ -491,6 +518,7 @@ class vkReplay {
         std::unordered_map<uint32_t, std::unordered_set<VkImageView> > traceImageIndexToImageViews;
         std::unordered_map<VkImageView, uint32_t> traceImageViewToImageIndex;
         std::unordered_map<VkFramebuffer, uint32_t> traceFramebufferToImageIndex;
+        std::unordered_map<VkFramebuffer, uint32_t> traceFramebufferToAttachmentCount;
         std::unordered_map<VkFramebuffer, VkRenderPass> traceFramebufferToRenderpass;
 
         void reset() {
@@ -499,6 +527,7 @@ class vkReplay {
             traceImageIndexToImageViews.clear();
             traceImageViewToImageIndex.clear();
             traceFramebufferToImageIndex.clear();
+            traceFramebufferToAttachmentCount.clear();
             traceFramebufferToRenderpass.clear();
         }
     };
@@ -519,7 +548,6 @@ class vkReplay {
 
     // Map VkBuffer to VkMemoryRequirements
     std::unordered_map<VkBuffer, VkMemoryRequirements> replayGetBufferMemoryRequirements;
-
     // Map device to extension property count, for device extension property queries
     std::unordered_map<VkPhysicalDevice, uint32_t> replayDeviceExtensionPropertyCount;
 
@@ -550,12 +578,6 @@ class vkReplay {
         uint64_t traceObjHandle = 0;
     }objDeviceAddr;
 
-    typedef struct _objInstanceMemInfo{
-        uint64_t offset = 0;
-        uint64_t primitiveCount = 0;
-        VkBool32 arrayOfPointers = VK_FALSE;
-    }objInstanceMemInfo;
-
     typedef struct _virtualFence{
         VkDevice device;
         VkFence fence;
@@ -564,18 +586,19 @@ class vkReplay {
     RayTracingPipelineHandler *rtHandler;
 
     std::unordered_map<VkDeviceAddress, objDeviceAddr> traceDeviceAddrToReplayDeviceAddr4Buf;
+    std::unordered_map<VkDeviceAddress, VkBuffer> traceDeviceAddrTotraceBuffer4Buf;
     std::unordered_map<VkDeviceAddress, objDeviceAddr> traceDeviceAddrToReplayDeviceAddr4AS;
     std::unordered_map<VkBuffer, VkDeviceMemory> traceBufferToReplayMemory;
     std::unordered_map<VkBuffer, VkBufferUsageFlags> replayBufferToUsageFlag;
     std::unordered_map<VkDeviceMemory, VkMemoryAllocateFlags> traceMemoryToAllocateFlag;
     std::unordered_map<VkAccelerationStructureKHR, void*> replayASToCopyAddress;
     std::unordered_map<void*, traceMemoryMapInfo> traceAddressToTraceMemoryMapInfo;
+    std::unordered_map<VkBuffer, VkDeviceSize> traceBufferToASBuildSizes;
     std::unordered_map<VkBuffer, VkDeviceSize> replayBufferToASBuildSizes;
     std::unordered_map<VkAccelerationStructureKHR, VkAccelerationStructureBuildSizesInfoKHR> replayASToASBuildSizes;
     std::unordered_map<VkDeviceSize, VkAccelerationStructureBuildSizesInfoKHR> traceASSizeToReplayASBuildSizes;
     std::unordered_map<VkDeviceSize, VkAccelerationStructureBuildSizesInfoKHR> traceUpdateSizeToReplayASBuildSizes;
     std::unordered_map<VkDeviceSize, VkAccelerationStructureBuildSizesInfoKHR> traceBuildSizeToReplayASBuildSizes;
-    std::unordered_map<VkDeviceSize, VkDeviceSize> traceScratchSizeToReplayScratchSize;
     std::unordered_map<VkDeviceSize, VkDeviceSize> traceASCompactSizeToReplayASCompactSize;
     std::unordered_map<VkDeviceMemory, void*> replayMemoryToMapAddress;
     std::unordered_map<VkDevice, deviceFeatureSupport> replayDeviceToFeatureSupport;
@@ -597,14 +620,17 @@ class vkReplay {
 #endif
 
     void remapInstanceBufferDeviceAddressInMapedMemory(VkDevice remappedDevice, VkDeviceMemory traceMemory, VkDeviceMemory remappedMemory, const void *pSrcData, VkDeviceSize size);
-    void remapInstanceBufferDeviceAddressInFlushMemory(VkDevice remappedDevice, VkDeviceMemory traceMemory, VkDeviceMemory remappedMemory, const void *pSrcData);
-    void remapReplayPatternBufferDeviceAddresss(VkDevice remappedDevice, VkDeviceMemory traceBufMemory, void* pData);
+    void remapInstanceBufferDeviceAddressInFlushMemory(VkDevice remappedDevice, VkDeviceMemory traceMemory, VkDeviceMemory remappedMemory, const void *pSrcData, bool remapBufAddr);
+    bool remapReplayPatternDeviceAddresssInMapedMemory(VkDevice remappedDevice, const void* pData, uint64_t size);
+    bool remapReplayPatternDeviceAddresssInFlushMemory(VkDevice remappedDevice, const void* pSrcData);
     void remapReplayInstanceBufferDeviceAddresss(VkDevice remappedDevice, VkDeviceMemory dataMemory, VkDeviceSize size, uint64_t offset);
     void remapInstanceBufferDeviceAddressInCopyBuffer(VkBuffer traceSrcBuffer, VkBuffer traceDstBuffer, VkDeviceSize srcOffset, VkDeviceSize copySize);
     uint32_t swapchainRefCount = 0;
     uint32_t surfRefCount = 0;
-
     uint32_t m_instCount = 0;
+    bool m_bScreenshotLayer = false;
+
+    bool sbtPostprocessed = false;
 
     void forceDisableCaptureReplayFeature();
     void* fromTraceAddr2ReplayAddr(VkDevice replayDevice, const void* traceAddress);
@@ -622,6 +648,12 @@ class vkReplay {
     VkImage getVirtualSwapchainImage(VkImage traceImage);
     VkResult copyFromVirtualImageToReplayImage(VkQueue traceQueue, VkImage virtualImage, VkImage replayImage, VkImageCopy* pCopyReg, uint32_t queueFamilyIndex, std::vector<VkSemaphore>& semaphores);
     void deleteVirtualObject(VkDevice remappeddevice, VkImage image);
+    bool checkFVRSParam();
+
+#if VK_ANDROID_frame_boundary
+    VkResult copyImage(VkImage srcImage, VkImage dstImage, VkDevice device);
+#endif
+
     vktrace_replay::PipelineCacheAccessor::Ptr    m_pipelinecache_accessor;
 
     std::unordered_map<VkQueryPool, VkQueryType>  m_querypool_type;
@@ -630,9 +662,5 @@ class vkReplay {
     friend RayTracingPipelineHandler;
     friend RayTracingPipelineHandlerVer1;
 
-    // for forcing pipeline shading rate
-    struct _fragmentSize {
-        uint32_t width;
-        uint32_t height;
-    } fragmentSize;
+    void deviceBuildToHostBuild(packet_vkCmdBuildAccelerationStructuresKHR* pPacket);
 };

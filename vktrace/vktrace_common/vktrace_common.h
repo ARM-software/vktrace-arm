@@ -2,7 +2,7 @@
  *
  * Copyright 2014-2016 Valve Corporation
  * Copyright (C) 2014-2016 LunarG, Inc.
- * Copyright (C) 2019 ARM Limited
+ * Copyright (C) 2019-2023 ARM Limited
  * All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -116,13 +116,14 @@ static const vulkan_struct_header* find_ext_struct(const vulkan_struct_header* f
     return entry;
 }
 
-// Use it carefully
+// Use it carefully because it won't free the structure's memory
 static void delete_ext_struct(vulkan_struct_header* entry, VkStructureType stype) {
     while (entry->pNext && entry->pNext->sType != stype) entry = entry->pNext;
     if (!entry->pNext) return;
     entry->pNext = entry->pNext->pNext;
 }
 
+// Use it carefully because it won't copy the structure
 static void add_ext_struct(vulkan_struct_header* entry, vulkan_struct_header* ext_struct) {
     while (entry->pNext) entry = entry->pNext;
     entry->pNext = ext_struct;
@@ -301,26 +302,6 @@ static uint32_t getAHardwareBufBPP(uint32_t fmt) {
 // the feature.
 #define VKTRACE_CHECK_PAGEGUARD_HANDLER_IN_FRAMES_ENV "VKTRACE_CHECK_PAGEGUARD_HANDLER_IN_FRAMES"
 
-// VKTRACE_ENABLE_VKCMDCOPYBUFFER_REMAP_AS env var is an option used to control whether
-// to generate private packages in vkCmdCopyBuffer for acceleration structures when tracing.
-// Its default value is false. Set it to non-zero values to enable this feature and to 0 to disable it.
-#define VKTRACE_ENABLE_VKCMDCOPYBUFFER_REMAP_AS_ENV "VKTRACE_ENABLE_VKCMDCOPYBUFFER_REMAP_AS"
-
-// VKTRACE_ENABLE_VKCMDCOPYBUFFER_REMAP_BUFFER env var is an option used to control whether
-// to generate private packages in vkCmdCopyBuffer for buffers when tracing.
-// Its default value is false. Set it to non-zero values to enable this feature and to 0 to disable it.
-#define VKTRACE_ENABLE_VKCMDCOPYBUFFER_REMAP_BUFFER_ENV "VKTRACE_ENABLE_VKCMDCOPYBUFFER_REMAP_BUFFER"
-
-// VKTRACE_ENABLE_VKFLUSHMAPPEDMEMORYRANGES_REMAP env var is an option used to control whether
-// to generate private packages in vkFlushMappedMemoryRanges when tracing.
-// Its default value is false. Set it to non-zero values to enable this feature and to 0 to disable it.
-#define VKTRACE_ENABLE_VKFLUSHMAPPEDMEMORYRANGES_REMAP_ENV "VKTRACE_ENABLE_VKFLUSHMAPPEDMEMORYRANGES_REMAP"
-
-// VKTRACE_ENABLE_VKCMDPUSHCONSTANTS_REMAP env var is an option used to control whether
-// to generate private packages in vkCmdPushConstants when tracing.
-// Its default value is false. Set it to non-zero values to enable this feature and to 0 to disable it.
-#define VKTRACE_ENABLE_VKCMDPUSHCONSTANTS_REMAP_ENV "VKTRACE_ENABLE_VKCMDPUSHCONSTANTS_REMAP"
-
 // VKTRACE_DISABLE_CAPTUREREPLAY_FEATURE env var is an option used to control capture replay feature whether
 // to get VkPhysicalDeviceBufferDeviceAddressFeatures, VkPhysicalDeviceAccelerationStructureFeaturesKHR and
 // VkPhysicalDeviceRayTracingPipelineFeaturesKHR when tracing.
@@ -329,5 +310,15 @@ static uint32_t getAHardwareBufBPP(uint32_t fmt) {
 
 // VKTRACE_ENABLE_COPY_AS_BUFFER env var is an option used to control capture ray query trace
 // to copy and restore buffer before every CmdBuildAccelerationStructuresKHR.
-// Its default value is 0. Set it to non-zero values to enable it.
+// Its default value is 1. Set it to non-zero values to enable it.
 #define VKTRACE_ENABLE_COPY_AS_BUFFER_ENV "VKTRACE_ENABLE_COPY_AS_BUFFER"
+
+// VKTRACE_ENABLE_REBINDMEMORY_ALIGNEDSIZE env var is an option used to control as buffer/image
+// to bind separate memory and set memoffset to 0, and aligned size of get*MemoryRequirements.
+// Its default value is 0. Set it to non-zero values to enable it.
+#define VKTRACE_ENABLE_REBINDMEMORY_ALIGNEDSIZE_ENV "VKTRACE_ENABLE_REBINDMEMORY_ALIGNEDSIZE"
+
+// VKTRACE_AS_BUILD_RESIZE env var specifies a multiplier of accelerationStructureSize, updateScratchSize,
+// buildScratchSize returned by vkGetAccelerationStructureBuildSizesKHR
+// If this env var is not defined, the default VKTRACE_AS_BUILD_RESIZE = 1.
+#define VKTRACE_AS_BUILD_RESIZE_ENV "VKTRACE_AS_BUILD_RESIZE"

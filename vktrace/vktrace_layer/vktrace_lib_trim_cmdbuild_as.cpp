@@ -1,6 +1,6 @@
 /*
  *
- * Copyright (C) 2019 ARM Limited
+ * Copyright (C) 2019-2023 ARM Limited
  * All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -104,6 +104,14 @@ VkResult dump_build_AS_buffer_data(VkCommandBuffer commandBuffer, BuildAsBufferI
     VkDevice device = get_device_from_commandbuf(commandBuffer);
     VkBuffer stagingBuf;
     VkResult result = VK_SUCCESS;
+
+    auto it1 = g_deviceToFeatureSupport.find(device);
+    if (it1 != g_deviceToFeatureSupport.end()) {
+        if (it1->second.bufferDeviceAddressCaptureReplay) {
+            bufCreateInfo.flags |= VK_BUFFER_CREATE_DEVICE_ADDRESS_CAPTURE_REPLAY_BIT_EXT;
+        }
+    }
+
     result = mdd(commandBuffer)->devTable.CreateBuffer(device, &bufCreateInfo, NULL, &stagingBuf);
 
     if (result != VK_SUCCESS) {
@@ -120,19 +128,21 @@ VkResult dump_build_AS_buffer_data(VkCommandBuffer commandBuffer, BuildAsBufferI
         return result;
     }
 
-    int memIndex = 0;
-    for (int i = 0; i < 32; i++) {
-        if (mem_reqs.memoryTypeBits & (1 << i)) {
-            memIndex = i;
-            break;
-        }
-    }
+    // Use coherent memory for staging buffer to avoid manual synchronization in trim/replay.
+    int memIndex = LookUpMemoryProperties(device, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 
     VkMemoryAllocateFlagsInfo allocateFlagsInfo;
     allocateFlagsInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO;
     allocateFlagsInfo.pNext = NULL;
     allocateFlagsInfo.flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT;
     allocateFlagsInfo.deviceMask = 0;
+
+    auto it2 = g_deviceToFeatureSupport.find(device);
+    if (it2 != g_deviceToFeatureSupport.end()) {
+        if (it2->second.bufferDeviceAddressCaptureReplay) {
+            allocateFlagsInfo.flags |= VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_CAPTURE_REPLAY_BIT;
+        }
+    }
 
     VkMemoryAllocateInfo allocInfo;
     allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
@@ -335,23 +345,34 @@ VkResult get_cmdbuildas_memory_buffer(VkDeviceAddress address, VkDeviceAddress s
 VkResult remove_cmdbuild_by_as(VkAccelerationStructureKHR as) {
     VkResult result = VK_SUCCESS;
     std::vector<BuildAsInfo>& buildAsInfo = get_cmdBuildAccelerationStrucutres();
+    bool foundAsInDst = false, foundAsInSrc = false, isVkreplayClearing = false;
     auto it_info = buildAsInfo.begin();
     while (it_info != buildAsInfo.end()) {
         vktrace_trace_packet_header* pHeader = copy_packet(it_info->pCmdBuildAccelerationtStructure);
         packet_vkCmdBuildAccelerationStructuresKHR* pPacket = interpret_body_as_vkCmdBuildAccelerationStructuresKHR(pHeader);
-        // We only hanlde one info by now
-        assert(pPacket->infoCount == 1);
-        if (pPacket->pInfos[0].dstAccelerationStructure == as) {
+        for (uint32_t i = 0; i < pPacket->infoCount; ++i) {
+            if (pPacket->pInfos[i].dstAccelerationStructure == as) {
+                foundAsInDst = true;
+            } else if (pPacket->pInfos[i].srcAccelerationStructure == as) {
+                foundAsInSrc = true;
+                // Vkreplay destorys AS out of order in the end of trace, but it always frees
+                // command buffers before destorying AS, so we could avoid too many error logs
+                // by checking the command buffer state.
+                if (NULL == get_CommandBuffer_objectInfo(pPacket->commandBuffer)) isVkreplayClearing = true;
+            }
+        }
+        if (foundAsInDst && !foundAsInSrc) {
             it_info = buildAsInfo.erase(it_info);
-        } else if (pPacket->pInfos[0].srcAccelerationStructure == as) {
-            vktrace_LogError("src AS is destroied which is use to build another AS, not handled yet!");
-            it_info++;
-            assert(0);
-            result = VK_ERROR_UNKNOWN;
         } else {
             it_info++;
         }
         vktrace_delete_trace_packet_no_lock(&pHeader);
+    }
+    if (!foundAsInDst && foundAsInSrc && !isVkreplayClearing) {
+        vktrace_LogError(
+            "Skip removing cmdbuild because target AS is only found as src of vkCmdBuildAccelerationStructuresKHR"
+            " and dst AS hasn't been handled yet!");
+        result = VK_ERROR_UNKNOWN;
     }
 
     return result;
@@ -361,18 +382,30 @@ VkResult remove_cmdCopyAs_by_as(VkAccelerationStructureKHR as) {
     VkResult result = VK_SUCCESS;
     std::vector<cmdCopyAsInfo>& cmdCopyAsInfo = get_cmdCopyAccelerationStructure();
     auto it_info = cmdCopyAsInfo.begin();
+    bool foundAsInDst = false, foundAsInSrc = false, isVkreplayClearing = false;
     while (it_info != cmdCopyAsInfo.end()) {
         vktrace_trace_packet_header* pHeader = copy_packet(it_info->pCmdCopyAccelerationStructureKHR);
         packet_vkCmdCopyAccelerationStructureKHR* pPacket = interpret_body_as_vkCmdCopyAccelerationStructureKHR(pHeader);
         if (pPacket->pInfo->dst == as) {
             it_info = cmdCopyAsInfo.erase(it_info);
+            foundAsInDst = true;
         } else if (pPacket->pInfo->src == as) {
-            vktrace_LogError("src AS is destroied which is use VkCmdCopyAccelerationStructureKHR src, not handled yet!");
+            foundAsInSrc = true;
             it_info++;
-            assert(0);
-            result = VK_ERROR_UNKNOWN;
+            // Vkreplay destorys AS out of order in the end of trace, but it always frees
+            // command buffers before destorying AS, so we could avoid too many error logs
+            // by checking the command buffer state.
+            if (NULL == get_CommandBuffer_objectInfo(pPacket->commandBuffer)) isVkreplayClearing = true;
+        } else {
+            it_info++;
         }
         vktrace_delete_trace_packet_no_lock(&pHeader);
+    }
+    if (!foundAsInDst && foundAsInSrc && !isVkreplayClearing) {
+        vktrace_LogError(
+            "Skip removing cmdCopyAsInfo because target AS is only found as src of vkCmdCopyAccelerationStructureKHR"
+            " and dst AS hasn't been handled yet!");
+        result = VK_ERROR_UNKNOWN;
     }
     return result;
 }
@@ -418,6 +451,14 @@ VkResult generate_shader_device_buffer(bool makeCall, VkDevice device, VkDeviceS
     bufCreateInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
     bufCreateInfo.queueFamilyIndexCount = 1;
     bufCreateInfo.pQueueFamilyIndices = &queueFamilyIndex;
+
+    auto it1 = g_deviceToFeatureSupport.find(device);
+    if (it1 != g_deviceToFeatureSupport.end()) {
+        if (it1->second.bufferDeviceAddressCaptureReplay) {
+            bufCreateInfo.flags |= VK_BUFFER_CREATE_DEVICE_ADDRESS_CAPTURE_REPLAY_BIT_EXT;
+        }
+    }
+
     vktrace_trace_packet_header* pheadCreateBuf =
         generate::vkCreateBuffer(makeCall, device, &bufCreateInfo, NULL, &devBuffer.buffer);
     packet_vkCreateBuffer* pCreateBuf = (packet_vkCreateBuffer*)pheadCreateBuf->pBody;
@@ -448,6 +489,13 @@ VkResult generate_shader_device_buffer(bool makeCall, VkDevice device, VkDeviceS
     allocateFlagsInfo.pNext = NULL;
     allocateFlagsInfo.flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT;
     allocateFlagsInfo.deviceMask = 0;
+
+    auto it2 = g_deviceToFeatureSupport.find(device);
+    if (it2 != g_deviceToFeatureSupport.end()) {
+        if (it2->second.bufferDeviceAddressCaptureReplay) {
+            allocateFlagsInfo.flags |= VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_CAPTURE_REPLAY_BIT;
+        }
+    }
 
     VkMemoryAllocateInfo allocInfo;
     allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
@@ -614,6 +662,27 @@ VkResult generate_buildas_create_inputs(VkDevice device, uint32_t queueFamilyInd
                 pAddr = (VkDeviceAddress*)((uint64_t)pPacket + offset);
                 *pAddr = geoInfo.instance.info.stagingAddr;
             }
+        }
+
+        if (pcmdBuildPacket->ppBuildRangeInfos != NULL) {
+            uint32_t* pOffsetAddr = NULL;
+            offset =
+                    (uint64_t)(&pcmdBuildPacket->ppBuildRangeInfos[infoIndex][geoIndex].primitiveOffset) -
+                    (uint64_t)pcmdBuildPacket;
+            pOffsetAddr = (uint32_t*)((uint64_t)pPacket + offset);
+            *pOffsetAddr = 0;
+
+            offset =
+                    (uint64_t)(&pcmdBuildPacket->ppBuildRangeInfos[infoIndex][geoIndex].firstVertex) -
+                    (uint64_t)pcmdBuildPacket;
+            pOffsetAddr = (uint32_t*)((uint64_t)pPacket + offset);
+            *pOffsetAddr = 0;
+
+            offset =
+                    (uint64_t)(&pcmdBuildPacket->ppBuildRangeInfos[infoIndex][geoIndex].transformOffset) -
+                    (uint64_t)pcmdBuildPacket;
+            pOffsetAddr = (uint32_t*)((uint64_t)pPacket + offset);
+            *pOffsetAddr = 0;
         }
     }
     vktrace_delete_trace_packet(&pcmdBuildHeader);

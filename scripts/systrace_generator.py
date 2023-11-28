@@ -1,6 +1,6 @@
 #!/usr/bin/python3 -i
 #
-# Copyright (c) 2015-2020, 2020 ARM Corporation
+# Copyright (c) 2015-2023 ARM Corporation
 #
 # Author: Parker
 
@@ -13,7 +13,7 @@ from common_codegen import *
 
 SYSTRACE_CODEGEN = """
 /*
- * (C) COPYRIGHT 2020 ARM Limited
+ * Copyright (C) 2020-2023 ARM Limited
  * ALL RIGHTS RESERVED
  *
  * Licensed under the Apache License, Version 2.0 (the "License");

@@ -1,6 +1,6 @@
 # Copyright 2015 The Android Open Source Project
 # Copyright (C) 2015 Valve Corporation
-# Copyright (C) 2019 ARM Limited
+# Copyright (C) 2019-2023 ARM Limited
 
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,7 +15,7 @@
 # limitations under the License.
 
 APP_ABI := armeabi-v7a arm64-v8a #x86 x86_64
-APP_PLATFORM := android-26
+APP_PLATFORM := android-29
 APP_STL := c++_static
 NDK_TOOLCHAIN_VERSION := clang
 NDK_MODULE_PATH := .

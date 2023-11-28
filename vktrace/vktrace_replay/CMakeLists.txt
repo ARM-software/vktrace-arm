@@ -35,6 +35,7 @@ if (${CMAKE_SYSTEM_NAME} MATCHES "Linux")
 
         set(WAYLAND_SRC_LIST
             vkreplay_vkdisplay_wayland.cpp
+            xdg-shell-protocol.c
         )
 
         set (WAYLAND_HDR_LIST

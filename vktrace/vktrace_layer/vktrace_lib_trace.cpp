@@ -2,7 +2,7 @@
  *
  * Copyright (C) 2015-2017 Valve Corporation
  * Copyright (C) 2015-2017 LunarG, Inc.
- * Copyright (C) 2019 ARM Limited
+ * Copyright (C) 2019-2023 ARM Limited
  * All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -60,6 +60,7 @@
 #include "vktrace_lib_pageguard.h"
 
 #include "vk_struct_size_helper.h"
+#include "vktrace_metadata.h"
 
 // This mutex is used to protect API calls sequence when trim starting process.
 std::mutex g_mutex_trace;
@@ -102,15 +103,17 @@ std::unordered_map<VkCommandBuffer, std::list<VkAccelerationStructureKHR>> g_cmd
 std::unordered_map<VkImageView, VkImage> g_imageViewToImage;
 std::unordered_map<VkAccelerationStructureKHR, VkBuffer> g_AStoBuffer;
 #endif
-std::unordered_map<VkBuffer, VkDeviceSize> g_bufferToOffset;
 std::unordered_map<void*, memoryMapParam> g_memoryMapInfo;
 std::unordered_map<VkDevice, deviceFeatureSupport> g_deviceToFeatureSupport;
 std::unordered_map<VkDeviceAddress, VkBuffer> g_deviceAddressToBuffer;
 std::vector<VkBuffer> g_bufferInCmdBuildAS;
-extern std::map<uint64_t, cmdBuildASPacketInfo> g_cmdBuildASPacket;
-#if VK_ANDROID_frame_boundary
+std::vector<VkBuffer> g_scratchBufferInCmdBuildAS;
+std::unordered_map<VkDeviceMemory, VkDeviceSize> g_memoryToMemSize;
+std::unordered_map<VkDeviceMemory, uint32_t> g_memoryToMemTypeIndex;
+std::unordered_map<VkDeviceMemory, std::list<VkDeviceMemory>> g_memoryToAsMemorys;
+std::unordered_map<uint64_t, vktrace_trace_packet_header*> g_pGetAccelerationStructureBuildSizePackets;
 std::unordered_map<VkDevice, std::list<VkQueue>> g_devicetoQueues;
-#endif
+
 
 #if defined(ANDROID)
 std::unordered_set<VkDeviceMemory> g_exportedDeviceMemory;
@@ -124,6 +127,7 @@ VKMemInfo g_memInfo = {0, NULL, NULL, 0};
 std::unordered_map<void*, layer_device_data*> g_deviceDataMap;
 std::unordered_map<void*, layer_instance_data*> g_instanceDataMap;
 std::unordered_map<VkCommandBuffer, VkDevice> g_commandBufferToDevice;
+std::unordered_map<VkQueue, VkDevice> g_queueToDevice;
 
 std::unordered_map<VkBuffer, VkDeviceMemory> g_shaderDeviceAddrBufferToMem;
 std::unordered_map<VkDeviceMemory, VkBuffer> g_shaderDeviceAddrBufferToMemRev;
@@ -168,7 +172,6 @@ static layer_instance_data* initInstanceData(VkInstance instance, const PFN_vkGe
 
     // TODO: Convert to new init method
     layer_init_instance_dispatch_table(instance, &pTable->instTable, gpa);
-
     return pTable;
 }
 
@@ -231,7 +234,7 @@ bool getForceFifoEnableFlag() {
     static bool FirstTimeRun = true;
     if (FirstTimeRun) {
         FirstTimeRun = false;
-        EnableForceFifo = getBoolOption(VKTRACE_FORCE_FIFO_ENV, FIFO_ENABLE_DEFAULT);
+        EnableForceFifo = getBoolOption(VKTRACE_FORCE_FIFO_ENV, false);
     }
     return EnableForceFifo;
 }
@@ -288,6 +291,38 @@ uint32_t getDisableCaptureReplayFeature() {
     }
 
     return DisableCaptureReplayFeat;
+}
+
+int getReBindMemoryAndAlignedSizeEnable() {
+    static int EnableEnvValue = 0;
+    static bool FirstTimeRun = true;
+    if (FirstTimeRun) {
+        FirstTimeRun = false;
+        const char* env_rebind_mem_enable = vktrace_get_global_var(VKTRACE_ENABLE_REBINDMEMORY_ALIGNEDSIZE_ENV);
+        if (env_rebind_mem_enable) {
+            int envvalue = 0;
+            if (sscanf(env_rebind_mem_enable, "%d", &envvalue) == 1) {
+                EnableEnvValue = envvalue;
+            }
+        }
+    }
+    return EnableEnvValue;
+}
+
+int getASBuildReSize() {
+    static int asBuildReSize = 0;
+    static bool FirstTimeRun = true;
+    if (FirstTimeRun) {
+        FirstTimeRun = false;
+        const char* str_as_build_size = vktrace_get_global_var(VKTRACE_AS_BUILD_RESIZE_ENV);
+        if (str_as_build_size) {
+            int envvalue = 0;
+            if (sscanf(str_as_build_size, "%d", &envvalue) == 1) {
+                asBuildReSize = envvalue;
+            }
+        }
+    }
+    return asBuildReSize;
 }
 
 /*
@@ -406,7 +441,7 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkGetMemoryAndroidHardwa
 #endif
 
 // save Android HardwareBuffer Data
-#if defined(ANDROID) && (VK_ANDROID_frame_boundary == 1)
+#if defined(ANDROID) && VK_ANDROID_frame_boundary
 static void* saveAndroidHardwareBufferData(VkDevice device, VkDeviceMemory memory, VkDeviceMemory& dstBufferMemory, uint32_t width, uint32_t height, VkDeviceSize size) {
     vktrace_LogDebug("line = %d: saveAndroidHardwareBufferData: device %p, memory %p, width = %lu, height = %lu, size = %lu", __LINE__, device, memory, width, height, size);
     VkResult result;
@@ -447,6 +482,7 @@ static void* saveAndroidHardwareBufferData(VkDevice device, VkDeviceMemory memor
     bindImageMemoryInfo.sType = VK_STRUCTURE_TYPE_BIND_IMAGE_MEMORY_INFO;
     bindImageMemoryInfo.image = image;
     bindImageMemoryInfo.memory = memory;
+    bindImageMemoryInfo.memoryOffset = 0;
     result = mdd(device)->devTable.BindImageMemory2(device, 1, &bindImageMemoryInfo);
     if(result != VK_SUCCESS) {
         vktrace_LogError("Failed to bind image memory when saving image data");
@@ -464,7 +500,7 @@ static void* saveAndroidHardwareBufferData(VkDevice device, VkDeviceMemory memor
     if(result != VK_SUCCESS) {
         vktrace_LogError("Failed to create buffer when saving image data");
     }
-    vktrace_LogDebug(" line = %d: dstBuffer = %p", __LINE__, dstBuffer);
+
     VkMemoryRequirements memRequirements;
     mdd(device)->devTable.GetBufferMemoryRequirements(device, dstBuffer, &memRequirements);
     if(result != VK_SUCCESS) {
@@ -479,7 +515,7 @@ static void* saveAndroidHardwareBufferData(VkDevice device, VkDeviceMemory memor
     if(result != VK_SUCCESS) {
         vktrace_LogError("Failed to allocate memory when saving image data");
     }
-    vktrace_LogDebug(" line = %d: dstBufferMemory = %p", __LINE__, dstBufferMemory);
+
     result = mdd(device)->devTable.BindBufferMemory(device, dstBuffer, dstBufferMemory, 0);
     if(result != VK_SUCCESS) {
         vktrace_LogError("Failed to bind buffer memory when saving image data");
@@ -495,7 +531,6 @@ static void* saveAndroidHardwareBufferData(VkDevice device, VkDeviceMemory memor
     if(result != VK_SUCCESS) {
         vktrace_LogError("Failed to create command pool when saving image data");
     }
-    vktrace_LogDebug(" line = %d: commandPool = %p", __LINE__, commandPool);
 
     // allocate command buffer from pool
     VkCommandBufferAllocateInfo commandBufferAllocateInfo = {};
@@ -509,7 +544,6 @@ static void* saveAndroidHardwareBufferData(VkDevice device, VkDeviceMemory memor
     if(result != VK_SUCCESS) {
         vktrace_LogError("Failed to allocate command buffer when saving image data");
     }
-    vktrace_LogDebug(" line = %d: commandBuffer = %p", __LINE__, commandBuffer);
 
     // begin command buffer
     VkCommandBufferBeginInfo commandBufferBeginInfo = {};
@@ -536,7 +570,6 @@ static void* saveAndroidHardwareBufferData(VkDevice device, VkDeviceMemory memor
         return nullptr;
     }
     VkQueue queue = g_devicetoQueues[device].front();
-    vktrace_LogDebug(" line = %d: queue = %p", __LINE__, queue);
 
     VkSubmitInfo submitInfo = {};
     submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
@@ -573,10 +606,9 @@ static void* saveAndroidHardwareBufferData(VkDevice device, VkDeviceMemory memor
 #endif
 
 
-VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkAllocateMemory(VkDevice device, const VkMemoryAllocateInfo* pAllocateInfo,
-                                                                         const VkAllocationCallbacks* pAllocator,
-                                                                         VkDeviceMemory* pMemory) {
-    trim::TraceLock<std::mutex> lock(g_mutex_trace);
+VkResult OverridevkAllocateMemory(VkDevice device, const VkMemoryAllocateInfo* pAllocateInfo,
+                                  const VkAllocationCallbacks* pAllocator,
+                                  VkDeviceMemory* pMemory) {
     VkResult result;
     size_t additional_size = 0;
 #if defined(ANDROID)
@@ -594,26 +626,31 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkAllocateMemory(VkDevic
         // No need to save data of imported hardware buffer if it is exported by content
         if (g_exportedAHardwareBuffer.count(pImportAHWBuf->buffer) == 0) {
             AHardwareBuffer_describe(pImportAHWBuf->buffer, &ahwbuf_desc);
-            int ret = AHardwareBuffer_lock(pImportAHWBuf->buffer, AHARDWAREBUFFER_USAGE_CPU_READ_RARELY, -1, NULL, &hwbuf_cpu_ptr);
+            int outBytesPerPixel;
+            int outBytesPerStride = ahwbuf_desc.stride;
+            int ret = AHardwareBuffer_lockAndGetInfo(pImportAHWBuf->buffer, AHARDWAREBUFFER_USAGE_CPU_READ_RARELY, -1, NULL, &hwbuf_cpu_ptr, &outBytesPerPixel, &outBytesPerStride);
 
             if (ret) {
                 vktrace_LogError("AM: Lock the hardware buffer failed ! Error code: %d", ret);
     #if VK_ANDROID_frame_boundary
                 vktrace_LogError("AM: Saving the hardware buffer manually...");
                 manuallyStoreAndroidHardwareBufferFlag = true;
-                uint32_t stride = (ahwbuf_desc.width > ahwbuf_desc.stride) ? ahwbuf_desc.width : ahwbuf_desc.stride;
-                import_buf_size = stride * ahwbuf_desc.height * getAHardwareBufBPP(ahwbuf_desc.format);
+                uint32_t stride = outBytesPerStride;
+                import_buf_size = stride * ahwbuf_desc.height;
                 additional_size = sizeof(AHardwareBuffer_Desc) + import_buf_size;
     #endif
             }
             else {
-                if (ahwbuf_desc.width > ahwbuf_desc.stride) {
-                    vktrace_LogError("NOTE: AHardwareBuffer_lock function is abnormal(stride = %u, width = %u)!", ahwbuf_desc.stride, ahwbuf_desc.width);
+                if (ahwbuf_desc.width > outBytesPerStride) {
+                    vktrace_LogError("NOTE: AHardwareBuffer_lock function is abnormal(stride = %u, width = %u)!", outBytesPerStride, ahwbuf_desc.width);
                 }
-                uint32_t stride = (ahwbuf_desc.width > ahwbuf_desc.stride) ? ahwbuf_desc.width : ahwbuf_desc.stride;
-                import_buf_size = stride * ahwbuf_desc.height * getAHardwareBufBPP(ahwbuf_desc.format);
+                uint32_t stride = (ahwbuf_desc.width > outBytesPerStride) ? ahwbuf_desc.width : outBytesPerStride;
+                import_buf_size = stride * ahwbuf_desc.height;
                 additional_size = sizeof(AHardwareBuffer_Desc) + import_buf_size;
             }
+
+            // stride correction
+            ahwbuf_desc.stride = outBytesPerStride / getAHardwareBufBPP(ahwbuf_desc.format);
 
         }
     }
@@ -688,6 +725,8 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkAllocateMemory(VkDevic
     }
 
     result = mdd(device)->devTable.AllocateMemory(device, pAllocateInfo, pAllocator, pMemory);
+    g_memoryToMemTypeIndex[*pMemory] = pAllocateInfo->memoryTypeIndex;
+    g_memoryToMemSize[*pMemory] = pAllocateInfo->allocationSize;
     const_cast<VkMemoryAllocateInfo*>(pAllocateInfo)->allocationSize = original_allocation_size;
     if (UseMappedExternalHostMemoryExtension()) {
         if (result == VK_SUCCESS) {
@@ -754,7 +793,7 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkAllocateMemory(VkDevic
         if(androidHardwareBuffer != nullptr) {
             PBYTE pdest_addr = (PBYTE)pHeader->pBody + ROUNDUP_TO_8(sizeof(packet_vkAllocateMemory)) + packetSize;
             memcpy(pdest_addr, &ahwbuf_desc, sizeof(AHardwareBuffer_Desc));
-            memcpy(pdest_addr + sizeof(AHardwareBuffer_Desc), androidHardwareBuffer, pAllocateInfo->allocationSize);
+            memcpy(pdest_addr + sizeof(AHardwareBuffer_Desc), androidHardwareBuffer, import_buf_size);
             pImportAHWBuf->buffer = (struct AHardwareBuffer*)(pdest_addr - (uint8_t*)pHeader->pBody);
             vktrace_LogDebug("Store AHardwareBuffer manually, pImportAHWBuf->buffer = %p", pImportAHWBuf->buffer);
         }
@@ -823,6 +862,13 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkAllocateMemory(VkDevic
     return result;
 }
 
+VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkAllocateMemory(VkDevice device, const VkMemoryAllocateInfo* pAllocateInfo,
+                                                                         const VkAllocationCallbacks* pAllocator,
+                                                                         VkDeviceMemory* pMemory) {
+    trim::TraceLock<std::mutex> lock(g_mutex_trace);
+    return OverridevkAllocateMemory(device, pAllocateInfo, pAllocator, pMemory);
+}
+
 VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkMapMemory(VkDevice device, VkDeviceMemory memory, VkDeviceSize offset,
                                                                     VkDeviceSize size, VkFlags flags, void** ppData) {
     trim::TraceLock<std::mutex> lock(g_mutex_trace);
@@ -852,6 +898,7 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkMapMemory(VkDevice dev
     if (result == VK_SUCCESS) {
         param.memory = memory; param.offset = offset; param.size = size;
     }
+    void* pRealMappedData = *ppData;
 #if defined(USE_PAGEGUARD_SPEEDUP)
     // Pageguard handling will change real mapped memory pointer to a pointer
     // of shadow memory, but trim need to use real mapped pointer to keep
@@ -905,7 +952,7 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkMapMemory(VkDevice dev
             //      mapped memory in future, because the pointer here may
             //      already have page guard protection before trim dump its
             //      content.
-            pInfo->ObjectInfo.DeviceMemory.mappedAddress = *ppData;
+            pInfo->ObjectInfo.DeviceMemory.mappedAddress = pRealMappedData;
         }
         if (g_trimIsInTrim) {
             trim::write_packet(pHeader);
@@ -995,6 +1042,7 @@ VKTRACER_EXPORT VKAPI_ATTR void VKAPI_CALL __HOOKED_vkFreeMemory(VkDevice device
     if (!UseMappedExternalHostMemoryExtension()) {
         auto it = g_MemoryToBuffers.find(memory);
         if (it != g_MemoryToBuffers.end()) {
+            g_MemoryToBuffers[memory].clear();
             g_MemoryToBuffers.erase(it);
         }
     }
@@ -1045,6 +1093,20 @@ VKTRACER_EXPORT VKAPI_ATTR void VKAPI_CALL __HOOKED_vkFreeMemory(VkDevice device
         } else {
             it++;
         }
+    }
+    auto it2 = g_memoryToMemTypeIndex.find(memory);
+    if (it2 != g_memoryToMemTypeIndex.end()) {
+        g_memoryToMemTypeIndex.erase(it2);
+    }
+    auto it3 = g_memoryToMemSize.find(memory);
+    if (it3 != g_memoryToMemSize.end()) {
+        g_memoryToMemSize.erase(it3);
+    }
+    if (g_memoryToAsMemorys.find(memory) != g_memoryToAsMemorys.end()) {
+        for (auto it3 = g_memoryToAsMemorys[memory].begin(); it3 != g_memoryToAsMemorys[memory].end(); it3++) {
+            mdd(device)->devTable.FreeMemory(device, *it3, NULL);
+        }
+        g_memoryToAsMemorys.erase(memory);
     }
     vktrace_set_packet_entrypoint_end_time(pHeader);
     pPacket = interpret_body_as_vkFreeMemory(pHeader);
@@ -1761,6 +1823,12 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkCreateDevice(VkPhysica
         dfs.bufferDeviceAddressCaptureReplay = 0;
         dfs.rayTracingPipelineShaderGroupHandleCaptureReplay = 0;
     }
+
+    vktrace_LogAlways("Actual using device feature CaptureReplay: BDA %d, AS %d, RTPSGH %d, SGHSize %llu",
+                    dfs.bufferDeviceAddressCaptureReplay, dfs.accelerationStructureCaptureReplay,
+                    dfs.rayTracingPipelineShaderGroupHandleCaptureReplay,
+                    dfs.propertyShaderGroupHandleCaptureReplaySize);
+
     g_deviceToFeatureSupport[*pDevice] = dfs;
     uint32_t features = 0;
     features = features | (PACKET_TAG_ASCAPTUREREPLAY * dfs.accelerationStructureCaptureReplay);
@@ -1882,6 +1950,7 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkCreateAccelerationStru
             info.belongsToDevice = device;
             vktrace_trace_packet_header* pCreatePacket = trim::copy_packet(pHeader);
             info.ObjectInfo.AccelerationStructure.pCreatePacket = pCreatePacket;
+            info.ObjectInfo.AccelerationStructure.buffer = pCreateInfo->buffer;
             if (pAllocator != NULL) {
                 info.ObjectInfo.AccelerationStructure.pAllocator = pAllocator;
                 trim::add_Allocator(pAllocator);
@@ -1915,6 +1984,12 @@ VKTRACER_EXPORT VKAPI_ATTR void VKAPI_CALL __HOOKED_vkGetAccelerationStructureBu
     vktrace_set_packet_entrypoint_end_time(pHeader);
     if (pSizeInfo->accelerationStructureSize < ref_target_range_size())
         pSizeInfo->accelerationStructureSize = ref_target_range_size();
+    // adjust to as build size
+    const uint32_t maxAligmentStride = std::max(1, getASBuildReSize());
+    pSizeInfo->accelerationStructureSize *= maxAligmentStride;
+    pSizeInfo->buildScratchSize *= maxAligmentStride;
+    pSizeInfo->updateScratchSize *= maxAligmentStride;
+
     pPacket = interpret_body_as_vkGetAccelerationStructureBuildSizesKHR(pHeader);
     pPacket->device = device;
     pPacket->buildType = buildType;
@@ -1931,6 +2006,7 @@ VKTRACER_EXPORT VKAPI_ATTR void VKAPI_CALL __HOOKED_vkGetAccelerationStructureBu
             trim::write_packet(pHeader);
         } else {
             trim::set_scratch_size(device, pSizeInfo->buildScratchSize, pSizeInfo->updateScratchSize);
+            g_pGetAccelerationStructureBuildSizePackets[pHeader->global_packet_index] = trim::copy_packet(pHeader);
             cmdBuildASPacketInfo packetInfo = {VK_NULL_HANDLE, VK_BUILD_ACCELERATION_STRUCTURE_MODE_MAX_ENUM_KHR, trim::copy_packet(pHeader)};
             g_cmdBuildASPacket[pHeader->global_packet_index] = packetInfo;
             vktrace_delete_trace_packet(&pHeader);
@@ -1951,7 +2027,7 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkBuildAccelerationStruc
     int pInfosSize = 0;
 #if defined(USE_PAGEGUARD_SPEEDUP)
     pageguardEnter();
-    flushAllChangedMappedMemory(&vkFlushMappedMemoryRangesWithoutAPICall);
+    flushAllChangedMappedMemory(&vkFlushMappedMemoryRangesWithoutAPICall, device);
     if (!UseMappedExternalHostMemoryExtension()) {
         // If enable external host memory extension, there will be no shadow
         // memory, so we don't need any read pageguard handling.
@@ -2136,17 +2212,6 @@ VKTRACER_EXPORT VKAPI_ATTR void VKAPI_CALL __HOOKED_vkCmdBuildAccelerationStruct
     vktrace_trace_packet_header* pHeader;
     packet_vkCmdBuildAccelerationStructuresKHR* pPacket = NULL;
     int pInfosSize = 0;
-#if defined(USE_PAGEGUARD_SPEEDUP)
-    pageguardEnter();
-    flushAllChangedMappedMemory(&vkFlushMappedMemoryRangesWithoutAPICall);
-    if (!UseMappedExternalHostMemoryExtension()) {
-        // If enable external host memory extension, there will be no shadow
-        // memory, so we don't need any read pageguard handling.
-        resetAllReadFlagAndPageGuard();
-    }
-    pageguardExit();
-#endif
-
     for (uint32_t i = 0; i < infoCount; ++i) {
         pInfosSize += get_struct_chain_size((void*)&pInfos[i]);
         for (uint32_t j = 0; j < pInfos[i].geometryCount; ++j) {
@@ -2312,11 +2377,18 @@ VKTRACER_EXPORT VKAPI_ATTR void VKAPI_CALL __HOOKED_vkCmdBuildAccelerationStruct
                         }
                     }
 
+                    uint32_t CurrentPrimitiveCount = 0;
                     for (uint32_t j = 0; (j < pInfos[i].geometryCount && g_TraceEnableCopyAsBuf); ++j) {
                         trim::BuildAsGeometryInfo geometryInfo;
                         memset(&geometryInfo, 0, sizeof(geometryInfo));
                         geometryInfo.infoIndex = i;
                         geometryInfo.geoIndex  = j;
+                        if (ppBuildRangeInfos[i][j].primitiveCount != 0) {
+                            CurrentPrimitiveCount = ppBuildRangeInfos[i][j].primitiveCount;
+                        } else {
+                            // The case value is invalid input, the AS should not be built, only for fastforward
+                            CurrentPrimitiveCount = 1;
+                        }
                         switch (pInfos[i].pGeometries[j].geometryType) {
                             case VK_GEOMETRY_TYPE_TRIANGLES_KHR:
                                 geometryInfo.type = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
@@ -2329,7 +2401,7 @@ VKTRACER_EXPORT VKAPI_ATTR void VKAPI_CALL __HOOKED_vkCmdBuildAccelerationStruct
                                                     ppBuildRangeInfos[i][j].firstVertex;
                                             geometryInfo.triangle.vb.dataSize =
                                                 pInfos[i].pGeometries[j].geometry.triangles.vertexStride *
-                                                ppBuildRangeInfos[i][j].primitiveCount * 3;
+                                                CurrentPrimitiveCount * 3;
                                             break;
                                         }
                                         case VK_INDEX_TYPE_UINT8_EXT:
@@ -2394,7 +2466,7 @@ VKTRACER_EXPORT VKAPI_ATTR void VKAPI_CALL __HOOKED_vkCmdBuildAccelerationStruct
                                                 }
                                             }
                                             geometryInfo.triangle.ib.bufOffset = ppBuildRangeInfos[i][j].primitiveOffset;
-                                            geometryInfo.triangle.ib.dataSize = ppBuildRangeInfos[i][j].primitiveCount * IbStride * 3;
+                                            geometryInfo.triangle.ib.dataSize = CurrentPrimitiveCount * IbStride * 3;
                                             break;
                                         }
                                         default: {
@@ -2460,7 +2532,7 @@ VKTRACER_EXPORT VKAPI_ATTR void VKAPI_CALL __HOOKED_vkCmdBuildAccelerationStruct
                                 if (pInfos[i].pGeometries[j].geometry.aabbs.data.deviceAddress != 0) {
                                     geometryInfo.aabb.info.bufOffset = ppBuildRangeInfos[i][j].primitiveOffset;
                                     geometryInfo.aabb.info.dataSize =
-                                        ppBuildRangeInfos[i][j].primitiveCount * pInfos[i].pGeometries[j].geometry.aabbs.stride;
+                                        CurrentPrimitiveCount * pInfos[i].pGeometries[j].geometry.aabbs.stride;
 
                                     VkResult result;
                                     result = trim::get_cmdbuildas_memory_buffer(
@@ -2499,7 +2571,7 @@ VKTRACER_EXPORT VKAPI_ATTR void VKAPI_CALL __HOOKED_vkCmdBuildAccelerationStruct
                                     if (pInfos[i].pGeometries[j].geometry.instances.arrayOfPointers == VK_FALSE) {
                                         geometryInfo.instance.info.bufOffset = ppBuildRangeInfos[i][j].primitiveOffset;
                                         geometryInfo.instance.info.dataSize =
-                                            ppBuildRangeInfos[i][j].primitiveCount * sizeof(VkAccelerationStructureInstanceKHR);
+                                            CurrentPrimitiveCount * sizeof(VkAccelerationStructureInstanceKHR);
                                         VkResult result;
                                         result = trim::get_cmdbuildas_memory_buffer(
                                             pInfos[i].pGeometries[j].geometry.instances.data.deviceAddress,
@@ -2546,9 +2618,9 @@ VKTRACER_EXPORT VKAPI_ATTR void VKAPI_CALL __HOOKED_vkCmdBuildAccelerationStruct
                             it = findCloestDeviceAddress(pInfos[i].scratchData.deviceAddress);
                         }
                         if (it != g_deviceAddressToBuffer.end()) {
-                            auto it0 = std::find(g_bufferInCmdBuildAS.begin(), g_bufferInCmdBuildAS.end(), it->second);
-                            if (it0 == g_bufferInCmdBuildAS.end()) {
-                                g_bufferInCmdBuildAS.push_back(it->second);
+                            auto it0 = std::find(g_scratchBufferInCmdBuildAS.begin(), g_scratchBufferInCmdBuildAS.end(), it->second);
+                            if (it0 == g_scratchBufferInCmdBuildAS.end()) {
+                                g_scratchBufferInCmdBuildAS.push_back(it->second);
                             }
                         } else {
                             vktrace_LogError("can't find the scratchData buffer device address.");
@@ -2572,17 +2644,6 @@ VKTRACER_EXPORT VKAPI_ATTR void VKAPI_CALL __HOOKED_vkCmdBuildAccelerationStruct
     vktrace_trace_packet_header* pHeader;
     packet_vkCmdBuildAccelerationStructuresIndirectKHR* pPacket = NULL;
     int pInfosSize = 0;
-#if defined(USE_PAGEGUARD_SPEEDUP)
-    pageguardEnter();
-    flushAllChangedMappedMemory(&vkFlushMappedMemoryRangesWithoutAPICall);
-    if (!UseMappedExternalHostMemoryExtension()) {
-        // If enable external host memory extension, there will be no shadow
-        // memory, so we don't need any read pageguard handling.
-        resetAllReadFlagAndPageGuard();
-    }
-    pageguardExit();
-#endif
-
     for (uint32_t i = 0; i < infoCount; ++i) {
         pInfosSize += get_struct_chain_size((void*)&pInfos[i]);
         for (uint32_t j = 0; j < pInfos[i].geometryCount; ++j) {
@@ -2743,9 +2804,9 @@ VKTRACER_EXPORT VKAPI_ATTR void VKAPI_CALL __HOOKED_vkCmdBuildAccelerationStruct
                             it = findCloestDeviceAddress(pInfos[i].scratchData.deviceAddress);
                         }
                         if (it != g_deviceAddressToBuffer.end()) {
-                            auto it0 = std::find(g_bufferInCmdBuildAS.begin(), g_bufferInCmdBuildAS.end(), it->second);
-                            if (it0 == g_bufferInCmdBuildAS.end()) {
-                                g_bufferInCmdBuildAS.push_back(it->second);
+                            auto it0 = std::find(g_scratchBufferInCmdBuildAS.begin(), g_scratchBufferInCmdBuildAS.end(), it->second);
+                            if (it0 == g_scratchBufferInCmdBuildAS.end()) {
+                                g_scratchBufferInCmdBuildAS.push_back(it->second);
                             }
                         } else {
                             vktrace_LogError("can't find the scratchData buffer device address.");
@@ -2812,6 +2873,11 @@ VKTRACER_EXPORT VKAPI_ATTR void VKAPI_CALL __HOOKED_vkDestroyAccelerationStructu
     pPacket->accelerationStructure = accelerationStructure;
     vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pAllocator), sizeof(VkAllocationCallbacks), NULL);
     vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pAllocator));
+    auto it1 = g_AStoDeviceAddr.find(accelerationStructure);
+    if (it1 != g_AStoDeviceAddr.end()) {
+        g_AStoDeviceAddrRev.erase(it1->second);
+        g_AStoDeviceAddr.erase(it1);
+    }
     if (!g_trimEnabled) {
         FINISH_TRACE_PACKET();
     } else {
@@ -3002,18 +3068,6 @@ VKTRACER_EXPORT VKAPI_ATTR void VKAPI_CALL __HOOKED_vkCmdTraceRaysKHR(
     trim::TraceLock<std::mutex> lock(g_mutex_trace);
     vktrace_trace_packet_header* pHeader;
     packet_vkCmdTraceRaysKHR* pPacket = NULL;
-
-#if defined(USE_PAGEGUARD_SPEEDUP)
-    pageguardEnter();
-    flushAllChangedMappedMemory(&vkFlushMappedMemoryRangesWithoutAPICall);
-    if (!UseMappedExternalHostMemoryExtension()) {
-        // If enable external host memory extension, there will be no shadow
-        // memory, so we don't need any read pageguard handling.
-        resetAllReadFlagAndPageGuard();
-    }
-    pageguardExit();
-#endif
-
     CREATE_TRACE_PACKET(vkCmdTraceRaysKHR, sizeof(VkStridedDeviceAddressRegionKHR) + sizeof(VkStridedDeviceAddressRegionKHR) +
                                                sizeof(VkStridedDeviceAddressRegionKHR) + sizeof(VkStridedDeviceAddressRegionKHR));
     mdd(commandBuffer)->devTable.CmdTraceRaysKHR(commandBuffer, pRaygenShaderBindingTable, pMissShaderBindingTable,
@@ -3057,18 +3111,6 @@ VKTRACER_EXPORT VKAPI_ATTR void VKAPI_CALL __HOOKED_vkCmdTraceRaysIndirectKHR(
     trim::TraceLock<std::mutex> lock(g_mutex_trace);
     vktrace_trace_packet_header* pHeader;
     packet_vkCmdTraceRaysIndirectKHR* pPacket = NULL;
-
-#if defined(USE_PAGEGUARD_SPEEDUP)
-    pageguardEnter();
-    flushAllChangedMappedMemory(&vkFlushMappedMemoryRangesWithoutAPICall);
-    if (!UseMappedExternalHostMemoryExtension()) {
-        // If enable external host memory extension, there will be no shadow
-        // memory, so we don't need any read pageguard handling.
-        resetAllReadFlagAndPageGuard();
-    }
-    pageguardExit();
-#endif
-
     CREATE_TRACE_PACKET(vkCmdTraceRaysIndirectKHR,
                         sizeof(VkStridedDeviceAddressRegionKHR) + sizeof(VkStridedDeviceAddressRegionKHR) +
                             sizeof(VkStridedDeviceAddressRegionKHR) + sizeof(VkStridedDeviceAddressRegionKHR));
@@ -3249,7 +3291,10 @@ static bool send_vk_trace_file_header(VkInstance instance) {
         pHeader->enabled_tracer_features |= TRACER_FEAT_DELAY_SIGNAL_FENCE;
     }
 
-    vktrace_FileLike_WriteRaw(vktrace_trace_get_trace_file(), &packet_size, sizeof(packet_size));
+    set_trace_file_header(pHeader);
+    if (vktrace_trace_get_trace_file()->mMessageStream != NULL) {
+        vktrace_FileLike_WriteRaw(vktrace_trace_get_trace_file(), &packet_size, sizeof(packet_size));
+    }
     vktrace_FileLike_WriteRaw(vktrace_trace_get_trace_file(), pHeader, header_size);
     rval = true;
 
@@ -3291,13 +3336,13 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkCreateInstance(const V
         enable_extension_names.push_back(pCreateInfo->ppEnabledExtensionNames[i]);
     }
 
-    const char* propertyName = "VK_KHR_get_physical_device_properties2";
     // vkGetPhysicalDeviceFeatures2KHR function need VK_KHR_get_physical_device_properties2 extension
-    auto it = std::find(enable_extension_names.begin(), enable_extension_names.end(), propertyName);
+    auto it = std::find(enable_extension_names.begin(), enable_extension_names.end(), VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME);
     if (it == enable_extension_names.end()) {
-        enable_extension_names.push_back(propertyName);
+        enable_extension_names.push_back(VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME);
     }
 
+    VkInstanceCreateInfo createInfoOriginal = *pCreateInfo;
     const_cast<VkInstanceCreateInfo*>(pCreateInfo)->ppEnabledExtensionNames = enable_extension_names.data();
     const_cast<VkInstanceCreateInfo*>(pCreateInfo)->enabledExtensionCount = (uint32_t)enable_extension_names.size();
 
@@ -3315,6 +3360,12 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkCreateInstance(const V
     chain_info->u.pLayerInfo = chain_info->u.pLayerInfo->pNext;
 
     result = fpCreateInstance(pCreateInfo, pAllocator, pInstance);
+    if (result == VK_ERROR_EXTENSION_NOT_PRESENT) {
+        const_cast<VkInstanceCreateInfo*>(pCreateInfo)->ppEnabledExtensionNames = createInfoOriginal.ppEnabledExtensionNames;
+        const_cast<VkInstanceCreateInfo*>(pCreateInfo)->enabledExtensionCount = createInfoOriginal.enabledExtensionCount;
+        result = fpCreateInstance(pCreateInfo, pAllocator, pInstance);
+    }
+
     if (result != VK_SUCCESS) {
         return result;
     }
@@ -3358,6 +3409,11 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkCreateInstance(const V
     // so we can query information needed for the file header.  So write the headers now.
     // We can do this because vkCreateInstance must always be the first Vulkan API call.
     static bool firstCreateInstance = true;
+
+    /************************************************************************************************************
+    ****  Warning: Do not use vktrace_LogXXX to print any information before send_vk_trace_file_header function
+    *************************************************************************************************************/
+
     if (firstCreateInstance) {
         if (!send_vk_trace_file_header(*pInstance)) vktrace_LogError("Failed to write trace file header");
         send_vk_api_version_packet();
@@ -3372,6 +3428,19 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkCreateInstance(const V
         vktrace_get_global_var(VKTRACE_PAGEGUARD_ENABLE_SYNC_GPU_DATA_BACK_ENV);
         vktrace_get_global_var(VKTRACE_DELAY_SIGNAL_FENCE_FRAMES_ENV);
         vktrace_get_global_var(VKTRACE_DELAY_SIGNAL_FENCE_COUNTER_ENV);
+        vktrace_get_global_var(VKTRACE_PMB_ENABLE_ENV);
+        vktrace_get_global_var(_VKTRACE_PMB_TARGET_RANGE_SIZE_ENV);
+        vktrace_get_global_var(VKTRACE_PAGEGUARD_ENABLE_READ_PMB_ENV);
+        vktrace_get_global_var(VKTRACE_PAGEGUARD_ENABLE_READ_POST_PROCESS_ENV);
+        vktrace_get_global_var(VKTRACE_PAGEGUARD_ENABLE_LAZY_COPY_ENV);
+        vktrace_get_global_var(VKTRACE_PAGEGUARD_SYNC_GPU_DATA_BACK_REALTIME_ENV);
+        vktrace_get_global_var(_VKTRACE_VERBOSITY_ENV);
+        vktrace_get_global_var(VKTRACE_TRIM_MAX_COMMAND_BATCH_SIZE_ENV);
+        vktrace_get_global_var(VKTRACE_CHECK_PAGEGUARD_HANDLER_IN_FRAMES_ENV);
+        vktrace_get_global_var(VKTRACE_DISABLE_CAPTUREREPLAY_FEATURE_ENV);
+        vktrace_get_global_var(VKTRACE_ENABLE_COPY_AS_BUFFER_ENV);
+        vktrace_get_global_var(VKTRACE_ENABLE_REBINDMEMORY_ALIGNEDSIZE_ENV);
+        vktrace_get_global_var(VKTRACE_AS_BUILD_RESIZE_ENV);
 #endif
 
 #if defined(PLATFORM_LINUX) && !defined(ANDROID)
@@ -3382,6 +3451,19 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkCreateInstance(const V
         vktrace_LogAlways("getprop %s: %s", VKTRACE_PAGEGUARD_ENABLE_SYNC_GPU_DATA_BACK_ENV, vktrace_get_global_var(VKTRACE_PAGEGUARD_ENABLE_SYNC_GPU_DATA_BACK_ENV));
         vktrace_LogAlways("getprop %s: %s", VKTRACE_DELAY_SIGNAL_FENCE_FRAMES_ENV, vktrace_get_global_var(VKTRACE_DELAY_SIGNAL_FENCE_FRAMES_ENV));
         vktrace_LogAlways("getprop %s: %s", VKTRACE_DELAY_SIGNAL_FENCE_COUNTER_ENV, vktrace_get_global_var(VKTRACE_DELAY_SIGNAL_FENCE_COUNTER_ENV));
+        vktrace_LogAlways("getprop %s: %s", VKTRACE_PMB_ENABLE_ENV, vktrace_get_global_var(VKTRACE_PMB_ENABLE_ENV));
+        vktrace_LogAlways("getprop %s: %s", _VKTRACE_PMB_TARGET_RANGE_SIZE_ENV, vktrace_get_global_var(_VKTRACE_PMB_TARGET_RANGE_SIZE_ENV));
+        vktrace_LogAlways("getprop %s: %s", VKTRACE_PAGEGUARD_ENABLE_READ_PMB_ENV, vktrace_get_global_var(VKTRACE_PAGEGUARD_ENABLE_READ_PMB_ENV));
+        vktrace_LogAlways("getprop %s: %s", VKTRACE_PAGEGUARD_ENABLE_READ_POST_PROCESS_ENV, vktrace_get_global_var(VKTRACE_PAGEGUARD_ENABLE_READ_POST_PROCESS_ENV));
+        vktrace_LogAlways("getprop %s: %s", VKTRACE_PAGEGUARD_ENABLE_LAZY_COPY_ENV, vktrace_get_global_var(VKTRACE_PAGEGUARD_ENABLE_LAZY_COPY_ENV));
+        vktrace_LogAlways("getprop %s: %s", VKTRACE_PAGEGUARD_SYNC_GPU_DATA_BACK_REALTIME_ENV, vktrace_get_global_var(VKTRACE_PAGEGUARD_SYNC_GPU_DATA_BACK_REALTIME_ENV));
+        vktrace_LogAlways("getprop %s: %s", _VKTRACE_VERBOSITY_ENV, vktrace_get_global_var(_VKTRACE_VERBOSITY_ENV));
+        vktrace_LogAlways("getprop %s: %s", VKTRACE_TRIM_MAX_COMMAND_BATCH_SIZE_ENV, vktrace_get_global_var(VKTRACE_TRIM_MAX_COMMAND_BATCH_SIZE_ENV));
+        vktrace_LogAlways("getprop %s: %s", VKTRACE_CHECK_PAGEGUARD_HANDLER_IN_FRAMES_ENV, vktrace_get_global_var(VKTRACE_CHECK_PAGEGUARD_HANDLER_IN_FRAMES_ENV));
+        vktrace_LogAlways("getprop %s: %s", VKTRACE_DISABLE_CAPTUREREPLAY_FEATURE_ENV, vktrace_get_global_var(VKTRACE_DISABLE_CAPTUREREPLAY_FEATURE_ENV));
+        vktrace_LogAlways("getprop %s: %s", VKTRACE_ENABLE_COPY_AS_BUFFER_ENV, vktrace_get_global_var(VKTRACE_ENABLE_COPY_AS_BUFFER_ENV));
+        vktrace_LogAlways("getprop %s: %s", VKTRACE_ENABLE_REBINDMEMORY_ALIGNEDSIZE_ENV, vktrace_get_global_var(VKTRACE_ENABLE_REBINDMEMORY_ALIGNEDSIZE_ENV));
+        vktrace_LogAlways("getprop %s: %s", VKTRACE_AS_BUILD_RESIZE_ENV, vktrace_get_global_var(VKTRACE_AS_BUILD_RESIZE_ENV));
 #endif
         vktrace_LogAlways("Tracing with v%s", VKTRACE_VERSION);
     }
@@ -3771,11 +3853,13 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkEnumerateDeviceExtensi
     uint64_t vktraceStartTime = vktrace_get_time();
     startTime = vktrace_get_time();
     // Only call down chain if querying ICD rather than layer device extensions
-#if VK_ANDROID_frame_boundary
+    VkExtensionProperties* old_pProperties = nullptr;
     if (pLayerName == NULL) {
         result =
             mid(physicalDevice)->instTable.EnumerateDeviceExtensionProperties(physicalDevice, NULL, pPropertyCount, pProperties);
+#if VK_ANDROID_frame_boundary
         if(pProperties != nullptr)  {
+            old_pProperties = pProperties;
             VkExtensionProperties* pProperties_t = new VkExtensionProperties[*pPropertyCount + 1];
             for(int i = 0; i < *pPropertyCount; i++) {
                 pProperties_t[i] = pProperties[i];
@@ -3787,17 +3871,11 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkEnumerateDeviceExtensi
             pProperties_t[*pPropertyCount] = pProperties_vkFrameBoundaryANDROID;
 
             pProperties = pProperties_t;
+            (*pPropertyCount) += 1;
 
         }
-        (*pPropertyCount) += 1;
-    }
-#else
-    if (pLayerName == NULL)
-        result =
-            mid(physicalDevice)->instTable.EnumerateDeviceExtensionProperties(physicalDevice, NULL, pPropertyCount, pProperties);
 #endif
-
-    else {
+    } else {
         *pPropertyCount = 0;
         return VK_SUCCESS;
     }
@@ -3819,6 +3897,11 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkEnumerateDeviceExtensi
     vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pLayerName));
     vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pPropertyCount));
     vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pProperties));
+    if (old_pProperties != nullptr) {
+        delete pProperties;
+        pProperties = old_pProperties;
+    }
+
     if (!g_trimEnabled) {
         // trim not enabled, send packet as usual
         FINISH_TRACE_PACKET();
@@ -4514,7 +4597,7 @@ VKTRACER_EXPORT VKAPI_ATTR void VKAPI_CALL __HOOKED_vkUpdateDescriptorSets(VkDev
         arrayByteCount += get_struct_chain_size(&pDescriptorCopies[i]);
     }
 
-    CREATE_TRACE_PACKET(vkUpdateDescriptorSets, arrayByteCount);
+    CREATE_TRACE_PACKET(vkUpdateDescriptorSets, arrayByteCount + 1024);
 #if defined(USE_PAGEGUARD_SPEEDUP) && !defined(PAGEGUARD_ADD_PAGEGUARD_ON_REAL_MAPPED_MEMORY)
     if (!UseMappedExternalHostMemoryExtension()) {
         for (uint32_t i = 0; i < descriptorWriteCount; i++) {
@@ -4704,7 +4787,7 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkQueueSubmit(VkQueue qu
     }
 #if defined(USE_PAGEGUARD_SPEEDUP)
     pageguardEnter();
-    flushAllChangedMappedMemory(&vkFlushMappedMemoryRangesWithoutAPICall);
+    flushAllChangedMappedMemory(&vkFlushMappedMemoryRangesWithoutAPICall, g_queueToDevice.at(queue));
     if (!UseMappedExternalHostMemoryExtension()) {
         // If enable external host memory extension, there will be no shadow
         // memory, so we don't need any read pageguard handling.
@@ -4719,7 +4802,7 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkQueueSubmit(VkQueue qu
         arrayByteCount += vk_size_vksubmitinfo(&pSubmits[i]);
         arrayByteCount += get_struct_chain_size(&pSubmits[i]);
     }
-    CREATE_TRACE_PACKET(vkQueueSubmit, arrayByteCount);
+    CREATE_TRACE_PACKET(vkQueueSubmit, arrayByteCount + 512);
     result = mdd(queue)->devTable.QueueSubmit(queue, submitCount, pSubmits, fence);
     vktrace_set_packet_entrypoint_end_time(pHeader);
 #if defined(USE_PAGEGUARD_SPEEDUP) && !defined(PAGEGUARD_ADD_PAGEGUARD_ON_REAL_MAPPED_MEMORY)
@@ -5272,7 +5355,7 @@ VKTRACER_EXPORT VKAPI_ATTR void VKAPI_CALL __HOOKED_vkCmdPipelineBarrier2KHR(
         for (uint32_t i = 0; i < pDependencyInfo->imageMemoryBarrierCount; i++) customSize += get_struct_chain_size(&pDependencyInfo->pImageMemoryBarriers[i]);
     }
 
-    CREATE_TRACE_PACKET(vkCmdPipelineBarrier2KHR, sizeof(VkDependencyInfo) + customSize);
+    CREATE_TRACE_PACKET(vkCmdPipelineBarrier2KHR, sizeof(VkDependencyInfo) + customSize + 1024);
     mdd(commandBuffer)->devTable.CmdPipelineBarrier2KHR(commandBuffer, pDependencyInfo);
     vktrace_set_packet_entrypoint_end_time(pHeader);
     pPacket = interpret_body_as_vkCmdPipelineBarrier2KHR(pHeader);
@@ -5323,24 +5406,6 @@ VKTRACER_EXPORT VKAPI_ATTR void VKAPI_CALL __HOOKED_vkCmdPipelineBarrier2(
     }
 }
 
-bool getCmdPushConstantsRemapEnableFlag() {
-    static bool EnableBuffer = false;
-    static bool FirstTimeRun = true;
-    if (FirstTimeRun) {
-        FirstTimeRun = false;
-        const char* env_remap_buffer_enable = vktrace_get_global_var(VKTRACE_ENABLE_VKCMDPUSHCONSTANTS_REMAP_ENV);
-        if (env_remap_buffer_enable) {
-            int envvalue;
-            if (sscanf(env_remap_buffer_enable, "%d", &envvalue) == 1) {
-                if (envvalue != 0) {
-                    EnableBuffer = true;
-                }
-            }
-        }
-    }
-    return EnableBuffer;
-}
-
 VKTRACER_EXPORT VKAPI_ATTR void VKAPI_CALL __HOOKED_vkCmdPushConstants(VkCommandBuffer commandBuffer, VkPipelineLayout layout,
                                                                        VkShaderStageFlags stageFlags, uint32_t offset,
                                                                        uint32_t size, const void* pValues) {
@@ -5358,21 +5423,6 @@ VKTRACER_EXPORT VKAPI_ATTR void VKAPI_CALL __HOOKED_vkCmdPushConstants(VkCommand
     pPacket->size = size;
     vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pValues), size, pValues);
     vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pValues));
-    if (getCmdPushConstantsRemapEnableFlag()) {
-        bool deviceAddrFound = false;
-        VkDeviceAddress *ptr = (VkDeviceAddress *)pValues;
-        for (unsigned i = 0; i < size / (sizeof(VkDeviceAddress)); ++i) {
-            auto it = g_BuftoDeviceAddrRev.find(ptr[i]);
-            if (it != g_BuftoDeviceAddrRev.end()) {
-                deviceAddrFound = true;
-                break;
-            }
-        }
-        if (deviceAddrFound) {
-            vktrace_LogDebug("Created a VKTRACE_TPI_VK_vkCmdPushConstantsRemap packet");
-            pHeader->packet_id = VKTRACE_TPI_VK_vkCmdPushConstantsRemap;
-        }
-    }
     if (!g_trimEnabled) {
         // trim not enabled, send packet as usual
         FINISH_TRACE_PACKET();
@@ -5547,6 +5597,7 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkCreateGraphicsPipeline
             info.ObjectInfo.Pipeline.pipelineCache = pipelineCache;
             info.ObjectInfo.Pipeline.renderPassVersion = trim::get_RenderPassVersion(pCreateInfos[i].renderPass);
             info.ObjectInfo.Pipeline.shaderModuleCreateInfoCount = pCreateInfos[i].stageCount;
+            info.ObjectInfo.Pipeline.pCreatepipeline = trim::copy_packet(pHeader);
             info.ObjectInfo.Pipeline.pShaderModuleCreateInfos =
                 VKTRACE_NEW_ARRAY(VkShaderModuleCreateInfo, pCreateInfos[i].stageCount);
 
@@ -5690,21 +5741,20 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkCreatePipelineCache(Vk
     packet_vkCreatePipelineCache* pPacket = NULL;
     // Currently do not capture payload in vkCreatePipelineCache() API.
     // So we won't reserve spaces for pCreateInfo->pInitialData in the buffer for now.
-    CREATE_TRACE_PACKET(vkCreatePipelineCache, get_struct_chain_size((void*)pCreateInfo) +
+    // Currently do not capture payload in vkCreatePipelineCache() API.
+    VkPipelineCacheCreateInfo createInfoCopy = *pCreateInfo;
+    createInfoCopy.pInitialData = NULL;
+    createInfoCopy.initialDataSize = 0;
+
+    CREATE_TRACE_PACKET(vkCreatePipelineCache, get_struct_chain_size((void*)(&createInfoCopy)) +
                                                    sizeof(VkAllocationCallbacks) +
                                                    sizeof(VkPipelineCache));
     result = mdd(device)->devTable.CreatePipelineCache(device, pCreateInfo, pAllocator, pPipelineCache);
     vktrace_set_packet_entrypoint_end_time(pHeader);
     pPacket = interpret_body_as_vkCreatePipelineCache(pHeader);
     pPacket->device = device;
-
-    // Currently do not capture payload in vkCreatePipelineCache() API.
-    VkPipelineCacheCreateInfo createInfoCopy = *pCreateInfo;
-    createInfoCopy.pInitialData = NULL;
-    createInfoCopy.initialDataSize = 0;
-
     vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pCreateInfo), sizeof(VkPipelineCacheCreateInfo), &createInfoCopy);
-    if (pCreateInfo) vktrace_add_pnext_structs_to_trace_packet(pHeader, (void*)pPacket->pCreateInfo, pCreateInfo);
+    if (pCreateInfo) vktrace_add_pnext_structs_to_trace_packet(pHeader, (void*)pPacket->pCreateInfo, &createInfoCopy);
     vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pAllocator), sizeof(VkAllocationCallbacks), NULL);
     vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pPipelineCache), sizeof(VkPipelineCache), pPipelineCache);
     pPacket->result = result;
@@ -6145,7 +6195,7 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkCreateImage(VkDevice d
         // will directly use these sizes.
 
         std::vector<VkDeviceSize> subResourceSizes;
-        if (trim::calculateImageAllSubResourceSize(device, *pImage, *pCreateInfo, subResourceSizes)) {
+        if (trim::calculateImageAllSubResourceSize(device, *pCreateInfo, pAllocator, subResourceSizes)) {
             trim::addImageSubResourceSizes(*pImage, subResourceSizes);
         }
     }
@@ -6189,8 +6239,9 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkCreateImage(VkDevice d
         info.ObjectInfo.Image.extent = pCreateInfo->extent;
         info.ObjectInfo.Image.mipLevels = pCreateInfo->mipLevels;
         info.ObjectInfo.Image.arrayLayers = pCreateInfo->arrayLayers;
+        info.ObjectInfo.Image.tiling = pCreateInfo->tiling;
         info.ObjectInfo.Image.sharingMode = pCreateInfo->sharingMode;
-        info.ObjectInfo.Image.needsStagingBuffer = (pCreateInfo->tiling == VK_IMAGE_TILING_OPTIMAL);
+        info.ObjectInfo.Image.needsStagingBuffer = (pCreateInfo->tiling != VK_IMAGE_TILING_LINEAR);
         info.ObjectInfo.Image.queueFamilyIndex =
             (pCreateInfo->sharingMode == VK_SHARING_MODE_CONCURRENT && pCreateInfo->pQueueFamilyIndices != NULL &&
              pCreateInfo->queueFamilyIndexCount != 0)
@@ -6243,7 +6294,7 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkCreateBuffer(VkDevice 
 
     result = mdd(device)->devTable.CreateBuffer(device, pCreateInfo, pAllocator, pBuffer);
     vktrace_set_packet_entrypoint_end_time(pHeader);
-    if (pCreateInfo->usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT || pCreateInfo->usage & VK_BUFFER_USAGE_STORAGE_BUFFER_BIT) {
+    if (pCreateInfo->usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT) {
         g_shaderDeviceAddrBufferToMem[*pBuffer] = 0;
     }
 
@@ -6356,9 +6407,6 @@ VKTRACER_EXPORT VKAPI_ATTR void VKAPI_CALL __HOOKED_vkDestroyBuffer(VkDevice dev
     }
 #endif
 
-    if (g_bufferToOffset.find(buffer) != g_bufferToOffset.end()) {
-        g_bufferToOffset.erase(buffer);
-    }
     pPacket = interpret_body_as_vkDestroyBuffer(pHeader);
     pPacket->device = device;
     pPacket->buffer = buffer;
@@ -6394,6 +6442,44 @@ VKTRACER_EXPORT VKAPI_ATTR void VKAPI_CALL __HOOKED_vkDestroyBuffer(VkDevice dev
     }
 }
 
+bool remapImagetoNewMemory(VkDevice device, const VkImage originalImage, const VkDeviceMemory originalMemory, const VkDeviceSize originalMemOffset, VkDeviceMemory& newMemory)
+{
+    auto it = g_memoryToMemTypeIndex.find(originalMemory);
+    if (it == g_memoryToMemTypeIndex.end()) {
+        return false;
+    }
+
+    auto it2 = g_memoryToMemSize.find(originalMemory);
+    if (it2 == g_memoryToMemSize.end()) {
+        return false;
+    }
+
+    VkMemoryRequirements requirements;
+    mdd(device)->devTable.GetImageMemoryRequirements(device, originalImage, &requirements);
+    if (g_memoryToMemSize[originalMemory] == requirements.size) {
+        return false;
+    }
+
+    if ((g_memoryToMemSize[originalMemory] < (requirements.size * 2)) && (originalMemOffset == 0)) {
+        return false;
+    }
+
+    uint32_t alignment = 64;
+    requirements.size = ((requirements.size + alignment - 1) / alignment) * alignment;
+
+    VkMemoryAllocateInfo allocateInfo {
+        VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, NULL, requirements.size, g_memoryToMemTypeIndex[originalMemory]
+    };
+    VkResult result = OverridevkAllocateMemory(device, &allocateInfo, NULL, &newMemory);
+    if (result != VK_SUCCESS) {
+        vktrace_LogError("Can't create the image memory in line %d of %s, result = %d", __LINE__, __func__, result);
+        return false;
+    }
+
+    g_memoryToAsMemorys[originalMemory].push_back(newMemory);
+    return true;
+}
+
 VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkBindBufferMemory(VkDevice device, VkBuffer buffer, VkDeviceMemory memory,
                                                                            VkDeviceSize memoryOffset) {
     trim::TraceLock<std::mutex> lock(g_mutex_trace);
@@ -6424,7 +6510,6 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkBindBufferMemory(VkDev
         }
     }
 #endif
-    g_bufferToOffset[buffer] = memoryOffset;
     pPacket = interpret_body_as_vkBindBufferMemory(pHeader);
     pPacket->device = device;
     pPacket->buffer = buffer;
@@ -6458,6 +6543,66 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkBindBufferMemory(VkDev
     return result;
 }
 
+VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkBindImageMemory(VkDevice device, VkImage image, VkDeviceMemory memory,
+                                                                          VkDeviceSize memoryOffset) {
+    trim::TraceLock<std::mutex> lock(g_mutex_trace);
+    if (getReBindMemoryAndAlignedSizeEnable() & 0x04) {
+        VkDeviceMemory newMemory = VK_NULL_HANDLE;
+        bool ret = remapImagetoNewMemory(device, image, memory, memoryOffset, newMemory);
+        if (ret) {
+            memory = newMemory;
+            memoryOffset = 0;
+        }
+    }
+    VkResult result;
+    vktrace_trace_packet_header* pHeader;
+    packet_vkBindImageMemory* pPacket = NULL;
+    CREATE_TRACE_PACKET(vkBindImageMemory, 0);
+    result = mdd(device)->devTable.BindImageMemory(device, image, memory, memoryOffset);
+    vktrace_set_packet_entrypoint_end_time(pHeader);
+#if defined(USE_PAGEGUARD_SPEEDUP) && !defined(PAGEGUARD_ADD_PAGEGUARD_ON_REAL_MAPPED_MEMORY)
+    if (!UseMappedExternalHostMemoryExtension()) {
+        DeviceMemory deviceMemory = {device, memory};
+        g_imageToDeviceMemory[image] = deviceMemory;
+    }
+#endif
+    pPacket = interpret_body_as_vkBindImageMemory(pHeader);
+    pPacket->device = device;
+    pPacket->image = image;
+    pPacket->memory = memory;
+    pPacket->memoryOffset = memoryOffset;
+    pPacket->result = result;
+    if (!g_trimEnabled) {
+        FINISH_TRACE_PACKET();
+    } else {
+        vktrace_finalize_trace_packet(pHeader);
+        trim::ObjectInfo* pInfo = trim::get_Image_objectInfo(image);
+        if (pInfo != NULL) {
+            if (pInfo->ObjectInfo.Image.memorySize == 0) {
+                // trim get image memory size through target title call
+                // vkGetImageMemoryRequirements for the image, but so
+                // far the title doesn't call vkGetImageMemoryRequirements,
+                // so here we call it for the image.
+                VkMemoryRequirements MemoryRequirements;
+                mdd(device)->devTable.GetImageMemoryRequirements(device,image,&MemoryRequirements);
+                pInfo->ObjectInfo.Image.memorySize = MemoryRequirements.size;
+            }
+
+            pInfo->ObjectInfo.Image.pBindImageMemoryPacket = trim::copy_packet(pHeader);
+            pInfo->ObjectInfo.Image.memory = memory;
+            pInfo->ObjectInfo.Image.memoryOffset = memoryOffset;
+            pInfo->ObjectInfo.Image.needsStagingBuffer = pInfo->ObjectInfo.Image.needsStagingBuffer || trim::IsMemoryDeviceOnly(memory);
+        }
+        if (g_trimIsInTrim) {
+            trim::mark_Image_reference(image);
+            trim::write_packet(pHeader);
+        } else {
+            vktrace_delete_trace_packet(&pHeader);
+        }
+    }
+    return result;
+}
+
 static vktrace_trace_packet_header* generateBindBufferMemoryPacket(VkDevice device, VkBuffer buffer, VkDeviceMemory memory,
                                                                    VkDeviceSize memoryOffset) {
     vktrace_trace_packet_header* pHeader;
@@ -6472,7 +6617,8 @@ static vktrace_trace_packet_header* generateBindBufferMemoryPacket(VkDevice devi
     return pHeader;
 }
 
-VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkBindBufferMemory2(
+VkResult OverridevkBindBufferMemory2(
+    int packetApiId,
     VkDevice device,
     uint32_t bindInfoCount,
     const VkBindBufferMemoryInfo* pBindInfos) {
@@ -6484,8 +6630,14 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkBindBufferMemory2(
     for (uint32_t i = 0; i < bindInfoCount; ++i) {
         extra_size += get_struct_chain_size((void*)&(pBindInfos[i]));
     }
-    CREATE_TRACE_PACKET(vkBindBufferMemory2, extra_size);
-    result = mdd(device)->devTable.BindBufferMemory2(device, bindInfoCount, pBindInfos);
+
+    if (packetApiId == VKTRACE_TPI_VK_vkBindBufferMemory2) {
+        CREATE_TRACE_PACKET(vkBindBufferMemory2, extra_size);
+        result = mdd(device)->devTable.BindBufferMemory2(device, bindInfoCount, pBindInfos);
+    } else {
+        CREATE_TRACE_PACKET(vkBindBufferMemory2KHR, extra_size);
+        result = mdd(device)->devTable.BindBufferMemory2KHR(device, bindInfoCount, pBindInfos);
+    }
     vktrace_set_packet_entrypoint_end_time(pHeader);
 #if defined(USE_PAGEGUARD_SPEEDUP) && !defined(PAGEGUARD_ADD_PAGEGUARD_ON_REAL_MAPPED_MEMORY)
     if (!UseMappedExternalHostMemoryExtension()) {
@@ -6511,7 +6663,11 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkBindBufferMemory2(
     }
 #endif
     for (uint32_t i = 0; i < bindInfoCount; i++) {
-        g_bufferToOffset[pBindInfos[i].buffer] = pBindInfos[i].memoryOffset;
+        auto it = g_shaderDeviceAddrBufferToMem.find(pBindInfos[i].buffer);
+        if (it != g_shaderDeviceAddrBufferToMem.end()) {
+            it->second = pBindInfos[i].memory;
+            g_shaderDeviceAddrBufferToMemRev[pBindInfos[i].memory] = pBindInfos[i].buffer;
+        }
     }
     pPacket = interpret_body_as_vkBindBufferMemory2(pHeader);
     pPacket->device = device;
@@ -6549,11 +6705,36 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkBindBufferMemory2(
     return result;
 }
 
-VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkBindImageMemory2(
+VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkBindBufferMemory2(
+    VkDevice device,
+    uint32_t bindInfoCount,
+    const VkBindBufferMemoryInfo* pBindInfos) {
+    return OverridevkBindBufferMemory2(VKTRACE_TPI_VK_vkBindBufferMemory2, device, bindInfoCount, pBindInfos);
+}
+
+VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkBindBufferMemory2KHR(
+    VkDevice device,
+    uint32_t bindInfoCount,
+    const VkBindBufferMemoryInfo* pBindInfos) {
+    return OverridevkBindBufferMemory2(VKTRACE_TPI_VK_vkBindBufferMemory2KHR, device, bindInfoCount, pBindInfos);
+}
+
+VkResult OverridevkBindImageMemory2(
+    int packetApiId,
     VkDevice device,
     uint32_t bindInfoCount,
     const VkBindImageMemoryInfo* pBindInfos) {
     trim::TraceLock<std::mutex> lock(g_mutex_trace);
+    if (getReBindMemoryAndAlignedSizeEnable() & 0x04) {
+        for (uint32_t i = 0; i < bindInfoCount; ++i) {
+            VkDeviceMemory newMemory = VK_NULL_HANDLE;
+            bool ret = remapImagetoNewMemory(device, pBindInfos[i].image, pBindInfos[i].memory, pBindInfos[i].memoryOffset, newMemory);
+            if (ret) {
+                const_cast<VkBindImageMemoryInfo *>(pBindInfos)[i].memory = newMemory;
+                const_cast<VkBindImageMemoryInfo *>(pBindInfos)[i].memoryOffset = 0;
+            }
+        }
+    }
     VkResult result;
     vktrace_trace_packet_header* pHeader;
     packet_vkBindImageMemory2* pPacket = NULL;
@@ -6561,8 +6742,14 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkBindImageMemory2(
     for (uint32_t i = 0; i < bindInfoCount; ++i) {
         extra_size += get_struct_chain_size((void*)&(pBindInfos[i]));
     }
-    CREATE_TRACE_PACKET(vkBindImageMemory2, extra_size);
-    result = mdd(device)->devTable.BindImageMemory2(device, bindInfoCount, pBindInfos);
+
+    if (packetApiId == VKTRACE_TPI_VK_vkBindImageMemory2) {
+        CREATE_TRACE_PACKET(vkBindImageMemory2, extra_size);
+        result = mdd(device)->devTable.BindImageMemory2(device, bindInfoCount, pBindInfos);
+    } else {
+        CREATE_TRACE_PACKET(vkBindImageMemory2KHR, extra_size);
+        result = mdd(device)->devTable.BindImageMemory2KHR(device, bindInfoCount, pBindInfos);
+    }
     vktrace_set_packet_entrypoint_end_time(pHeader);
 #if defined(USE_PAGEGUARD_SPEEDUP) && !defined(PAGEGUARD_ADD_PAGEGUARD_ON_REAL_MAPPED_MEMORY)
     if (!UseMappedExternalHostMemoryExtension()) {
@@ -6600,7 +6787,7 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkBindImageMemory2(
                 pInfo->ObjectInfo.Image.pBindImageMemoryPacket = trim::copy_packet(pHeader);
                 pInfo->ObjectInfo.Image.memory = pBindInfos[i].memory;
                 pInfo->ObjectInfo.Image.memoryOffset = pBindInfos[i].memoryOffset;
-                pInfo->ObjectInfo.Image.needsStagingBuffer = pInfo->ObjectInfo.Image.needsStagingBuffer || trim::IsMemoryDeviceOnly(pBindInfos[i].memory);
+                pInfo->ObjectInfo.Image.needsStagingBuffer = trim::IsImageMemoryDeviceOnly(pBindInfos[i].image);
             }
         }
         if (g_trimIsInTrim) {
@@ -6613,6 +6800,20 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkBindImageMemory2(
         }
     }
     return result;
+}
+
+VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkBindImageMemory2(
+    VkDevice device,
+    uint32_t bindInfoCount,
+    const VkBindImageMemoryInfo* pBindInfos) {
+    return OverridevkBindImageMemory2(VKTRACE_TPI_VK_vkBindImageMemory2, device, bindInfoCount, pBindInfos);
+}
+
+VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkBindImageMemory2KHR(
+    VkDevice device,
+    uint32_t bindInfoCount,
+    const VkBindImageMemoryInfo* pBindInfos) {
+    return OverridevkBindImageMemory2(VKTRACE_TPI_VK_vkBindImageMemory2KHR, device, bindInfoCount, pBindInfos);
 }
 
 VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkDebugMarkerSetObjectNameEXT(
@@ -6715,6 +6916,79 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkGetPhysicalDeviceSurfa
         }
     }
     return result;
+}
+
+VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkWaitSemaphoresKHR(
+    VkDevice device,
+    const VkSemaphoreWaitInfo* pWaitInfo,
+    uint64_t timeout) {
+    trim::TraceLock<std::mutex> lock(g_mutex_trace);
+    VkResult result;
+    vktrace_trace_packet_header* pHeader;
+    packet_vkWaitSemaphoresKHR* pPacket = NULL;
+    CREATE_TRACE_PACKET(vkWaitSemaphoresKHR, get_struct_chain_size((void*)(pWaitInfo)));
+    result = mdd(device)->devTable.WaitSemaphoresKHR(device, pWaitInfo, timeout);
+    vktrace_set_packet_entrypoint_end_time(pHeader);
+    pPacket = interpret_body_as_vkWaitSemaphoresKHR(pHeader);
+    pPacket->device = device;
+    pPacket->timeout = timeout;
+    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pWaitInfo), sizeof(VkSemaphoreWaitInfo), pWaitInfo);
+    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pWaitInfo->pSemaphores), pWaitInfo->semaphoreCount * sizeof(VkSemaphore), pWaitInfo->pSemaphores);
+    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pWaitInfo->pValues), pWaitInfo->semaphoreCount * sizeof(uint64_t), pWaitInfo->pValues);
+    vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pWaitInfo->pSemaphores));
+    vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pWaitInfo->pValues));
+
+    pPacket->result = result;
+    vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pWaitInfo));
+    if (!g_trimEnabled) {
+        FINISH_TRACE_PACKET();
+    } else {
+        vktrace_finalize_trace_packet(pHeader);
+        if (g_trimIsInTrim) {
+            trim::write_packet(pHeader);
+        } else {
+            vktrace_delete_trace_packet(&pHeader);
+        }
+    }
+    return result;
+}
+
+VKTRACER_EXPORT VKAPI_ATTR void VKAPI_CALL __HOOKED_vkDebugReportMessageEXT(
+    VkInstance instance,
+    VkDebugReportFlagsEXT flags,
+    VkDebugReportObjectTypeEXT objectType,
+    uint64_t object,
+    size_t location,
+    int32_t messageCode,
+    const char* pLayerPrefix,
+    const char* pMessage) {
+    trim::TraceLock<std::mutex> lock(g_mutex_trace);
+    vktrace_trace_packet_header* pHeader;
+    packet_vkDebugReportMessageEXT* pPacket = NULL;
+    CREATE_TRACE_PACKET(vkDebugReportMessageEXT, ((pLayerPrefix != NULL) ? ROUNDUP_TO_4(strlen(pLayerPrefix) + 1) : 0) + ((pMessage != NULL) ? ROUNDUP_TO_4(strlen(pMessage) + 1) : 0));
+    mid(instance)->instTable.DebugReportMessageEXT(instance, flags, objectType, object, location, messageCode, pLayerPrefix, pMessage);
+    vktrace_set_packet_entrypoint_end_time(pHeader);
+    pPacket = interpret_body_as_vkDebugReportMessageEXT(pHeader);
+    pPacket->instance = instance;
+    pPacket->flags = flags;
+    pPacket->objectType = objectType;
+    pPacket->object = object;
+    pPacket->location = location;
+    pPacket->messageCode = messageCode;
+    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pLayerPrefix), strlen(pLayerPrefix) + 1, pLayerPrefix); // manually written to caculate the length of string
+    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pMessage), strlen(pMessage) + 1, pMessage);
+    vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pLayerPrefix));
+    vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pMessage));
+    if (!g_trimEnabled) {
+        FINISH_TRACE_PACKET();
+    } else {
+        vktrace_finalize_trace_packet(pHeader);
+        if (g_trimIsInTrim) {
+            trim::write_packet(pHeader);
+        } else {
+            vktrace_delete_trace_packet(&pHeader);
+        }
+    }
 }
 
 VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkGetPhysicalDeviceSurfacePresentModesKHR(VkPhysicalDevice physicalDevice,
@@ -8418,42 +8692,6 @@ VKTRACER_EXPORT VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vktraceGetInstanceProcA
     return addr;
 }
 
-bool getCmdCopyBufferRemapASEnableFlag() {
-    static bool EnableAs = false;
-    static bool FirstTimeRun = true;
-    if (FirstTimeRun) {
-        FirstTimeRun = false;
-        const char* env_remap_as_enable = vktrace_get_global_var(VKTRACE_ENABLE_VKCMDCOPYBUFFER_REMAP_AS_ENV);
-        if (env_remap_as_enable) {
-            int envvalue;
-            if (sscanf(env_remap_as_enable, "%d", &envvalue) == 1) {
-                if (envvalue != 0) {
-                    EnableAs = true;
-                }
-            }
-        }
-    }
-    return EnableAs;
-}
-
-bool getCmdCopyBufferRemapBufferEnableFlag() {
-    static bool EnableBuffer = false;
-    static bool FirstTimeRun = true;
-    if (FirstTimeRun) {
-        FirstTimeRun = false;
-        const char* env_remap_buffer_enable = vktrace_get_global_var(VKTRACE_ENABLE_VKCMDCOPYBUFFER_REMAP_BUFFER_ENV);
-        if (env_remap_buffer_enable) {
-            int envvalue;
-            if (sscanf(env_remap_buffer_enable, "%d", &envvalue) == 1) {
-                if (envvalue != 0) {
-                    EnableBuffer = true;
-                }
-            }
-        }
-    }
-    return EnableBuffer;
-}
-
 VKTRACER_EXPORT VKAPI_ATTR void VKAPI_CALL __HOOKED_vkCmdCopyBuffer(
     VkCommandBuffer commandBuffer,
     VkBuffer srcBuffer,
@@ -8463,17 +8701,6 @@ VKTRACER_EXPORT VKAPI_ATTR void VKAPI_CALL __HOOKED_vkCmdCopyBuffer(
     trim::TraceLock<std::mutex> lock(g_mutex_trace);
     vktrace_trace_packet_header* pHeader;
     packet_vkCmdCopyBuffer* pPacket = NULL;
-
-#if defined(USE_PAGEGUARD_SPEEDUP)
-    pageguardEnter();
-    flushAllChangedMappedMemory(&vkFlushMappedMemoryRangesWithoutAPICall);
-    if (!UseMappedExternalHostMemoryExtension()) {
-        // If enable external host memory extension, there will be no shadow
-        // memory, so we don't need any read pageguard handling.
-        resetAllReadFlagAndPageGuard();
-    }
-#endif
-
     CREATE_TRACE_PACKET(vkCmdCopyBuffer, regionCount * sizeof(VkBufferCopy));
     mdd(commandBuffer)->devTable.CmdCopyBuffer(commandBuffer, srcBuffer, dstBuffer, regionCount, pRegions);
     vktrace_set_packet_entrypoint_end_time(pHeader);
@@ -8490,94 +8717,6 @@ VKTRACER_EXPORT VKAPI_ATTR void VKAPI_CALL __HOOKED_vkCmdCopyBuffer(
     vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pRegions), regionCount * sizeof(VkBufferCopy), pRegions);
     vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pRegions));
 
-    bool enableRemapAs = getCmdCopyBufferRemapASEnableFlag();
-    bool enableRemapBuffer = getCmdCopyBufferRemapBufferEnableFlag();
-    if (enableRemapAs || enableRemapBuffer) {
-        bool asFound = false;
-        bool bufferFound = false;
-        if (g_shaderDeviceAddrBufferToMem.find(dstBuffer) != g_shaderDeviceAddrBufferToMem.end()) {
-            VkDevice device = VK_NULL_HANDLE;
-            auto it = g_commandBufferToDevice.find(commandBuffer);
-            if (it == g_commandBufferToDevice.end()) {
-                vktrace_LogError("Error detected in CmdCopyBuffer(), couldn't be able to find corresponding VkDevice for VkCommandBuffer 0x%llx.", commandBuffer);
-                return;
-            }
-            device = it->second;
-
-            VkDeviceMemory mem = VK_NULL_HANDLE;
-            auto it2 = g_bufferToDeviceMemory.find(srcBuffer);
-            if (it2 == g_bufferToDeviceMemory.end()) {
-                vktrace_LogError("Error detected in __HOOKED_vkCmdCopyBuffer(), couldn't be able to find corresponding VkDeviceMemory for VkBuffer 0x%llx.", srcBuffer);
-                return;
-            }
-            mem = it2->second.memory;
-
-            auto it_offset = g_bufferToOffset.find(srcBuffer);
-            if (it_offset == g_bufferToOffset.end()) {
-                vktrace_LogError("Error detected in __HOOKED_vkCmdCopyBuffer(), couldn't be able to find corresponding offset for VkBuffer 0x%llx.", srcBuffer);
-                return;
-            }
-            VkDeviceSize bufferOffset = it_offset->second;
-            for (unsigned i = 0; i < regionCount; ++i) {
-                VkDeviceSize srcOffset = pRegions[i].srcOffset;
-                VkDeviceSize size = pRegions[i].size;
-                VkAccelerationStructureInstanceKHR* pAsInstance = nullptr;
-
-                VkResult mapResult = VK_ERROR_VALIDATION_FAILED_EXT;
-                bool isMapped = false;
-                VKAllocInfo* entry = find_mem_info_entry(mem);
-                if (entry && entry->pData != NULL) {
-                    uint8_t *pData = entry->pData + bufferOffset + srcOffset;
-                    pAsInstance = (VkAccelerationStructureInstanceKHR*)pData;
-                    mapResult = VK_SUCCESS;
-                } else {
-                    mapResult = mdd(device)->devTable.MapMemory(device, mem, bufferOffset + srcOffset, size, 0, (void**)&pAsInstance);
-                    isMapped = true;
-                }
-
-                if (mapResult == VK_SUCCESS) {
-                    // remap all VkAccelerationStructureInstanceKHRs from trace values to replay values
-                    if (enableRemapAs) {
-                        for (unsigned j = 0; j < size / sizeof(VkAccelerationStructureInstanceKHR); ++j) {
-                            auto it = g_AStoDeviceAddrRev.find(pAsInstance[j].accelerationStructureReference);
-                            if (it != g_AStoDeviceAddrRev.end()) {
-                                asFound = true;
-                                break;
-                            }
-                        }
-                    }
-                    // remap all VkDeviceAddress from trace values to replay values
-                    if (enableRemapBuffer) {
-                        VkDeviceAddress *pDeviceAddress = (VkDeviceAddress *)pAsInstance;
-                        for (unsigned j = 0; j < size / sizeof(VkDeviceAddress); ++j) {
-                            auto it = g_BuftoDeviceAddrRev.find(pDeviceAddress[j]);
-                            if (it != g_BuftoDeviceAddrRev.end()) {
-                                bufferFound = true;
-                                break;
-                            }
-                        }
-                    }
-                    if (isMapped) {
-                        mdd(device)->devTable.UnmapMemory(device, mem);
-                    }
-                }
-            }
-        }
-
-        if (asFound && bufferFound) {
-            vktrace_LogDebug("Created a VKTRACE_TPI_VK_vkCmdCopyBufferRemapASandBuffer");
-            pPacket->header->packet_id = VKTRACE_TPI_VK_vkCmdCopyBufferRemapASandBuffer;
-        }
-        else if (asFound) {
-            vktrace_LogDebug("Created a VKTRACE_TPI_VK_vkCmdCopyBufferRemapAS");
-            pPacket->header->packet_id = VKTRACE_TPI_VK_vkCmdCopyBufferRemapAS;
-        }
-        else if (bufferFound) {
-            vktrace_LogDebug("Created a VKTRACE_TPI_VK_vkCmdCopyBufferRemapBuffer");
-            pPacket->header->packet_id = VKTRACE_TPI_VK_vkCmdCopyBufferRemapBuffer;
-        }
-    }
-
     if (!g_trimEnabled) {
         FINISH_TRACE_PACKET();
     } else {
@@ -8591,9 +8730,6 @@ VKTRACER_EXPORT VKAPI_ATTR void VKAPI_CALL __HOOKED_vkCmdCopyBuffer(
             vktrace_delete_trace_packet(&pHeader);
         }
     }
-#if defined(USE_PAGEGUARD_SPEEDUP)
-    pageguardExit();
-#endif
 }
 
 /* GIPA with no trace packet creation */
@@ -8639,6 +8775,7 @@ VKTRACER_EXPORT VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL __HOOKED_vkGetInstanceP
             if (!strcmp("vkGetPhysicalDeviceSurfacePresentModesKHR", funcName))
                 return (PFN_vkVoidFunction)__HOOKED_vkGetPhysicalDeviceSurfacePresentModesKHR;
         }
+
 #if defined(VK_USE_PLATFORM_XLIB_KHR)
         if (instData->KHRXlibSurfaceEnabled) {
             if (!strcmp("vkCreateXlibSurfaceKHR", funcName)) return (PFN_vkVoidFunction)__HOOKED_vkCreateXlibSurfaceKHR;
