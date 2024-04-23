@@ -1,6 +1,6 @@
 #!/usr/bin/python3 -i
 #
-# Copyright (C) 2022-2023 ARM Limited
+# Copyright (C) 2022 ARM Limited
 #
 
 import argparse

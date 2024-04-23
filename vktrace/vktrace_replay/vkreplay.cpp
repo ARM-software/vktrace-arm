@@ -2,7 +2,7 @@
  *
  * Copyright 2014-2018 Valve Corporation, Inc.
  * Copyright (C) 2014-2018 LunarG, Inc.
- * Copyright (C) 2019-2023 ARM Limited.
+ * Copyright (C) 2019 ARM Limited.
  * All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -110,7 +110,7 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL vkErrorHandler(VkFlags msgFlags, VkDebugRe
             g_fpVktraceCallback(vktrace_replay::VKTRACE_DBG_MSG_WARNING, pMsg);
         }
         else {
-            vktrace_LogDebug("MsgFlags %d with object %#" PRIxLEAST64 ", location %u returned msgCode %d, layerPrefix %s and msg %s", msgFlags,
+            vktrace_LogAlways("MsgFlags %d with object %#" PRIxLEAST64 ", location %u returned msgCode %d, layerPrefix %s and msg %s", msgFlags,
                          srcObjectHandle, location, msgCode, (char*)pLayerPrefix, (char*)pMsg);
         }
     } else {
@@ -118,7 +118,7 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL vkErrorHandler(VkFlags msgFlags, VkDebugRe
             g_fpVktraceCallback(vktrace_replay::VKTRACE_DBG_MSG_INFO, pMsg);
         }
         else {
-            vktrace_LogDebug("MsgFlags %d with object %#" PRIxLEAST64 ", location %u returned msgCode %d, layerPrefix %s and msg %s", msgFlags,
+            vktrace_LogAlways("MsgFlags %d with object %#" PRIxLEAST64 ", location %u returned msgCode %d, layerPrefix %s and msg %s", msgFlags,
                          srcObjectHandle, location, msgCode, (char*)pLayerPrefix, (char*)pMsg);
         }
     }

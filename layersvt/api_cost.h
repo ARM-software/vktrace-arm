@@ -1,5 +1,5 @@
 /*
- * (C) COPYRIGHT 2019-2023 ARM Limited
+ * (C) COPYRIGHT 2019 ARM Limited
  * ALL RIGHTS RESERVED
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -29,7 +29,7 @@
 #include <android/log.h>
 #endif
 
-#include "vk_loader_platform.h"
+#include <vk_loader_platform.h>
 #include "vulkan/vk_layer.h"
 #include "vk_layer_config.h"
 #include "vk_layer_table.h"

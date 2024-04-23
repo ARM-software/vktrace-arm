@@ -2,7 +2,7 @@
  *
  * Copyright 2014-2016 Valve Corporation
  * Copyright (C) 2014-2016 LunarG, Inc.
- * Copyright (C) 2019-2023 ARM Limited
+ * Copyright (C) 2019 ARM Limited
  * All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -37,6 +37,8 @@ void vktrace_gen_uuid(uint32_t* pUuid);
 
 #define NANOSEC_IN_ONE_SEC 1000000000
 uint64_t vktrace_get_time();
+
+#define MAX_BUFFER_DEVICEADDRESS_SIZE (200 * 1024 * 1024)
 
 void vktrace_initialize_trace_packet_utils();
 void vktrace_deinitialize_trace_packet_utils();
@@ -190,6 +192,8 @@ VkInstanceCreateInfo* interpret_VkInstanceCreateInfo(vktrace_trace_packet_header
 VkDependencyInfo* interpret_VkDependencyInfo(vktrace_trace_packet_header* pHeader, intptr_t ptr_variable);
 VkDeviceCreateInfo* interpret_VkDeviceCreateInfo(vktrace_trace_packet_header* pHeader, intptr_t ptr_variable);
 void interpret_VkPipelineShaderStageCreateInfo(vktrace_trace_packet_header* pHeader, VkPipelineShaderStageCreateInfo* pShader);
+void interpret_VkMicromapBuildInfoEXT(vktrace_trace_packet_header* pHeader, VkMicromapBuildInfoEXT* pBuildInfo, int DeviceOrHostAddressType);
+void interpret_VkSubmitInfo2(vktrace_trace_packet_header* pHeader, VkSubmitInfo2* pSubmitInfo);
 VkDeviceGroupDeviceCreateInfo* interpret_VkDeviceGroupDeviceCreateInfoKHX(vktrace_trace_packet_header* pHeader,
                                                                           intptr_t ptr_variable);
 // converts the Vulkan struct pnext chain that is currently byte offsets into pointers

@@ -1,6 +1,5 @@
 /*
 * Copyright (c) 2016 Advanced Micro Devices, Inc. All rights reserved.
-* Copyright (C) 2021-2023 ARM Limited
 *
 * Licensed under the Apache License, Version 2.0 (the "License");
 * you may not use this file except in compliance with the License.
@@ -1799,6 +1798,9 @@ vktrace_trace_packet_header * vkGetDeviceQueue(bool makeCall,  VkDevice device, 
 vktrace_trace_packet_header * vkGetBufferDeviceAddressKHR(bool makeCall, VkDevice device, const VkBufferDeviceAddressInfo* pInfo, VkDeviceAddress* addr) {
     if (makeCall) {
         *addr = mdd(device)->devTable.GetBufferDeviceAddressKHR(device, pInfo);
+        if (*addr == 0) {
+            *addr = mdd(device)->devTable.GetBufferDeviceAddress(device, pInfo);
+        }
     }
     vktrace_trace_packet_header *pHeader;
     packet_vkGetBufferDeviceAddressKHR *pPacket = NULL;

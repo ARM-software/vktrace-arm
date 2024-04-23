@@ -1,6 +1,5 @@
 /*
  * Copyright (c) 2016-2019 Advanced Micro Devices, Inc. All rights reserved.
- * Copyright (C) 2021-2023 ARM Limited
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -73,8 +72,10 @@ DescriptorIterator &DescriptorIterator::operator*() const {
                 current_descriptor_index_));
         } break;
         case VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR: {
-            descriptor_info = reinterpret_cast<DescriptorIterator *>(const_cast<VkWriteDescriptorSetAccelerationStructureKHR *>(
-                (VkWriteDescriptorSetAccelerationStructureKHR*)(descriptorset_->pWriteDescriptorSets[current_descriptor_binding_index_].pNext) + current_descriptor_index_));
+                VkWriteDescriptorSetAccelerationStructureKHR *pWriteDSAS = (VkWriteDescriptorSetAccelerationStructureKHR*)(
+                    descriptorset_->pWriteDescriptorSets[current_descriptor_binding_index_].pNext);
+                descriptor_info = reinterpret_cast<DescriptorIterator *>(const_cast<VkAccelerationStructureKHR *>(pWriteDSAS->pAccelerationStructures +
+                current_descriptor_index_));
         } break;
         default:
             assert(false);  // something wrong or it's a new type

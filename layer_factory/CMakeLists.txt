@@ -29,6 +29,7 @@ include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_BINARY_DIR}
     ${Vulkan-ValidationLayers_INCLUDE_DIR}
+    ${VULKAN_LOADER_INSTALL_DIR}/../../loader/
 )
 
 if (WIN32)
@@ -42,7 +43,7 @@ if (WIN32)
     # The changed behavior is that constructor initializers are now fixed to clear the struct members.
     add_compile_options("$<$<AND:$<CXX_COMPILER_ID:MSVC>,$<VERSION_LESS:$<CXX_COMPILER_VERSION>,19>>:/wd4351>")
 else()
-    set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11 -Wpointer-arith -Wno-unused-function -Wno-sign-compare")
+    set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++17 -Wpointer-arith -Wno-unused-function -Wno-sign-compare")
     set (CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wpointer-arith -Wno-unused-function -Wno-sign-compare")
 endif()
 

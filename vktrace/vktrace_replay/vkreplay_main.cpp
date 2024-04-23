@@ -2,7 +2,7 @@
  *
  * Copyright 2015-2018 Valve Corporation
  * Copyright (C) 2015-2018 LunarG, Inc.
- * Copyright (C) 2019-2023 ARM Limited.
+ * Copyright (C) 2019 ARM Limited.
  * All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -23,11 +23,14 @@
  **************************************************************************/
 
 #include <stdio.h>
+#include <ctime>
 #include <string>
 #include <sstream>
 #include <utility>
 #include <algorithm>
 #include <inttypes.h>
+#include <iostream>
+#include <fstream>
 
 #if defined(ANDROID)
 #include <sstream>
@@ -549,7 +552,34 @@ std::vector<std::pair<uint64_t, uint64_t>> getSkipRanges(const char* rangeString
     return merged_ranges;
 }
 
-int main_loop(vktrace_replay::ReplayDisplay display, Sequencer& seq, vktrace_trace_packet_replay_library* replayerArray[]) {
+std::string decimalToHex(int decimalValue) {
+    std::stringstream ss;
+    ss << std::uppercase << std::hex << decimalValue;
+    return "0x" + ss.str();
+}
+
+#if defined(_WIN32) || defined(__APPLE__)
+    // runtime variable on Windows and MacOSX
+    extern long long timeFrequency;
+#elif defined(__linux__)
+    // nanoseconds on Linux
+    static const long long timeFrequency = 1000000000LL;
+#else
+    // microseconds on Unices
+    static const long long timeFrequency = 1000000LL;
+#endif
+
+inline long long getTimeType(clockid_t id)
+{
+    struct timespec tp;
+    if (clock_gettime(id, &tp) == -1)
+    {
+        return 0;
+    }
+    return tp.tv_sec * 1000000000LL + tp.tv_nsec;
+}
+
+int main_loop(vktrace_replay::ReplayDisplay display, Sequencer& seq, vktrace_trace_packet_replay_library* replayerArray[], Json::Value& resultJson) {
     int err = 0;
     vktrace_trace_packet_header* packet;
 #if defined(ANDROID) || !defined(ARM_ARCH)
@@ -590,7 +620,17 @@ int main_loop(vktrace_replay::ReplayDisplay display, Sequencer& seq, vktrace_tra
         timer_started = true;
         vktrace_LogAlways("================== Start timer (Frame: %llu) ==================", start_frame);
     }
-    uint64_t start_time = vktrace_get_time();
+    uint64_t start_time         = vktrace_get_time();
+    uint64_t start_time_mono    = vktrace_get_time();
+    uint64_t start_time_monoraw = vktrace_get_time();
+    uint64_t start_time_boot    = vktrace_get_time();
+    std::time_t start_timestamp = std::time(0);
+
+    uint64_t end_time_mono      = vktrace_get_time();
+    uint64_t end_time_monoraw   = vktrace_get_time();
+    uint64_t end_time_boot      = vktrace_get_time();
+    std::time_t end_timestamp   = std::time(0);
+
     const char* screenshot_list = replaySettings.screenshotList;
     if (g_pReplaySettings->triggerScript == 0 && g_pReplaySettings->pScriptPath != NULL) {
         triggerScript();
@@ -692,7 +732,11 @@ int main_loop(vktrace_replay::ReplayDisplay display, Sequencer& seq, vktrace_tra
                             }
                         }
                         timer_started = true;
-                        start_time = vktrace_get_time();
+                        start_time          = vktrace_get_time();
+                        start_time_mono     = getTimeType(CLOCK_MONOTONIC);
+                        start_time_monoraw  = getTimeType(CLOCK_MONOTONIC_RAW);
+                        start_time_boot     = getTimeType(CLOCK_BOOTTIME);
+                        start_timestamp     = std::time(0);
                         vktrace_LogAlways("================== Start timer (Frame: %llu) ==================", start_frame);
                         g_replayer_interface->SetInFrameRange(true);
                     }
@@ -765,8 +809,13 @@ int main_loop(vktrace_replay::ReplayDisplay display, Sequencer& seq, vktrace_tra
     if (g_replay != nullptr) {
         g_replay->deviceWaitIdle();
     }
-    end_time = vktrace_get_time();
-    timer_started = false;
+    end_time            = vktrace_get_time();
+    end_time_mono       = getTimeType(CLOCK_MONOTONIC);
+    end_time_monoraw    = getTimeType(CLOCK_MONOTONIC_RAW);
+    end_time_boot       = getTimeType(CLOCK_BOOTTIME);
+    end_timestamp       = std::time(0);
+
+    timer_started   = false;
     g_replayer_interface->SetInFrameRange(false);
     g_replayer_interface->OnTerminate();
     vktrace_LogAlways("================== End timer (Frame: %llu) ==================", end_frame);
@@ -791,12 +840,28 @@ int main_loop(vktrace_replay::ReplayDisplay display, Sequencer& seq, vktrace_tra
             else
                 vktrace_LogAlways("The frame range can't be preloaded completely!");
         }
-        FILE* fp = fopen(outputfile.c_str(), "w");
-        if (fp)
-        {
-            fprintf(fp, "{ \"result\" : [ { \"fps\" : %f, \"seconds\" : %f, \"start_frame\": %u, \"end_frame\": %u } ] }", fps, static_cast<double>(end_time - start_time) / NANOSEC_IN_ONE_SEC, (unsigned)start_frame, (unsigned)end_frame);
-            fclose(fp);
-        }
+
+        resultJson["fps"]           = fps;
+        resultJson["seconds"]       = static_cast<double>(end_time - start_time) / NANOSEC_IN_ONE_SEC;
+        resultJson["start_frame"]   = start_frame;
+        resultJson["end_frame"]     = end_frame;
+        resultJson["start_time"]    = static_cast<double>(start_time) / NANOSEC_IN_ONE_SEC;
+        resultJson["end_time"]      = static_cast<double>(end_time) / NANOSEC_IN_ONE_SEC;
+        resultJson["start_timestamp"]     = Json::Int64(start_timestamp);
+        resultJson["end_timestamp"]       = Json::Int64(end_timestamp);
+
+        resultJson["start_time_monotonic"]      = static_cast<double>(start_time_mono) / timeFrequency;
+        resultJson["start_time_monotonic_raw"]  = static_cast<double>(start_time_monoraw) / timeFrequency;
+        resultJson["start_time_boot"]           = static_cast<double>(start_time_boot) / timeFrequency;
+
+        resultJson["end_time_monotonic"]      = static_cast<double>(end_time_mono) / timeFrequency;
+        resultJson["end_time_monotonic_raw"]  = static_cast<double>(end_time_monoraw) / timeFrequency;
+        resultJson["end_time_boot"]           = static_cast<double>(end_time_boot) / timeFrequency;
+
+        resultJson["frames"] = totalLoopFrames;
+        resultJson["loops"] = totalLoops;
+        resultJson["frame_range"] = std::to_string(start_frame) + "-" + std::to_string(end_frame);
+
     } else {
         vktrace_LogError("fps error!");
     }
@@ -1013,6 +1078,16 @@ int vkreplay_main(int argc, char** argv, vktrace_replay::ReplayDisplayImp* pDisp
     vktrace_SettingGroup* pAllSettings = NULL;
     unsigned int numAllSettings = 0;
 
+    Json::Value resultJson;
+    uint64_t init_time         = vktrace_get_time();
+    uint64_t init_time_mono    = getTimeType(CLOCK_MONOTONIC);
+    uint64_t init_time_monoraw = getTimeType(CLOCK_MONOTONIC_RAW);
+    uint64_t init_time_boot    = getTimeType(CLOCK_BOOTTIME);
+    resultJson["init_time"]         = static_cast<double>(init_time) / timeFrequency;
+    resultJson["init_time_mono"]    = static_cast<double>(init_time_mono) / timeFrequency;
+    resultJson["init_time_monoraw"] = static_cast<double>(init_time_monoraw) / timeFrequency;
+    resultJson["init_time_boot"]    = static_cast<double>(init_time_boot) / timeFrequency;
+
     // Default verbosity level
     vktrace_LogSetCallback(loggingCallback);
     vktrace_LogSetLevel(VKTRACE_LOG_ERROR);
@@ -1115,6 +1190,16 @@ int vkreplay_main(int argc, char** argv, vktrace_replay::ReplayDisplayImp* pDisp
     FILE* tracefp;
 
     if (pTraceFile != NULL && strlen(pTraceFile) > 0) {
+        // Check if the file has ".gfxr" suffix
+        if (strstr(pTraceFile, ".gfxr") != NULL) {
+            vktrace_LogError("It is a GFXReconstruct trace file. Please use the correct replayer!");
+            if (pAllSettings != NULL) {
+                vktrace_SettingGroup_Delete_Loaded(&pAllSettings, &numAllSettings);
+            }
+            vktrace_free(pTraceFile);
+            return -1;
+        }
+
         tracefp = fopen(pTraceFile, "rb");
         if (tracefp == NULL) {
             vktrace_LogError("Cannot open trace file: '%s'.", pTraceFile);
@@ -1190,6 +1275,11 @@ int vkreplay_main(int argc, char** argv, vktrace_replay::ReplayDisplayImp* pDisp
     // set global version num
     vktrace_set_trace_version(fileHeader.trace_file_version);
 
+    // vktrace change id of the file, only 4.2.0 and later versions record change id.
+    if (fileHeader.changeid != 0 && fileHeader.tracer_version >= ENCODE_VKTRACE_VER(4, 2, 0)) {
+        vktrace_LogAlways("vktrace file change id: %s", reinterpret_cast<char*>(&fileHeader.changeid));
+    }
+
     // Make sure trace file version is supported.
     // We can't play trace files with a version prior to the minimum compatible version.
     // We also won't attempt to play trace files that are newer than this replayer.
@@ -1248,6 +1338,7 @@ int vkreplay_main(int argc, char** argv, vktrace_replay::ReplayDisplayImp* pDisp
     }
 
     // Copy the file header, and append the gpuinfo array
+    struct_gpuinfo gpuinfo;
     *pFileHeader = fileHeader;
     if (vktrace_FileLike_ReadRaw(traceFile, pFileHeader + 1, pFileHeader->n_gpuinfo * sizeof(struct_gpuinfo)) == false) {
         vktrace_LogError("Unable to read header from file.");
@@ -1259,6 +1350,10 @@ int vkreplay_main(int argc, char** argv, vktrace_replay::ReplayDisplayImp* pDisp
         vktrace_free(traceFile);
         vktrace_free(pFileHeader);
         return -1;
+    }
+    else {
+        gpuinfo.gpu_id          = ((struct_gpuinfo*)(pFileHeader + 1))->gpu_id;
+        gpuinfo.gpu_drv_vers    = ((struct_gpuinfo*)(pFileHeader + 1))->gpu_drv_vers;
     }
 
     // create decompressor
@@ -1429,7 +1524,7 @@ int vkreplay_main(int argc, char** argv, vktrace_replay::ReplayDisplayImp* pDisp
     // main loop
     uint64_t filesize = (pFileHeader->compress_type == VKTRACE_COMPRESS_TYPE_NONE) ? traceFile->mFileLen : fileHeader.decompress_file_size;
     Sequencer sequencer(traceFile, g_decompressor, filesize);
-    err = vktrace_replay::main_loop(disp, sequencer, replayer);
+    err = vktrace_replay::main_loop(disp, sequencer, replayer, resultJson);
 
     std::string replayCommand;
     for (int i = 0; i < argc; ++i) {
@@ -1451,7 +1546,7 @@ int vkreplay_main(int argc, char** argv, vktrace_replay::ReplayDisplayImp* pDisp
         try {
             parameterValue = std::stoul(replayOptionsJson[pAllSettings->pSettings[i].pShortName].asString());
         }
-        catch (std::invalid_argument) { // If the parameter is not a number, std::invalid_argument will be thrown
+        catch (std::invalid_argument &) { // If the parameter is not a number, std::invalid_argument will be thrown
             parameterValue = 0;
         }
         catch (...) {
@@ -1466,9 +1561,57 @@ int vkreplay_main(int argc, char** argv, vktrace_replay::ReplayDisplayImp* pDisp
     }
 
     vktrace_LogAlways("ReplayOptions: %s", replayOptionsJson.toStyledString().c_str());
-    if (g_replay->isTraceFilePostProcessedByRqpp()) {
-        vktrace_LogAlways("This file is post-processed by our vktrace_rq_pp tool");
+
+    // write json result
+    Json::Value rootJson;
+
+    Json::Value traceApplicationJson;
+    traceApplicationJson["file_version"]    = fileHeader.trace_file_version;
+    traceApplicationJson["tracer_version"]  = version_word_to_str(fileHeader.tracer_version);
+    traceApplicationJson["file_type"]       = fileHeader.ptrsize * 8;
+    traceApplicationJson["arch"]            = (char*)&fileHeader.arch;
+    traceApplicationJson["os"]              = (char*)&fileHeader.os;
+    traceApplicationJson["endianess"]       = fileHeader.endianess ? "Big" : "Little";
+    traceApplicationJson["vendor_id"]       = decimalToHex(gpuinfo.gpu_id >> 32);
+    traceApplicationJson["device_id"]       = decimalToHex(gpuinfo.gpu_id & UINT32_MAX);
+    traceApplicationJson["driver_version"]  = decimalToHex(gpuinfo.gpu_drv_vers);
+
+    Json::Value vktraceInfoJson;
+    vktraceInfoJson["vktrace_version"]  = "v" + (std::string)VKTRACE_VERSION;
+    vktraceInfoJson["replay_option"]    = replayOptionsJson;
+
+#if defined(ANDROID)
+    std::string env_layer0 = std::string(vktrace_get_global_var("debug.vulkan.layers"));
+    std::string env_layer1 = std::string(vktrace_get_global_var("debug.vulkan.layer.1"));
+    std::string env_layer2 = std::string(vktrace_get_global_var("debug.vulkan.layer.2"));
+    std::string env_layers = env_layer0;
+    if(!env_layer1.empty()) {
+        env_layers = env_layers.empty()? env_layer1 : env_layers + ";" + env_layer1;
     }
+    if(!env_layer2.empty()) {
+        env_layers = env_layers.empty()? env_layer2 : env_layers + ";" + env_layer2;
+    }
+
+    vktraceInfoJson["layers"]    = env_layers.empty() ? "null" : env_layers;
+
+    resultJson["android_version"] = __ANDROID_API__;
+#else
+    char *env_layers = vktrace_get_global_var("VK_INSTANCE_LAYERS");
+    vktraceInfoJson["layers"]    = (env_layers == nullptr || *env_layers == '\0') ? "null" : env_layers;
+#endif
+
+    rootJson["application"] = traceApplicationJson;
+    rootJson["vktrace"]     = vktraceInfoJson;
+    rootJson["result"]      = resultJson;
+    std::ofstream jsonFile(outputfile);
+    if (!jsonFile.is_open()) {
+        std::cerr << "Failed to open the JSON file for writing." << std::endl;
+        return 1;
+    }
+
+    Json::StreamWriterBuilder writer;
+    jsonFile << Json::writeString(writer, rootJson);
+    jsonFile.close();
 
     for (int i = 0; i < VKTRACE_MAX_TRACER_ID_ARRAY_SIZE; i++) {
         if (replayer[i] != NULL) {

@@ -1,7 +1,7 @@
 # Copyright 2015-2019 The Android Open Source Project
 # Copyright (C) 2015-2019 Valve Corporation
 # Copyright (C) 2015-2019 LunarG, Inc.
-# Copyright (C) 2019-2023 ARM Limited
+# Copyright (C) 2019 ARM Limited
 
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -20,6 +20,7 @@ SRC_DIR := ../..
 LAYER_DIR := ../generated
 THIRD_PARTY := ../third_party
 LVL_DIR := $(THIRD_PARTY)/Vulkan-ValidationLayers
+LOADER_DIR := $(THIRD_PARTY)/Vulkan-Loader
 ANDROID_DIR := $(SRC_DIR)/build-android
 
 include $(CLEAR_VARS)
@@ -34,7 +35,7 @@ LOCAL_C_INCLUDES += $(LOCAL_PATH)/$(THIRD_PARTY)/Vulkan-Headers/include \
                     $(LOCAL_PATH)/$(LAYER_DIR)/include \
                     $(LOCAL_PATH)/$(LVL_DIR)/layers \
                     $(LOCAL_PATH)/$(LVL_DIR)/layers/generated
-LOCAL_CPPFLAGS += -std=c++14 -Wall -Werror -Wno-unused-function -Wno-unused-const-variable
+LOCAL_CPPFLAGS += -std=c++17 -Wall -Werror -Wno-unused-function -Wno-unused-const-variable
 LOCAL_CPPFLAGS += -DVK_ENABLE_BETA_EXTENSIONS -DVK_USE_PLATFORM_ANDROID_KHR -DVK_PROTOTYPES -fvisibility=hidden
 include $(BUILD_STATIC_LIBRARY)
 
@@ -51,7 +52,7 @@ LOCAL_C_INCLUDES += $(LOCAL_PATH)/$(THIRD_PARTY)/Vulkan-Headers/include \
                     $(LOCAL_PATH)/$(SRC_DIR)/layersvt \
                     $(LOCAL_PATH)/$(LAYER_DIR)/include
 LOCAL_STATIC_LIBRARIES += layer_utils
-LOCAL_CPPFLAGS += -std=c++11 -Wall -Werror -Wno-unused-function -Wno-unused-const-variable -mxgot
+LOCAL_CPPFLAGS += -std=c++17 -Wall -Werror -Wno-unused-function -Wno-unused-const-variable -mxgot
 LOCAL_CPPFLAGS += -DVK_ENABLE_BETA_EXTENSIONS -DVK_USE_PLATFORM_ANDROID_KHR -DVK_PROTOTYPES -fvisibility=hidden
 LOCAL_LDLIBS    := -llog
 include $(BUILD_SHARED_LIBRARY)
@@ -64,9 +65,10 @@ LOCAL_C_INCLUDES += $(LOCAL_PATH)/$(THIRD_PARTY)/Vulkan-Headers/include \
                     $(LOCAL_PATH)/$(LVL_DIR)/layers \
                     $(LOCAL_PATH)/$(LVL_DIR)/layers/generated \
                     $(LOCAL_PATH)/$(SRC_DIR)/layersvt \
-                    $(LOCAL_PATH)/$(LAYER_DIR)/include
+                    $(LOCAL_PATH)/$(LAYER_DIR)/include \
+                    $(LOCAL_PATH)/$(LOADER_DIR)/loader/
 LOCAL_STATIC_LIBRARIES += layer_utils
-LOCAL_CPPFLAGS += -std=c++11 -Wall -Werror -Wno-unused-function -Wno-unused-const-variable -mxgot
+LOCAL_CPPFLAGS += -std=c++17 -Wall -Werror -Wno-unused-function -Wno-unused-const-variable -mxgot
 LOCAL_CPPFLAGS += -DVK_ENABLE_BETA_EXTENSIONS -DVK_USE_PLATFORM_ANDROID_KHR -DVK_PROTOTYPES -fvisibility=hidden
 LOCAL_LDLIBS    := -llog
 include $(BUILD_SHARED_LIBRARY)
@@ -90,9 +92,10 @@ LOCAL_C_INCLUDES += $(LOCAL_PATH)/$(THIRD_PARTY)/Vulkan-Headers/include \
                     $(LOCAL_PATH)/$(SRC_DIR)/external/submodules/HWCPipe/vendor/arm/mali \
                     $(LOCAL_PATH)/$(SRC_DIR)/external/submodules/HWCPipe/vendor/arm/pmu \
                     $(LOCAL_PATH)/$(ANDROID_DIR)/third_party/jsoncpp/dist \
-                    $(LOCAL_PATH)/$(LAYER_DIR)/include
+                    $(LOCAL_PATH)/$(LAYER_DIR)/include \
+                    $(LOCAL_PATH)/$(LOADER_DIR)/loader/
 LOCAL_STATIC_LIBRARIES += layer_utils
-LOCAL_CPPFLAGS += -std=c++11 -Wall -Werror -Wno-unused-function -Wno-unused-const-variable -mxgot
+LOCAL_CPPFLAGS += -std=c++17 -Wall -Werror -Wno-unused-function -Wno-unused-const-variable -mxgot
 LOCAL_CPPFLAGS += -DVK_ENABLE_BETA_EXTENSIONS -DVK_USE_PLATFORM_ANDROID_KHR -DVK_PROTOTYPES -fvisibility=hidden -fexceptions
 LOCAL_LDLIBS    := -llog
 include $(BUILD_SHARED_LIBRARY)
@@ -106,9 +109,10 @@ LOCAL_C_INCLUDES += $(LOCAL_PATH)/$(THIRD_PARTY)/Vulkan-Headers/include \
                     $(LOCAL_PATH)/$(LVL_DIR)/layers/generated \
                     $(LOCAL_PATH)/$(SRC_DIR)/layersvt \
                     $(LOCAL_PATH)/$(SRC_DIR)/layersvt/systrace \
-                    $(LOCAL_PATH)/$(LAYER_DIR)/include
+                    $(LOCAL_PATH)/$(LAYER_DIR)/include \
+                    $(LOCAL_PATH)/$(LOADER_DIR)/loader/
 LOCAL_STATIC_LIBRARIES += layer_utils
-LOCAL_CPPFLAGS += -std=c++11 -Wall -Werror -Wno-unused-function -Wno-unused-const-variable -mxgot
+LOCAL_CPPFLAGS += -std=c++17 -Wall -Werror -Wno-unused-function -Wno-unused-const-variable -mxgot
 LOCAL_CPPFLAGS += -DVK_ENABLE_BETA_EXTENSIONS -DVK_USE_PLATFORM_ANDROID_KHR -DVK_PROTOTYPES -fvisibility=hidden
 LOCAL_LDLIBS    := -llog -landroid
 include $(BUILD_SHARED_LIBRARY)
@@ -122,9 +126,10 @@ LOCAL_C_INCLUDES += $(LOCAL_PATH)/$(THIRD_PARTY)/Vulkan-Headers/include \
                     $(LOCAL_PATH)/$(LVL_DIR)/layers/generated \
                     $(LOCAL_PATH)/$(SRC_DIR)/layersvt \
                     $(LOCAL_PATH)/$(SRC_DIR)/layersvt/emptydriver \
-                    $(LOCAL_PATH)/$(LAYER_DIR)/include
+                    $(LOCAL_PATH)/$(LAYER_DIR)/include \
+                    $(LOCAL_PATH)/$(LOADER_DIR)/loader/
 LOCAL_STATIC_LIBRARIES += layer_utils
-LOCAL_CPPFLAGS += -std=c++11 -Wall -Werror -Wno-unused-function -Wno-unused-const-variable -mxgot
+LOCAL_CPPFLAGS += -std=c++17 -Wall -Werror -Wno-unused-function -Wno-unused-const-variable -mxgot
 LOCAL_CPPFLAGS += -DVK_ENABLE_BETA_EXTENSIONS -DVK_USE_PLATFORM_ANDROID_KHR -DVK_PROTOTYPES -fvisibility=hidden
 LOCAL_LDLIBS    := -llog
 include $(BUILD_SHARED_LIBRARY)
@@ -137,9 +142,10 @@ LOCAL_C_INCLUDES += $(LOCAL_PATH)/$(THIRD_PARTY)/Vulkan-Headers/include \
                     $(LOCAL_PATH)/$(LVL_DIR)/layers \
                     $(LOCAL_PATH)/$(LVL_DIR)/layers/generated \
                     $(LOCAL_PATH)/$(SRC_DIR)/layersvt \
-                    $(LOCAL_PATH)/$(LAYER_DIR)/include
+                    $(LOCAL_PATH)/$(LAYER_DIR)/include \
+                    $(LOCAL_PATH)/$(LOADER_DIR)/loader/
 LOCAL_STATIC_LIBRARIES += layer_utils
-LOCAL_CPPFLAGS += -std=c++11 -Wall -Werror -Wno-unused-function -Wno-unused-const-variable -mxgot
+LOCAL_CPPFLAGS += -std=c++17 -Wall -Werror -Wno-unused-function -Wno-unused-const-variable -mxgot
 LOCAL_CPPFLAGS += -DVK_ENABLE_BETA_EXTENSIONS -DVK_USE_PLATFORM_ANDROID_KHR -DVK_PROTOTYPES -fvisibility=hidden
 LOCAL_LDLIBS    := -llog
 include $(BUILD_SHARED_LIBRARY)
@@ -154,9 +160,10 @@ LOCAL_C_INCLUDES += $(LOCAL_PATH)/$(THIRD_PARTY)/Vulkan-Headers/include \
                     $(LOCAL_PATH)/$(LVL_DIR)/layers/generated \
                     $(LOCAL_PATH)/$(SRC_DIR)/layersvt \
                     $(LOCAL_PATH)/$(LAYER_DIR)/include \
-                    $(LOCAL_PATH)/$(SRC_DIR)/vktrace/vktrace_common
+                    $(LOCAL_PATH)/$(SRC_DIR)/vktrace/vktrace_common \
+                    $(LOCAL_PATH)/$(LOADER_DIR)/loader/
 LOCAL_STATIC_LIBRARIES += layer_utils
-LOCAL_CPPFLAGS += -std=c++11 -Wall -Werror -Wno-unused-function -Wno-unused-const-variable -mxgot
+LOCAL_CPPFLAGS += -std=c++17 -Wall -Werror -Wno-unused-function -Wno-unused-const-variable -mxgot
 LOCAL_CPPFLAGS += -DVK_ENABLE_BETA_EXTENSIONS -DVK_USE_PLATFORM_ANDROID_KHR -DVK_PROTOTYPES -fvisibility=hidden
 LOCAL_CPPFLAGS += -DPLATFORM_LINUX=1
 LOCAL_CFLAGS += -DPLATFORM_LINUX=1
@@ -175,9 +182,10 @@ LOCAL_C_INCLUDES += $(LOCAL_PATH)/$(THIRD_PARTY)/Vulkan-Headers/include \
                     $(LOCAL_PATH)/$(SRC_DIR)/layersvt \
                     $(LOCAL_PATH)/$(SRC_DIR)/layersvt/offscreenlayer \
                     $(LOCAL_PATH)/$(LAYER_DIR)/include \
-                    $(LOCAL_PATH)/$(SRC_DIR)/vktrace/vktrace_common
+                    $(LOCAL_PATH)/$(SRC_DIR)/vktrace/vktrace_common \
+                    $(LOCAL_PATH)/$(LOADER_DIR)/loader/
 LOCAL_STATIC_LIBRARIES += layer_utils
-LOCAL_CPPFLAGS += -std=c++11 -Wall -Werror -Wno-unused-function -Wno-unused-const-variable -mxgot
+LOCAL_CPPFLAGS += -std=c++17 -Wall -Werror -Wno-unused-function -Wno-unused-const-variable -mxgot
 LOCAL_CPPFLAGS += -DVK_ENABLE_BETA_EXTENSIONS -DVK_USE_PLATFORM_ANDROID_KHR -DVK_PROTOTYPES -fvisibility=hidden
 LOCAL_LDLIBS    := -llog
 include $(BUILD_SHARED_LIBRARY)
@@ -194,9 +202,10 @@ LOCAL_C_INCLUDES += $(LOCAL_PATH)/$(ANDROID_DIR)/third_party/jsoncpp/dist \
                     $(LOCAL_PATH)/$(LVL_DIR)/layers \
                     $(LOCAL_PATH)/$(LVL_DIR)/layers/generated \
                     $(LOCAL_PATH)/$(SRC_DIR)/layersvt \
-                    $(LOCAL_PATH)/$(LAYER_DIR)/include
+                    $(LOCAL_PATH)/$(LAYER_DIR)/include \
+                    $(LOCAL_PATH)/$(LOADER_DIR)/loader/
 LOCAL_STATIC_LIBRARIES += layer_utils
-LOCAL_CPPFLAGS += -std=c++11 -Wall -Werror -Wno-unused-function -Wno-unused-const-variable -mxgot
+LOCAL_CPPFLAGS += -std=c++17 -Wall -Werror -Wno-unused-function -Wno-unused-const-variable -mxgot
 LOCAL_CPPFLAGS += -DVK_ENABLE_BETA_EXTENSIONS -DVK_USE_PLATFORM_ANDROID_KHR -fexceptions
 LOCAL_LDLIBS    := -llog
 include $(BUILD_SHARED_LIBRARY)
@@ -229,6 +238,7 @@ LOCAL_SRC_FILES += $(SRC_DIR)/vktrace/vktrace_layer/vktrace_lib_trim_generate.cp
 LOCAL_SRC_FILES += $(SRC_DIR)/vktrace/vktrace_layer/vktrace_lib_trim_statetracker.cpp
 LOCAL_SRC_FILES += $(SRC_DIR)/vktrace/vktrace_layer/vktrace_lib_trim_descriptoriterator.cpp
 LOCAL_SRC_FILES += $(SRC_DIR)/vktrace/vktrace_layer/vktrace_lib_trim_cmdbuild_as.cpp
+LOCAL_SRC_FILES += $(SRC_DIR)/vktrace/vktrace_layer/vktrace_lib_trim_build_as.cpp
 LOCAL_SRC_FILES += $(SRC_DIR)/vktrace/vktrace_layer/vktrace_lib_trim_utils.cpp
 
 LOCAL_C_INCLUDES += $(LOCAL_PATH)/$(SRC_DIR)/vktrace/include \
@@ -247,7 +257,7 @@ LOCAL_C_INCLUDES += $(LOCAL_PATH)/$(SRC_DIR)/vktrace/include \
                     $(LOCAL_PATH)/$(SRC_DIR)/vktrace/vktrace_common/vktrace_pageguard_memorycopy.h \
                     $(LOCAL_PATH)/$(SRC_DIR)/vktrace/vktrace_common/vktrace_metadata.h
 LOCAL_STATIC_LIBRARIES += layer_utils
-LOCAL_CPPFLAGS += -std=c++11 -Wall -Werror -Wno-unused-function -Wno-unused-const-variable -Wno-unused-result -Wno-switch -mxgot -fexceptions
+LOCAL_CPPFLAGS += -std=c++17 -Wall -Werror -Wno-unused-function -Wno-unused-const-variable -Wno-unused-result -Wno-switch -mxgot -fexceptions
 LOCAL_CPPFLAGS += -DVK_ENABLE_BETA_EXTENSIONS -DVK_USE_PLATFORM_ANDROID_KHR
 LOCAL_CPPFLAGS += -DPLATFORM_LINUX=1
 LOCAL_CPPFLAGS += -DPAGEGUARD_MEMCPY_USE_PPL_LIB
@@ -255,6 +265,9 @@ LOCAL_CFLAGS += -Wall -Werror -Wno-unused-function -Wno-unused-variable -Wno-unu
 LOCAL_CFLAGS += -DPLATFORM_LINUX=1
 LOCAL_CFLAGS += -DPLATFORM_POSIX=1
 LOCAL_CFLAGS += -DVK_ENABLE_BETA_EXTENSIONS -DVK_USE_PLATFORM_ANDROID_KHR
+ifdef VKTRACE_GERRIT_CHANGE_ID
+    LOCAL_CPPFLAGS += -DVKTRACE_GERRIT_CHANGE_ID=\"$(VKTRACE_GERRIT_CHANGE_ID)\"
+endif
 LOCAL_LDLIBS    := -llog -lz -lnativewindow
 include $(BUILD_SHARED_LIBRARY)
 
@@ -297,7 +310,7 @@ LOCAL_C_INCLUDES += $(LOCAL_PATH)/$(SRC_DIR)/vktrace/include \
                     $(LOCAL_PATH)/$(ANDROID_DIR)/third_party/jsoncpp/dist \
                     $(LOCAL_PATH)/$(SRC_DIR)/vktrace/vktrace_replay
 LOCAL_STATIC_LIBRARIES += layer_utils android_native_app_glue
-LOCAL_CPPFLAGS += -std=c++11 -Wall -Werror -Wno-unused-function -Wno-unused-const-variable -Wno-unused-result -Wno-switch -mxgot
+LOCAL_CPPFLAGS += -std=c++17 -Wall -Werror -Wno-unused-function -Wno-unused-const-variable -Wno-unused-result -Wno-switch -mxgot
 LOCAL_CPPFLAGS += -DVK_ENABLE_BETA_EXTENSIONS -DVK_USE_PLATFORM_ANDROID_KHR --include=$(THIRD_PARTY)/Vulkan-Tools/common/vulkan_wrapper.h -fexceptions
 LOCAL_CPPFLAGS += -DPLATFORM_LINUX=1
 LOCAL_CPPFLAGS += -DPAGEGUARD_MEMCPY_USE_PPL_LIB

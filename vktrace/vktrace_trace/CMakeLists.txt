@@ -27,7 +27,7 @@ include_directories(
 )
 
 if (NOT WIN32)
-    set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11")
+    set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++17")
 endif()
 
 add_executable(${PROJECT_NAME} ${SRC_LIST})

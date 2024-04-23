@@ -114,6 +114,7 @@ else ()
         ${CMAKE_CURRENT_BINARY_DIR}
         ${CMAKE_BINARY_DIR}
         ${Vulkan-ValidationLayers_INCLUDE_DIR}
+        ${VULKAN_LOADER_INSTALL_DIR}/../../loader/
         ${JSONCPP_INCLUDE_DIR}
         ${SRC_DIR}/layersvt/hwc_profiler
         ${SRC_DIR}/external/submodules/HWCPipe
@@ -127,7 +128,7 @@ if (WIN32)
     set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -D_CRT_SECURE_NO_WARNINGS /bigobj")
     set (CMAKE_C_FLAGS   "${CMAKE_C_FLAGS} -D_CRT_SECURE_NO_WARNINGS /bigobj")
 else()
-    set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11")
+    set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++17")
     set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wpointer-arith")
     set (CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wpointer-arith")
 endif()

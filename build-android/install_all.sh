@@ -1,7 +1,6 @@
 #!/bin/bash
 
 # Copyright 2017 The Android Open Source Project
-# Copyright (C) 2022-2023 ARM Limited
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.

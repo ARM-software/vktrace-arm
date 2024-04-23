@@ -1,6 +1,5 @@
 /*
 * Copyright (c) 2016 Advanced Micro Devices, Inc. All rights reserved.
-* Copyright (C) 2020-2023 ARM Limited
 *
 * Licensed under the Apache License, Version 2.0 (the "License");
 * you may not use this file except in compliance with the License.
@@ -720,9 +719,24 @@ StateTracker &StateTracker::operator=(const StateTracker &other) {
         COPY_PACKET(obj->second.ObjectInfo.AccelerationStructure.pGetAccelerationStructureDeviceAddressPacket);
     }
 
-    buildAccelerationStructures = other.buildAccelerationStructures;
-    for (auto obj = buildAccelerationStructures.begin(); obj != buildAccelerationStructures.end(); obj++) {
-        COPY_PACKET(*obj);
+    BuildAccelerationStructures.clear();
+    for (auto it = other.BuildAccelerationStructures.begin(); it!=other.BuildAccelerationStructures.end(); it++) {
+        BuildAsInfo info;
+        info.pBuildAccelerationtStructure = copy_packet(it->pBuildAccelerationtStructure);
+        info.geometryInfo.clear();
+        for (auto it_geo = it->geometryInfo.begin(); it_geo != it->geometryInfo.end(); it_geo++) {
+            info.geometryInfo.push_back(*it_geo);
+        }
+        // the assist commands are not generated yet
+        info.AssistCommand.clear();
+        BuildAccelerationStructures.push_back(info);
+    }
+
+    CopyAccelerationStructure.clear();
+    for (auto it = other.CopyAccelerationStructure.begin(); it!=other.CopyAccelerationStructure.end(); it++) {
+        CopyAsInfo info;
+        info.pCopyAccelerationStructureKHR = copy_packet(it->pCopyAccelerationStructureKHR);
+        CopyAccelerationStructure.push_back(info);
     }
 
     cmdBuildAccelerationStructures.clear();
@@ -740,7 +754,7 @@ StateTracker &StateTracker::operator=(const StateTracker &other) {
 
     cmdCopyAccelerationStructure.clear();
     for (auto it = other.cmdCopyAccelerationStructure.begin(); it!=other.cmdCopyAccelerationStructure.end(); it++) {
-        cmdCopyAsInfo info;
+        CopyAsInfo info;
         info.pCmdCopyAccelerationStructureKHR = copy_packet(it->pCmdCopyAccelerationStructureKHR);
         cmdCopyAccelerationStructure.push_back(info);
     }
@@ -817,6 +831,7 @@ StateTracker &StateTracker::operator=(const StateTracker &other) {
 
     createdDescriptorSets = other.createdDescriptorSets;
     for (auto obj = createdDescriptorSets.begin(); obj != createdDescriptorSets.end(); obj++) {
+        COPY_PACKET(obj->second.ObjectInfo.DescriptorSet.pAllocatePacket);
         uint32_t numBindings = obj->second.ObjectInfo.DescriptorSet.numBindings;
         if (numBindings > 0) {
             VkWriteDescriptorSet *tmp = new VkWriteDescriptorSet[numBindings];
@@ -1038,8 +1053,16 @@ void StateTracker::copy_VkGraphicsPipelineCreateInfo(VkGraphicsPipelineCreateInf
                 pNext = reinterpret_cast<void *>(new VkPipelineRasterizationStateRasterizationOrderAMD());
                 //make a copy of extension struct which is used by target app.
                 memcpy(pNext, src.pRasterizationState->pNext,sizeof(VkPipelineRasterizationStateRasterizationOrderAMD));
-            }
-            else {
+            } else if (pNextStruct->sType ==
+                VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_CONSERVATIVE_STATE_CREATE_INFO_EXT) {
+
+                // cast to a reference so we can change pDst->pRasterizationState->pNext,
+                void*& pNext = const_cast<void*&>(pDst->pRasterizationState->pNext);
+                // then make pNext point to the newly created extension struct.
+                pNext = reinterpret_cast<void *>(new VkPipelineRasterizationConservativeStateCreateInfoEXT());
+                //make a copy of extension struct which is used by target app.
+                memcpy(pNext, src.pRasterizationState->pNext,sizeof(VkPipelineRasterizationConservativeStateCreateInfoEXT));
+            } else {
                 // so far we only handle this extension, more extension
                 // handling can be added here;
                 assert(false);
@@ -1362,8 +1385,23 @@ ObjectInfo &StateTracker::add_AccelerationStructure(VkAccelerationStructureKHR v
     return info;
 }
 
-void StateTracker::add_BuildAccelerationStructure(vktrace_trace_packet_header* pBuildAS) {
-    buildAccelerationStructures.push_back(pBuildAS);
+BuildAsInfo& StateTracker::add_BuildAccelerationStructure(BuildAsInfo BuildAS) {
+    BuildAccelerationStructures.push_back(BuildAS);
+    return BuildAccelerationStructures.back();
+
+}
+
+CopyAsInfo& StateTracker::add_CopyAccelerationStructure(CopyAsInfo copyAs) {
+    CopyAccelerationStructure.push_back(copyAs);
+    return CopyAccelerationStructure.back();
+}
+
+std::vector<BuildAsInfo>& StateTracker::get_BuildAccelerationStrucutres() {
+    return BuildAccelerationStructures;
+}
+
+std::vector<CopyAsInfo>& StateTracker::get_CopyAccelerationStructure() {
+    return CopyAccelerationStructure;
 }
 
 BuildAsInfo& StateTracker::add_cmdBuildAccelerationStructure(BuildAsInfo BuildAS) {
@@ -1372,7 +1410,7 @@ BuildAsInfo& StateTracker::add_cmdBuildAccelerationStructure(BuildAsInfo BuildAS
 
 }
 
-cmdCopyAsInfo& StateTracker::add_cmdCopyAccelerationStructure(cmdCopyAsInfo copyAs) {
+CopyAsInfo& StateTracker::add_cmdCopyAccelerationStructure(CopyAsInfo copyAs) {
     cmdCopyAccelerationStructure.push_back(copyAs);
     return cmdCopyAccelerationStructure.back();
 }
@@ -1381,7 +1419,7 @@ std::vector<BuildAsInfo>& StateTracker::get_cmdBuildAccelerationStrucutres() {
     return cmdBuildAccelerationStructures;
 }
 
-std::vector<cmdCopyAsInfo>& StateTracker::get_cmdCopyAccelerationStructure() {
+std::vector<CopyAsInfo>& StateTracker::get_cmdCopyAccelerationStructure() {
     return cmdCopyAccelerationStructure;
 }
 
@@ -2026,6 +2064,7 @@ void StateTracker::remove_DescriptorPool(const VkDescriptorPool var) {
 void StateTracker::remove_DescriptorSet(const VkDescriptorSet var) {
     ObjectInfo *pInfo = get_DescriptorSet(var);
     if (pInfo != nullptr) {
+        vktrace_delete_trace_packet(&pInfo->ObjectInfo.DescriptorSet.pAllocatePacket);
         if (pInfo->ObjectInfo.DescriptorSet.pCopyDescriptorSets != nullptr) {
             delete[] pInfo->ObjectInfo.DescriptorSet.pCopyDescriptorSets;
             pInfo->ObjectInfo.DescriptorSet.pCopyDescriptorSets = nullptr;
@@ -2106,15 +2145,15 @@ void StateTracker::remove_AccelerationStructure(const VkAccelerationStructureKHR
     createdAccelerationStructures.erase(var);
 }
 
-void StateTracker::remove_BuildAccelerationStructure(vktrace_trace_packet_header* pBuildAS) {
-    auto it = buildAccelerationStructures.begin();
-    while (it != buildAccelerationStructures.end()) {
-        if (*it == pBuildAS) {
-            vktrace_delete_trace_packet(&pBuildAS);
-            buildAccelerationStructures.erase(it);
-            break;
-        }
-        it++;
+void StateTracker::remove_BuildAccelerationStructure(BuildAsInfo& BuildAS) {
+    if (BuildAS.pBuildAccelerationtStructure != NULL) {
+        vktrace_delete_trace_packet(&BuildAS.pBuildAccelerationtStructure);
+    }
+}
+
+void StateTracker::remove_CopyAccelerationStructure(CopyAsInfo copyAs) {
+    if (copyAs.pCopyAccelerationStructureKHR != NULL) {
+        vktrace_delete_trace_packet(&copyAs.pCopyAccelerationStructureKHR);
     }
 }
 
@@ -2124,7 +2163,7 @@ void StateTracker::remove_cmdBuildAccelerationStructure(BuildAsInfo& BuildAS) {
     }
 }
 
-void StateTracker::remove_cmdCopyAccelerationStructure(cmdCopyAsInfo copyAs) {
+void StateTracker::remove_cmdCopyAccelerationStructure(CopyAsInfo copyAs) {
     if (copyAs.pCmdCopyAccelerationStructureKHR != NULL) {
         vktrace_delete_trace_packet(&copyAs.pCmdCopyAccelerationStructureKHR);
     }

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2019-2023 ARM Limited. All rights reserved.
+ * Copyright (c) 2019 ARM Limited. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -389,6 +389,11 @@ int main(int argc, char** argv) {
                 if (fileHeader.trace_file_version > VKTRACE_TRACE_FILE_VERSION_8) {
                     cout << setw(COLUMN_WIDTH) << left << "Tracer Version:"
                          << version_word_to_str(fileHeader.tracer_version) << endl;
+                    // Only 4.2.0 and later versions record change id.
+                    if (fileHeader.changeid != 0 && fileHeader.tracer_version >= ENCODE_VKTRACE_VER(4, 2, 0)) {
+                        cout << setw(COLUMN_WIDTH) << left << "Gerrit Change ID: "
+                        << reinterpret_cast<char*>(&fileHeader.changeid) << endl;
+                    }
                 }
                 if (fileHeader.trace_file_version > VKTRACE_TRACE_FILE_VERSION_9) {
                     cout << setw(COLUMN_WIDTH) << left << "Enabled Tracer Features:"
@@ -475,66 +480,71 @@ int main(int argc, char** argv) {
 
                     if (packet->packet_id >= VKTRACE_TPI_VK_vkApiVersion && packet->packet_id < VKTRACE_TPI_META_DATA) {
                         vktrace_trace_packet_header* pInterpretedHeader = interpret_trace_packet_vk(packet);
-                        if (g_params.simpleDumpFile) {
-                            dump_packet_brief(*pSimpleDumpFile, frameNumber, pInterpretedHeader, currentPosition);
-                        }
-                        if (g_params.fullDumpFile) {
-                            dump_packet(pInterpretedHeader);
-                        }
-                        switch (pInterpretedHeader->packet_id) {
-                            case VKTRACE_TPI_VK_vkQueuePresentKHR: {
-                                frameNumber++;
-                                if (g_params.simpleDumpFile && change_dump_file_name(g_params.simpleDumpFile, frameNumber)) {
-                                    fileOutput.close();
-                                    fileOutput.open(g_dump_file_name);
-                                    buf = fileOutput.rdbuf();
-                                    pSimpleDumpFile->rdbuf(buf);
-                                }
-                                if (g_params.fullDumpFile && change_dump_file_name(g_params.fullDumpFile, frameNumber)) {
-                                    reset_dump_file_name(g_dump_file_name);
-                                }
+                        if (pInterpretedHeader != nullptr) {
+                            if (g_params.simpleDumpFile) {
+                                dump_packet_brief(*pSimpleDumpFile, frameNumber, pInterpretedHeader, currentPosition);
+                            }
+                            if (g_params.fullDumpFile) {
+                                dump_packet(pInterpretedHeader);
+                            }
+                            switch (pInterpretedHeader->packet_id) {
+                                case VKTRACE_TPI_VK_vkQueuePresentKHR: {
+                                    frameNumber++;
+                                    if (g_params.simpleDumpFile && change_dump_file_name(g_params.simpleDumpFile, frameNumber)) {
+                                        fileOutput.close();
+                                        fileOutput.open(g_dump_file_name);
+                                        buf = fileOutput.rdbuf();
+                                        pSimpleDumpFile->rdbuf(buf);
+                                    }
+                                    if (g_params.fullDumpFile && change_dump_file_name(g_params.fullDumpFile, frameNumber)) {
+                                        reset_dump_file_name(g_dump_file_name);
+                                    }
 
-                            } break;
-                            case VKTRACE_TPI_VK_vkGetPhysicalDeviceProperties: {
-                                if (!hideBriefInfo) {
-                                    if (deviceApiVersion == UINT32_MAX) {
-                                        packet_vkGetPhysicalDeviceProperties* pPacket =
-                                            (packet_vkGetPhysicalDeviceProperties*)(pInterpretedHeader->pBody);
-                                        deviceApiVersion = pPacket->pProperties->apiVersion;
-                                        memcpy(deviceName, pPacket->pProperties->deviceName, VK_MAX_PHYSICAL_DEVICE_NAME_SIZE);
-                                    }
-                                }
-                            } break;
-                            case VKTRACE_TPI_VK_vkCreateInstance: {
-                                if (!hideBriefInfo) {
-                                    packet_vkCreateInstance* pPacket = (packet_vkCreateInstance*)(pInterpretedHeader->pBody);
-                                    if (pPacket->pCreateInfo->pApplicationInfo) {
-                                        if (pApplicationName == NULL && pEngineName == NULL) {
-                                            if (pPacket->pCreateInfo->pApplicationInfo->pApplicationName) {
-                                                size_t applicationNameLen =
-                                                    strlen(pPacket->pCreateInfo->pApplicationInfo->pApplicationName);
-                                                pApplicationName = (char*)malloc(applicationNameLen + 1);
-                                                memcpy(pApplicationName, pPacket->pCreateInfo->pApplicationInfo->pApplicationName,
-                                                   applicationNameLen);
-                                                pApplicationName[applicationNameLen] = '\0';
-                                            }
-                                            applicationVersion = pPacket->pCreateInfo->pApplicationInfo->applicationVersion;
-                                            if (pPacket->pCreateInfo->pApplicationInfo->pEngineName) {
-                                                size_t engineNameLen = strlen(pPacket->pCreateInfo->pApplicationInfo->pEngineName);
-                                                pEngineName = (char*)malloc(engineNameLen + 1);
-                                                memcpy(pEngineName, pPacket->pCreateInfo->pApplicationInfo->pEngineName, engineNameLen);
-                                                pEngineName[engineNameLen] = '\0';
-                                            }
-                                            engineVersion = pPacket->pCreateInfo->pApplicationInfo->engineVersion;
-                                        }
-                                        if (appApiVersion == UINT32_MAX) {
-                                            appApiVersion = pPacket->pCreateInfo->pApplicationInfo->apiVersion;
+                                } break;
+                                case VKTRACE_TPI_VK_vkGetPhysicalDeviceProperties: {
+                                    if (!hideBriefInfo) {
+                                        if (deviceApiVersion == UINT32_MAX) {
+                                            packet_vkGetPhysicalDeviceProperties* pPacket =
+                                                (packet_vkGetPhysicalDeviceProperties*)(pInterpretedHeader->pBody);
+                                            deviceApiVersion = pPacket->pProperties->apiVersion;
+                                            memcpy(deviceName, pPacket->pProperties->deviceName, VK_MAX_PHYSICAL_DEVICE_NAME_SIZE);
                                         }
                                     }
-                                }
-                            } break;
-                            default:
-                                break;
+                                } break;
+                                case VKTRACE_TPI_VK_vkCreateInstance: {
+                                    if (!hideBriefInfo) {
+                                        packet_vkCreateInstance* pPacket = (packet_vkCreateInstance*)(pInterpretedHeader->pBody);
+                                        if (pPacket->pCreateInfo->pApplicationInfo) {
+                                            if (pApplicationName == NULL && pEngineName == NULL) {
+                                                if (pPacket->pCreateInfo->pApplicationInfo->pApplicationName) {
+                                                    size_t applicationNameLen =
+                                                        strlen(pPacket->pCreateInfo->pApplicationInfo->pApplicationName);
+                                                    pApplicationName = (char*)malloc(applicationNameLen + 1);
+                                                    memcpy(pApplicationName, pPacket->pCreateInfo->pApplicationInfo->pApplicationName,
+                                                    applicationNameLen);
+                                                    pApplicationName[applicationNameLen] = '\0';
+                                                }
+                                                applicationVersion = pPacket->pCreateInfo->pApplicationInfo->applicationVersion;
+                                                if (pPacket->pCreateInfo->pApplicationInfo->pEngineName) {
+                                                    size_t engineNameLen = strlen(pPacket->pCreateInfo->pApplicationInfo->pEngineName);
+                                                    pEngineName = (char*)malloc(engineNameLen + 1);
+                                                    memcpy(pEngineName, pPacket->pCreateInfo->pApplicationInfo->pEngineName, engineNameLen);
+                                                    pEngineName[engineNameLen] = '\0';
+                                                }
+                                                engineVersion = pPacket->pCreateInfo->pApplicationInfo->engineVersion;
+                                            }
+                                            if (appApiVersion == UINT32_MAX) {
+                                                appApiVersion = pPacket->pCreateInfo->pApplicationInfo->apiVersion;
+                                            }
+                                        }
+                                    }
+                                } break;
+                                default:
+                                    break;
+                            }
+                        }
+                        else {
+                            vktrace_LogError("Invalid packet(global packet index: %lu, packet id: %lu), skipped!", packet->global_packet_index, packet->packet_id);
                         }
                     }
                     vktrace_delete_trace_packet_no_lock(&packet);

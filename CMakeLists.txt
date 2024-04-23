@@ -33,6 +33,12 @@ add_definitions(-DAPI_NAME="${API_NAME}")
 
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
+# Add gerrit change id to C++ macro
+if (DEFINED ENV{VKTRACE_GERRIT_CHANGE_ID})
+    set(VKTRACE_GERRIT_CHANGE_ID $ENV{VKTRACE_GERRIT_CHANGE_ID})
+    add_definitions(-DVKTRACE_GERRIT_CHANGE_ID=\"${VKTRACE_GERRIT_CHANGE_ID}\")
+endif()
+
 # Define GNU standard installation directories.
 include(GNUInstallDirs)
 

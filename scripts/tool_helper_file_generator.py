@@ -4,7 +4,6 @@
 # Copyright (c) 2015-2018 Valve Corporation
 # Copyright (c) 2015-2018 LunarG, Inc.
 # Copyright (c) 2015-2018 Google Inc.
-# Copyright (C) 2020-2023 ARM Limited
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -465,11 +464,15 @@ class ToolHelperFileOutputGenerator(OutputGenerator):
                             if 'ppGeometries' == member.name:
                                 struct_size_funcs += '            if (struct_ptr->ppGeometries) {\n'
                                 struct_size_funcs += '                struct_size += sizeof(void*);\n'
-                                struct_size_funcs += '                struct_size += vk_size_%s(struct_ptr->%s[i]);\n' % (member.type.lower(), member.name)
+                                struct_size_funcs += '                struct_size += get_struct_chain_size(struct_ptr->%s[i]);\n' % (member.name)
                                 struct_size_funcs += '            }\n'
                             elif 'pGeometries' == member.name:
                                 struct_size_funcs += '            if (struct_ptr->pGeometries) {\n'
-                                struct_size_funcs += '                struct_size += vk_size_%s(&struct_ptr->%s[i]);\n' % (member.type.lower(), member.name)
+                                struct_size_funcs += '                struct_size += get_struct_chain_size(&struct_ptr->%s[i]);\n' % (member.name)
+                                struct_size_funcs += '            }\n'
+                            elif 'ppUsageCounts' == member.name:
+                                struct_size_funcs += '            if (struct_ptr->ppUsageCounts) {\n'
+                                struct_size_funcs += '                struct_size += vk_size_%s(struct_ptr->%s[i]);\n' % (member.type.lower(), member.name)
                                 struct_size_funcs += '            }\n'
                             else:
                                 struct_size_funcs += '            struct_size += vk_size_%s(&struct_ptr->%s[i]);\n' % (member.type.lower(), member.name)
@@ -521,6 +524,9 @@ class ToolHelperFileOutputGenerator(OutputGenerator):
                                     struct_size_funcs += '        struct_size += ( %s ) * sizeof(%s);\n' % (member.len, checked_type)
                                 else:
                                     struct_size_funcs += '        struct_size += (struct_ptr->%s ) * sizeof(%s);\n' % (member.len, checked_type)
+                            else:
+                                if item.name == "VkAccelerationStructureGeometryKHR":
+                                    struct_size_funcs += '        struct_size += get_struct_chain_size(struct_ptr->geometry.triangles.pNext);\n'
             struct_size_funcs += '    }\n'
             struct_size_funcs += '    return struct_size;\n'
             struct_size_funcs += '}\n'

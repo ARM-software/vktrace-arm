@@ -2,7 +2,7 @@
  *
  * Copyright (C) 2015-2017 Valve Corporation
  * Copyright (C) 2015-2017 LunarG, Inc.
- * Copyright (C) 2019-2023 ARM Limited.
+ * Copyright (C) 2019 ARM Limited.
  * All Rights Reserved
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -32,6 +32,20 @@
 #include "vkreplay_window.h"
 #if !defined(VK_USE_PLATFORM_WIN32_KHR)
 #define VK_USE_PLATFORM_WIN32_KHR
+#define VK_NV_acquire_winrt_display 1
+#define VK_NV_ACQUIRE_WINRT_DISPLAY_SPEC_VERSION 1
+#define VK_NV_ACQUIRE_WINRT_DISPLAY_EXTENSION_NAME "VK_NV_acquire_winrt_display"
+typedef VkResult (VKAPI_PTR *PFN_vkAcquireWinrtDisplayNV)(VkPhysicalDevice physicalDevice, VkDisplayKHR display);
+typedef VkResult (VKAPI_PTR *PFN_vkGetWinrtDisplayNV)(VkPhysicalDevice physicalDevice, uint32_t deviceRelativeId, VkDisplayKHR* pDisplay);
+#ifndef VK_NO_PROTOTYPES
+VKAPI_ATTR VkResult VKAPI_CALL vkAcquireWinrtDisplayNV(
+    VkPhysicalDevice                            physicalDevice,
+    VkDisplayKHR                                display);
+VKAPI_ATTR VkResult VKAPI_CALL vkGetWinrtDisplayNV(
+    VkPhysicalDevice                            physicalDevice,
+    uint32_t                                    deviceRelativeId,
+    VkDisplayKHR*                               pDisplay);
+#endif
 #define undef_VK_USE_PLATFORM_WIN32_KHR
 #endif
 
@@ -54,7 +68,6 @@
 #define VK_USE_PLATFORM_ANDROID_KHR
 #define undef_VK_USE_PLATFORM_ANDROID_KHR
 #endif
-
 #include "vk_layer_dispatch_table.h"
 
 #if defined(undef_VK_USE_PLATFORM_WIN32_KHR)

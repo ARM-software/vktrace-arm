@@ -1,6 +1,6 @@
 /*
 * Copyright (c) 2016 Advanced Micro Devices, Inc. All rights reserved.
-* Copyright (C) 2019-2023 ARM Limited. All rights reserved.
+* Copyright (C) 2019 ARM Limited. All rights reserved.
 *
 * Licensed under the Apache License, Version 2.0 (the "License");
 * you may not use this file except in compliance with the License.
@@ -25,6 +25,7 @@
 #include "vktrace_lib_trim_statetracker.h"
 #include "vktrace_lib_trim_descriptoriterator.h"
 #include "vktrace_lib_trim_cmdbuild_as.h"
+#include "vktrace_lib_trim_build_as.h"
 #include "vulkan/vulkan.h"
 
 #if defined(PLATFORM_LINUX)  // VK_USE_PLATFORM_XCB_KHR
@@ -79,7 +80,8 @@ extern std::map<uint64_t, cmdBuildASPacketInfo> g_cmdBuildASPacket;
 extern std::vector<VkBuffer> g_bufferInCmdBuildAS;
 extern std::vector<VkBuffer> g_scratchBufferInCmdBuildAS;
 extern std::unordered_map<uint64_t, vktrace_trace_packet_header*> g_pGetAccelerationStructureBuildSizePackets;
-
+extern std::unordered_map<uint64_t, vktrace_trace_packet_header*> g_updateDescriptorSetsPackets;
+extern std::unordered_map<uint64_t, vktrace_trace_packet_header*> g_getPhysicalDevice2Packets;
 
 // This mutex is used to protect API calls sequence
 // during trace
@@ -331,11 +333,15 @@ ObjectInfo *get_DescriptorSet_objectInfo(VkDescriptorSet var);
 ObjectInfo &add_AccelerationStructure_object(VkAccelerationStructureKHR var);
 ObjectInfo *get_AccelerationStructure_objectInfo(VkAccelerationStructureKHR var);
 
-void        add_BuildAccelerationStructure_object(vktrace_trace_packet_header* var);
+BuildAsInfo& add_BuildAccelerationStructure_object(BuildAsInfo var);
+std::vector<BuildAsInfo>& get_BuildAccelerationStrucutres_object();
+CopyAsInfo& add_CopyAccelerationStructure_object(CopyAsInfo var);
+std::vector<CopyAsInfo>& get_CopyAccelerationStructure_object();
+
 BuildAsInfo& add_cmdBuildAccelerationStructure_object(BuildAsInfo var);
-std::vector<BuildAsInfo>& get_cmdBuildAccelerationStrucutres();
-cmdCopyAsInfo& add_cmdCopyAccelerationStructure_object(cmdCopyAsInfo var);
-std::vector<cmdCopyAsInfo>& get_cmdCopyAccelerationStructure();
+std::vector<BuildAsInfo>& get_cmdBuildAccelerationStrucutres_object();
+CopyAsInfo& add_cmdCopyAccelerationStructure_object(CopyAsInfo var);
+std::vector<CopyAsInfo>& get_cmdCopyAccelerationStructure_object();
 
 void remove_Instance_object(const VkInstance var);
 void remove_PhysicalDevice_object(const VkPhysicalDevice var);
@@ -366,9 +372,10 @@ void remove_DescriptorSetLayout_object(const VkDescriptorSetLayout var);
 void remove_DescriptorUpdateTemplate_object(VkDescriptorUpdateTemplate var);
 void remove_DescriptorSet_object(const VkDescriptorSet var);
 void remove_AccelerationStructure_object(const VkAccelerationStructureKHR var);
-void remove_BuildAccelerationStructure_object(vktrace_trace_packet_header* var);
+void remove_BuildAccelerationStructure_object(BuildAsInfo& var);
+void remove_CopyAccelerationStructure_object(CopyAsInfo& var);
 void remove_cmdBuildAccelerationStructure_object(BuildAsInfo& var);
-void remove_cmdCopyAccelerationStructure_object(cmdCopyAsInfo& var);
+void remove_cmdCopyAccelerationStructure_object(CopyAsInfo& var);
 
 void reset_CommandPool_object(VkCommandPool var);
 

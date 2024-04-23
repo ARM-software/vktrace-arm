@@ -61,7 +61,7 @@ file( GLOB_RECURSE HDRS *.[h|inl] )
 
 if (NOT MSVC)
     add_c_compiler_flag("-fPIC")
-    add_cpp_compiler_flag("-fPIC -std=c++11")
+    add_cpp_compiler_flag("-fPIC -std=c++17")
 endif()
 
 add_library(${PROJECT_NAME} STATIC ${SRC_LIST} ${CXX_SRC_LIST} ${HDRS})

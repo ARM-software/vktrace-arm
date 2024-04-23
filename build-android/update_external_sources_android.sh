@@ -3,7 +3,6 @@
 
 # Copyright 2016 The Android Open Source Project
 # Copyright (C) 2015 Valve Corporation
-# Copyright (C) 2020-2023 ARM Limited
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -26,21 +25,25 @@ BASEDIR=$BUILDDIR/third_party
 JSONCPP_REVISION=$(cat $ANDROIDBUILDDIR/jsoncpp_revision_android)
 VULKAN_TOOLS_REVISION=$(cat $ANDROIDBUILDDIR/vulkan-tools_revision_android)
 VULKAN_HEADERS_REVISION=$(cat $ANDROIDBUILDDIR/vulkan-headers_revision_android)
+VULKAN_LOADER_REVISION=$(cat $ANDROIDBUILDDIR/vulkan-loader_revision_android)
 VULKAN_VALIDATIONLAYERS_REVISION=$(cat $ANDROIDBUILDDIR/vulkan-validationlayers_revision_android)
 
 echo "JSONCPP_REVISION=$JSONCPP_REVISION"
 echo "VULKAN_TOOLS_REVISION=$VULKAN_TOOLS_REVISION"
 echo "VULKAN_HEADERS_REVISION=$VULKAN_HEADERS_REVISION"
+echo "VULKAN_LOADER_REVISION=$VULKAN_LOADER_REVISION"
 echo "VULKAN_VALIDATIONLAYERS_REVISION=$VULKAN_VALIDATIONLAYERS_REVISION"
 
 JSONCPP_URL=$(cat $ANDROIDBUILDDIR/jsoncpp_url_android)
 VULKAN_TOOLS_URL=$(cat $ANDROIDBUILDDIR/vulkan-tools_url_android)
 VULKAN_HEADERS_URL=$(cat $ANDROIDBUILDDIR/vulkan-headers_url_android)
+VULKAN_LOADER_URL=$(cat $ANDROIDBUILDDIR/vulkan-loader_url_android)
 VULKAN_VALIDATIONLAYERS_URL=$(cat $ANDROIDBUILDDIR/vulkan-validationlayers_url_android)
 
 echo "JSONCPP_URL=$JSONCPP_URL"
 echo "VULKAN_TOOLS_URL=$VULKAN_TOOLS_URL"
 echo "VULKAN_HEADERS_URL=$VULKAN_HEADERS_URL"
+echo "VULKAN_LOADER_URL=$VULKAN_LOADER_URL"
 
 if [[ $(uname) == "Linux" ]]; then
     cores="$(nproc || echo 4)"
@@ -137,6 +140,27 @@ function update_vulkan-headers () {
    git checkout $VULKAN_HEADERS_REVISION
 }
 
+function create_vulkan-loader () {
+   rm -rf $BASEDIR/Vulkan-Loader
+   echo "Creating local Vulkan-Loader repository ($BASEDIR/Vulkan-Loader)."
+   mkdir -p $BASEDIR/Vulkan-Loader
+   cd $BASEDIR/Vulkan-Loader
+   git clone $VULKAN_LOADER_URL .
+   git checkout $VULKAN_LOADER_REVISION
+}
+
+function update_vulkan-loader () {
+   echo "Updating $BASEDIR/Vulkan-Loader"
+   cd $BASEDIR/Vulkan-Loader
+   if [[ $(git config --get remote.origin.url) != $VULKAN_LOADER_URL ]]; then
+      echo "Vulkan-Loader URL mismatch, recreating local repo"
+      create_vulkan-loader
+      return
+   fi
+   git fetch --all
+   git checkout $VULKAN_LOADER_REVISION
+}
+
 function create_vulkan-tools () {
    rm -rf $BASEDIR/Vulkan-Tools
    echo "Creating local Vulkan-Tools repository ($BASEDIR/Vulkan-Tools)."
@@ -196,6 +220,11 @@ if [ ! -d "$BASEDIR/Vulkan-Headers" -o ! -d "$BASEDIR/Vulkan-Headers/.git" ]; th
 fi
 update_vulkan-headers
 
+if [ ! -d "$BASEDIR/Vulkan-Loader" -o ! -d "$BASEDIR/Vulkan-Loader/.git" ]; then
+   create_vulkan-loader
+fi
+update_vulkan-loader
+
 if [ ! -d "$BASEDIR/Vulkan-Tools" -o ! -d "$BASEDIR/Vulkan-Tools/.git" ]; then
    create_vulkan-tools
 fi
@@ -214,4 +243,3 @@ build_jsoncpp
 
 echo ""
 echo "${0##*/} finished."
-

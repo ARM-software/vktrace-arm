@@ -1,6 +1,6 @@
 #!/usr/bin/python3 -i
 #
-# Copyright (c) 2016-2023 ARM Corporation
+# Copyright (c) 2016-2019, 2019 ARM Corporation
 #
 # Author: Parker
 #
@@ -31,7 +31,7 @@ from common_codegen import *
 
 APICOST_CODEGEN = """
 /*
- * (C) COPYRIGHT 2019-2023 ARM Limited
+ * (C) COPYRIGHT 2019 ARM Limited
  * ALL RIGHTS RESERVED
  *
  * Licensed under the Apache License, Version 2.0 (the "License");

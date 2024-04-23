@@ -2,7 +2,6 @@
  *
  * Copyright (C) 2015-2018 Valve Corporation
  * Copyright (C) 2015-2018 LunarG, Inc.
- * Copyright (C) 2021-2023 ARM Limited
  * All Rights Reserved
  *
  * Licensed under the Apache License, Version 2.0 (the "License");

@@ -9,7 +9,7 @@ if(WIN32)
 endif()
 
 if (${CMAKE_SYSTEM_NAME} MATCHES "Linux")
-    set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11")
+    set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++17")
 
     if (BUILD_WSI_XCB_SUPPORT)
     set(XCB_DISPLAY_LIB vkdisplay_xcb)

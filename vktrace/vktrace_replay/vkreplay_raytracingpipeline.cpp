@@ -1,19 +1,3 @@
-/*
- * Copyright (C) 2022-2023 ARM Limited
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
 #include "vkreplay_raytracingpipeline.h"
 #include "vkreplay_vkreplay.h"
 
@@ -652,7 +636,7 @@ void RayTracingPipelineHandlerVer1::cmdTraceRaysKHR(packet_vkCmdTraceRaysKHR *pP
         int offset = 0;
         auto it2 = sbtAddressToBuffer.find(pPacket->pMissShaderBindingTable->deviceAddress);
         if (it2 == sbtAddressToBuffer.end()) {
-            vktrace_LogDebug("Cannot find address for miss = %llu", pPacket->pMissShaderBindingTable->deviceAddress);
+            vktrace_LogDebug("Cannot find address for miss = %llu. We'll try to find the closest address.", pPacket->pMissShaderBindingTable->deviceAddress);
             it2 = findClosestAddress(pPacket->pMissShaderBindingTable->deviceAddress);
         }
         if (it2 == sbtAddressToBuffer.end()) {
@@ -661,9 +645,9 @@ void RayTracingPipelineHandlerVer1::cmdTraceRaysKHR(packet_vkCmdTraceRaysKHR *pP
         }
         offset = pPacket->pMissShaderBindingTable->deviceAddress - it2->first;
         if (g_replay->sbtPostprocessed) {
-            auto itt = g_replay->traceDeviceAddrToReplayDeviceAddr4Buf.find(pPacket->pMissShaderBindingTable->deviceAddress);
+            auto itt = g_replay->traceDeviceAddrToReplayDeviceAddr4Buf.find(pPacket->pMissShaderBindingTable->deviceAddress - offset);
             if (itt != g_replay->traceDeviceAddrToReplayDeviceAddr4Buf.end()) {
-                const_cast<VkStridedDeviceAddressRegionKHR*>(pPacket->pMissShaderBindingTable)->deviceAddress = itt->second.replayDeviceAddr;
+                const_cast<VkStridedDeviceAddressRegionKHR*>(pPacket->pMissShaderBindingTable)->deviceAddress = itt->second.replayDeviceAddr + offset;
             }
         }
         else {
@@ -679,7 +663,7 @@ void RayTracingPipelineHandlerVer1::cmdTraceRaysKHR(packet_vkCmdTraceRaysKHR *pP
         int offset = 0;
         auto it2 = sbtAddressToBuffer.find(pPacket->pHitShaderBindingTable->deviceAddress);
         if (it2 == sbtAddressToBuffer.end()) {
-            vktrace_LogDebug("Cannot find address for hit = %llu", pPacket->pHitShaderBindingTable->deviceAddress);
+            vktrace_LogDebug("Cannot find address for hit = %llu. We'll try to find the closest address.", pPacket->pHitShaderBindingTable->deviceAddress);
             it2 = findClosestAddress(pPacket->pHitShaderBindingTable->deviceAddress);
         }
         if (it2 == sbtAddressToBuffer.end()) {
@@ -688,9 +672,9 @@ void RayTracingPipelineHandlerVer1::cmdTraceRaysKHR(packet_vkCmdTraceRaysKHR *pP
         }
         offset = pPacket->pHitShaderBindingTable->deviceAddress - it2->first;
         if (g_replay->sbtPostprocessed) {
-            auto itt = g_replay->traceDeviceAddrToReplayDeviceAddr4Buf.find(pPacket->pHitShaderBindingTable->deviceAddress);
+            auto itt = g_replay->traceDeviceAddrToReplayDeviceAddr4Buf.find(pPacket->pHitShaderBindingTable->deviceAddress - offset);
             if (itt != g_replay->traceDeviceAddrToReplayDeviceAddr4Buf.end()) {
-                const_cast<VkStridedDeviceAddressRegionKHR*>(pPacket->pHitShaderBindingTable)->deviceAddress = itt->second.replayDeviceAddr;
+                const_cast<VkStridedDeviceAddressRegionKHR*>(pPacket->pHitShaderBindingTable)->deviceAddress = itt->second.replayDeviceAddr + offset;
             }
         }
         else {
@@ -706,7 +690,7 @@ void RayTracingPipelineHandlerVer1::cmdTraceRaysKHR(packet_vkCmdTraceRaysKHR *pP
         int offset = 0;
         auto it2 = sbtAddressToBuffer.find(pPacket->pCallableShaderBindingTable->deviceAddress);
         if (it2 == sbtAddressToBuffer.end()) {
-            vktrace_LogDebug("Cannot find address for callable = %llu", pPacket->pCallableShaderBindingTable->deviceAddress);
+            vktrace_LogDebug("Cannot find address for callable = %llu. We'll try to find the closest address.", pPacket->pCallableShaderBindingTable->deviceAddress);
             it2 = findClosestAddress(pPacket->pCallableShaderBindingTable->deviceAddress);
         }
         if (it2 == sbtAddressToBuffer.end()) {
@@ -715,9 +699,9 @@ void RayTracingPipelineHandlerVer1::cmdTraceRaysKHR(packet_vkCmdTraceRaysKHR *pP
         }
         offset = pPacket->pCallableShaderBindingTable->deviceAddress - it2->first;
         if (g_replay->sbtPostprocessed) {
-            auto itt = g_replay->traceDeviceAddrToReplayDeviceAddr4Buf.find(pPacket->pCallableShaderBindingTable->deviceAddress);
+            auto itt = g_replay->traceDeviceAddrToReplayDeviceAddr4Buf.find(pPacket->pCallableShaderBindingTable->deviceAddress - offset);
             if (itt != g_replay->traceDeviceAddrToReplayDeviceAddr4Buf.end()) {
-                const_cast<VkStridedDeviceAddressRegionKHR*>(pPacket->pCallableShaderBindingTable)->deviceAddress = itt->second.replayDeviceAddr;
+                const_cast<VkStridedDeviceAddressRegionKHR*>(pPacket->pCallableShaderBindingTable)->deviceAddress = itt->second.replayDeviceAddr + offset;
             }
         }
         else {

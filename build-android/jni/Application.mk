@@ -1,6 +1,6 @@
 # Copyright 2015 The Android Open Source Project
 # Copyright (C) 2015 Valve Corporation
-# Copyright (C) 2019-2023 ARM Limited
+# Copyright (C) 2019 ARM Limited
 
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.

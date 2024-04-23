@@ -174,4 +174,3 @@ keytool -genkey -v -keystore ~/.android/debug.keystore -storepass android -alias
 
 
 After building, the packages and layers will be in `build-android/android`.
-

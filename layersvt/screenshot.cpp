@@ -2,7 +2,7 @@
  *
  * Copyright (C) 2015-2018 Valve Corporation
  * Copyright (C) 2015-2018 LunarG, Inc.
- * Copyright (C) 2019-2023 ARM Limited
+ * Copyright (C) 2019 ARM Limited
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -45,6 +45,7 @@ using namespace std;
 #include "vk_layer_extension_utils.h"
 #include "vk_layer_utils.h"
 #include "vk_enum_string_helper.h"
+#include <vk_loader_platform.h>
 
 #include "screenshot_parsing.h"
 
@@ -56,10 +57,11 @@ using namespace std;
 struct AHWBufInfo {
     AHardwareBuffer* buffer;
     uint32_t   stride;
+    uint32_t   width;
     uint32_t   height;
 };
 
-static int g_ruiFrameNumber = 0;
+
 static std::unordered_map<VkDeviceMemory, AHWBufInfo> deviceMemoryToAHWBufInfo;
 static char android_env[64] = {};
 const char *env_var_frames = "debug.vulkan.screenshot";
@@ -171,6 +173,8 @@ typedef enum colorSpaceFormat {
 colorSpaceFormat userColorSpaceFormat = UNDEFINED;
 
 static int g_frameNumber = 0;
+static int g_ruiFrameNumber = 0;
+static uint32_t imageIndex = 0;
 static uint32_t renderPassNumber = 0;
 // Flag indicating we have to dump framebuffer by render pass
 static bool dumpFrameBufferByRenderPass = false;
@@ -182,7 +186,6 @@ static std::set<VkImage> renderPassImages;
 static unordered_map<VkCommandBuffer, std::set<VkCommandBuffer>> commandBufferToCommandBuffers;
 static unordered_map<VkFramebuffer, std::set<VkImage>> framebufferToImages;
 static unordered_map<VkImageView, VkImage> imageViewToImage;
-static unordered_map<VkImage, VkDeviceMemory> imageToMemory;
 static unordered_map<VkRenderPass, uint32_t> renderPassToIndex;
 static unordered_map<VkCommandBuffer, VkRenderPass> commandBufferToRenderPass;
 
@@ -255,10 +258,6 @@ dumpImageInfo::dumpImageInfo() {
 static unordered_map<uint32_t, rp_info> rp_frame_info;
 static unordered_map<VkRenderPass, std::vector<dumpImageInfo>> renderPassToImageInfos;
 static unordered_map<VkCommandBuffer, std::vector<dumpImageInfo>> commandBufferToImages;
-
-static uint32_t last_frame = -1;
-static uint32_t rp_index = 0;
-static uint32_t brp_index = 0;
 
 // unordered map: associates a swap chain with a device, image extent, format,
 // and list of images
@@ -1168,7 +1167,6 @@ static bool preparePPM(VkCommandBuffer commandBuffer, VkImage image1, WritePPMCl
     if (commandBuffer == VK_NULL_HANDLE) {
         err = pTableCommandBuffer->EndCommandBuffer(data.commandBuffer);
         assert(!err);
-
         // Make sure the submitted job is finished
         err = pTableDevice->DeviceWaitIdle(device);
         assert(!err);
@@ -1864,6 +1862,27 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateRenderPass2KHR(VkDevice device, const VkRen
     return result;
 }
 
+VKAPI_ATTR void VKAPI_CALL DestroyRenderPass(VkDevice device, VkRenderPass renderPass, const VkAllocationCallbacks* pAllocator) {
+    DeviceMapStruct *devMap = get_dev_info(device);
+    assert(devMap);
+    VkLayerDispatchTable *pDisp = devMap->device_dispatch_table;
+
+    pDisp->DestroyRenderPass(device, renderPass, pAllocator);
+
+    loader_platform_thread_lock_mutex(&globalLock);
+    if (!dumpFrameBufferByRenderPass || (screenshotFramesReceived && screenshotFrames.empty() && !screenShotFrameRange.valid)) {
+        // No screenshots in the list to take
+        loader_platform_thread_unlock_mutex(&globalLock);
+        return;
+    }
+
+    auto it = renderPassToIndex.find(renderPass);
+    if (it != renderPassToIndex.end()) {
+        renderPassToIndex.erase(it);
+    }
+    loader_platform_thread_unlock_mutex(&globalLock);
+}
+
 void OverrideCmdBeginRenderPass(VkCommandBuffer commandBuffer, const VkRenderPassBeginInfo *pRenderPassBegin,
                                               VkSubpassContents contents) {
     DeviceMapStruct *devMap = get_dev_info((VkDevice)commandBuffer);
@@ -1883,19 +1902,15 @@ void OverrideCmdBeginRenderPass(VkCommandBuffer commandBuffer, const VkRenderPas
     set<int>::iterator it;
     bool inScreenShotFrames = false;
     bool inScreenShotFrameRange = false;
-    it = screenshotFrames.find(g_frameNumber);
+    it = screenshotFrames.find(g_frameNumber == 0 ? g_ruiFrameNumber: g_frameNumber);
     inScreenShotFrames = (it != screenshotFrames.end());
-    isInScreenShotFrameRange(g_frameNumber, &screenShotFrameRange, &inScreenShotFrameRange);
-
-    if (last_frame != g_frameNumber) {
-        last_frame = g_frameNumber;
-        brp_index = 0;
-    } else {
-        brp_index++;
-    }
+    isInScreenShotFrameRange(g_frameNumber == 0 ? g_ruiFrameNumber: g_frameNumber, &screenShotFrameRange, &inScreenShotFrameRange);
 
     renderPassImages.clear();
-    uint32_t imageIndex = 0;
+
+    if (renderPassToImageInfos.find(pRenderPassBegin->renderPass) != renderPassToImageInfos.end()) {
+        renderPassToImageInfos.erase(pRenderPassBegin->renderPass);
+    }
     for (auto iter = framebufferToImages[pRenderPassBegin->framebuffer].begin();
          iter != framebufferToImages[pRenderPassBegin->framebuffer].end(); ++iter) {
         if (renderPassImages.find(*iter) == renderPassImages.end()) {
@@ -1907,49 +1922,25 @@ void OverrideCmdBeginRenderPass(VkCommandBuffer commandBuffer, const VkRenderPas
             // std::to_string is not supported currently on Android
             char buffer[128];
             memset(buffer, 0, 128);
-            rp_info info;
-            if (rp_frame_info.find(renderPassToIndex[pRenderPassBegin->renderPass]) == rp_frame_info.end()) {
-                info.frame_index = g_frameNumber;
-                info.renderpass_index = 0;
-                rp_frame_info[renderPassToIndex[pRenderPassBegin->renderPass]] = info;
-            }
-            info = rp_frame_info[renderPassToIndex[pRenderPassBegin->renderPass]];
-            if (info.frame_index == g_frameNumber) {
-                info.renderpass_index++;
-                rp_frame_info[renderPassToIndex[pRenderPassBegin->renderPass]] = info;
-            } else {
-                info.frame_index = g_frameNumber;
-                info.renderpass_index = 0;
-                rp_frame_info[renderPassToIndex[pRenderPassBegin->renderPass]] = info;
-            }
-
-            if (last_frame != g_frameNumber) {
-                last_frame = g_frameNumber;
-                rp_index = 0;
-            } else {
-                rp_index++;
-            }
-            snprintf(buffer, sizeof(buffer), "%d-%u-bg%u-rp%u-rpidx%u-img%u", g_frameNumber, rp_index,
-                     brp_index, renderPassToIndex[pRenderPassBegin->renderPass], info.renderpass_index, imageIndex);
+            snprintf(buffer, sizeof(buffer), "f%d_rpi_%u_img%u", g_frameNumber == 0 ? g_ruiFrameNumber: g_frameNumber, renderPassToIndex[pRenderPassBegin->renderPass], imageIndex);
             std::string base(buffer);
-            fileName = screenshotPrefix + base + "-presubmit.ppm";
+            fileName = screenshotPrefix + base + "_presubmit.ppm";
 
             dumpImageInfo dumpInfo;
             dumpInfo.renderpassImage = *iter;
             strncpy(dumpInfo.dumpFileName, buffer, sizeof(buffer));
             renderPassToImageInfos[pRenderPassBegin->renderPass].push_back(dumpInfo);
-
-            WritePPMCleanupData copyImageData;
-            bool ret = preparePPM(VK_NULL_HANDLE, *iter, copyImageData);
-            ret |= writePPM(fileName.c_str(), *iter, copyImageData);
-            if (ret) {
+            //WritePPMCleanupData copyImageData;
+            //bool ret = preparePPM(VK_NULL_HANDLE, *iter, copyImageData);
+            //ret |= writePPM(fileName.c_str(), *iter, copyImageData);
+            if (0) {
 #ifdef ANDROID
                 __android_log_print(ANDROID_LOG_INFO, "screenshot", "BeginRenderPass Screen capture file is: %s", fileName.c_str());
 #else
                 printf("BeginRenderPass Screen capture file is: %s \n", fileName.c_str());
 #endif
             }
-            copyImageData.CleanupData();
+            //copyImageData.CleanupData();
         }
 
         imageIndex++;
@@ -2017,10 +2008,11 @@ void OverrideCmdEndRenderPass(VkCommandBuffer commandBuffer) {
             bool ret = preparePPM(commandBuffer, image, renderPassToImageInfos[renderPass][i].copyBufData);
             if (!ret) {
 #ifdef ANDROID
-                __android_log_print(ANDROID_LOG_INFO, "screenshot", "After EndRenderPass, capture renderpass framebuffer is error, image = %" PRIu64, (VkDeviceAddress)image);
+                __android_log_print(ANDROID_LOG_INFO, "screenshot", "After EndRenderPass, capture renderpass framebuffer is error, image = %p" PRIu64, (void*)image);
 #else
                 printf("After EndRenderPass, capture renderpass framebuffer is error, image = %" PRIu64 " \n", (VkDeviceAddress)image);
 #endif
+                continue;
             }
             commandBufferToImages[commandBuffer].push_back(renderPassToImageInfos[renderPass][i]);
         }
@@ -2082,6 +2074,23 @@ VKAPI_ATTR VkResult VKAPI_CALL BeginCommandBuffer(VkCommandBuffer commandBuffer,
     return result;
 }
 
+VKAPI_ATTR void VKAPI_CALL EndCommandBuffer(VkCommandBuffer commandBuffer) {
+    DeviceMapStruct *devMap = get_dev_info((VkDevice)commandBuffer);
+    assert(devMap);
+    VkLayerDispatchTable *pDisp = devMap->device_dispatch_table;
+    pDisp->EndCommandBuffer(commandBuffer);
+
+    loader_platform_thread_lock_mutex(&globalLock);
+    if (!dumpFrameBufferByRenderPass || (screenshotFramesReceived && screenshotFrames.empty() && !screenShotFrameRange.valid)) {
+        // No screenshots in the list to take
+        loader_platform_thread_unlock_mutex(&globalLock);
+        return ;
+    }
+    loader_platform_thread_unlock_mutex(&globalLock);
+
+    return ;
+}
+
 VKAPI_ATTR void VKAPI_CALL CmdExecuteCommands(VkCommandBuffer commandBuffer, uint32_t commandBufferCount,
                                               const VkCommandBuffer *pCommandBuffers) {
     DeviceMapStruct *devMap = get_dev_info((VkDevice)commandBuffer);
@@ -2139,6 +2148,28 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateImage(VkDevice device, const VkImageCreateI
     return result;
 }
 
+VKAPI_ATTR void VKAPI_CALL DestroyImage(VkDevice device, VkImage image, const VkAllocationCallbacks* pAllocator) {
+    DeviceMapStruct *devMap = get_dev_info(device);
+    assert(devMap);
+    VkLayerDispatchTable *pDisp = devMap->device_dispatch_table;
+
+    pDisp->DestroyImage(device, image, pAllocator);
+
+    loader_platform_thread_lock_mutex(&globalLock);
+    if (!dumpFrameBufferByRenderPass || (screenshotFramesReceived && screenshotFrames.empty() && !screenShotFrameRange.valid)) {
+        // No screenshots in the list to take
+        loader_platform_thread_unlock_mutex(&globalLock);
+        return ;
+    }
+
+    auto it = imageMap.find(image);
+    if (it != imageMap.end()) {
+        imageMap.erase(it);
+    }
+    loader_platform_thread_unlock_mutex(&globalLock);
+
+}
+
 VKAPI_ATTR VkResult VKAPI_CALL CreateImageView(VkDevice device, const VkImageViewCreateInfo *pCreateInfo,
                                                const VkAllocationCallbacks *pAllocator, VkImageView *pView) {
     DeviceMapStruct *devMap = get_dev_info(device);
@@ -2156,6 +2187,28 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateImageView(VkDevice device, const VkImageVie
     loader_platform_thread_unlock_mutex(&globalLock);
 
     return result;
+}
+
+VKAPI_ATTR void VKAPI_CALL DestroyImageView(VkDevice device, VkImageView imageView, const VkAllocationCallbacks* pAllocator) {
+    DeviceMapStruct *devMap = get_dev_info(device);
+    assert(devMap);
+    VkLayerDispatchTable *pDisp = devMap->device_dispatch_table;
+
+    pDisp->DestroyImageView(device, imageView, pAllocator);
+
+    loader_platform_thread_lock_mutex(&globalLock);
+    if (!dumpFrameBufferByRenderPass || (screenshotFramesReceived && screenshotFrames.empty() && !screenShotFrameRange.valid)) {
+        // No screenshots in the list to take
+        loader_platform_thread_unlock_mutex(&globalLock);
+        return ;
+    }
+
+    auto it = imageViewToImage.find(imageView);
+    if (it != imageViewToImage.end()) {
+        imageViewToImage.erase(it);
+    }
+    loader_platform_thread_unlock_mutex(&globalLock);
+
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL CreateFramebuffer(VkDevice device, const VkFramebufferCreateInfo *pCreateInfo,
@@ -2182,6 +2235,36 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateFramebuffer(VkDevice device, const VkFrameb
     return result;
 }
 
+VKAPI_ATTR void VKAPI_CALL DestroyFramebuffer( VkDevice device, VkFramebuffer framebuffer, const VkAllocationCallbacks* pAllocator) {
+    DeviceMapStruct *devMap = get_dev_info(device);
+    assert(devMap);
+    VkLayerDispatchTable *pDisp = devMap->device_dispatch_table;
+    pDisp->DestroyFramebuffer(device, framebuffer, pAllocator);
+    loader_platform_thread_lock_mutex(&globalLock);
+    if (!dumpFrameBufferByRenderPass || (screenshotFramesReceived && screenshotFrames.empty() && !screenShotFrameRange.valid)) {
+        // No screenshots in the list to take
+        loader_platform_thread_unlock_mutex(&globalLock);
+        return;
+    }
+    auto imageset = framebufferToImages.find(framebuffer);
+    if (imageset != framebufferToImages.end()) {
+        for (auto image = imageset->second.begin(); image != imageset->second.end(); image++) {
+            auto renderimage = renderPassImages.find(*image);
+            if (renderimage != renderPassImages.end()) {
+                renderPassImages.erase(renderimage);
+            }
+            for (auto imageview = imageViewToImage.begin(); imageview != imageViewToImage.end(); imageview++) {
+                if (imageview->second == *image) {
+                    imageViewToImage.erase(imageview);
+                    break;
+                }
+            }
+        }
+        framebufferToImages.erase(framebuffer);
+    }
+    loader_platform_thread_unlock_mutex(&globalLock);
+}
+
 VkResult OverrideQueueSubmit(VkQueue queue, uint32_t submitCount, const VkSubmitInfo *pSubmits, VkFence fence) {
     DeviceMapStruct *devMap = get_dev_info((VkDevice)queue);
     assert(devMap);
@@ -2199,9 +2282,9 @@ VkResult OverrideQueueSubmit(VkQueue queue, uint32_t submitCount, const VkSubmit
         set<int>::iterator it;
         bool inScreenShotFrames = false;
         bool inScreenShotFrameRange = false;
-        it = screenshotFrames.find(g_frameNumber);
+        it = screenshotFrames.find(g_frameNumber == 0 ? g_ruiFrameNumber : g_frameNumber);
         inScreenShotFrames = (it != screenshotFrames.end());
-        isInScreenShotFrameRange(g_frameNumber, &screenShotFrameRange, &inScreenShotFrameRange);
+        isInScreenShotFrameRange(g_frameNumber == 0 ? g_ruiFrameNumber: g_frameNumber, &screenShotFrameRange, &inScreenShotFrameRange);
         if ((inScreenShotFrames) || (inScreenShotFrameRange)) {
             VkResult ret = pDisp->QueueWaitIdle(queue);
             if (ret != VK_SUCCESS) {
@@ -2239,7 +2322,7 @@ VkResult OverrideQueueSubmit(VkQueue queue, uint32_t submitCount, const VkSubmit
             }
         }
     }
-
+    imageIndex = 0;
     loader_platform_thread_unlock_mutex(&globalLock);
 
     return result;
@@ -2330,15 +2413,19 @@ static void saveUIFrame(int frameNumber) {
             continue;
         }
         // ppm file head
+        uint32_t channelNum = 4;
         file << "P6\n";
-        file << e.second.stride << "\n";
+        file << e.second.width << "\n";
         file << e.second.height << "\n";
         file << 255 << "\n";
         char* ptemp = (char*)ahwBuf;
-        uint32_t size = e.second.stride * e.second.height;
-        for (uint32_t pix = 0; pix < size; pix++) {
-            file.write(ptemp, 3);  //3 is RGB channel
-            ptemp = ptemp + 4;     //4 is RGBA channel
+        uint32_t bytestride = e.second.stride * channelNum;
+        for (int h = 0; h < e.second.height; h++) {
+            ptemp = (char*)ahwBuf + h * bytestride;
+            for (int w = 0; w < e.second.width; w++) {
+                file.write(ptemp, 3);
+                ptemp = ptemp + 4;
+            }
         }
         AHardwareBuffer_unlock(e.second.buffer, nullptr);
         file.close();
@@ -2359,12 +2446,6 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateSemaphore(VkDevice device, const VkSemaphor
     }
     if (g_frameNumber != 0) {
         g_ruiFrameNumber = 0;
-    }
-    if (g_frameNumber == 0 && g_ruiFrameNumber != 0 && screenshotFrames.find(g_ruiFrameNumber) != screenshotFrames.end()) {
-        saveUIFrame(g_ruiFrameNumber);
-    }
-    if (g_frameNumber == 0 && g_ruiFrameNumber != 0 && screenshotFrames.empty() && isInScreenShotFrameRange(g_ruiFrameNumber, &screenShotFrameRange, nullptr)) {
-        saveUIFrame(g_ruiFrameNumber);
     }
     return result;
 }
@@ -2388,7 +2469,7 @@ VKAPI_ATTR VkResult VKAPI_CALL AllocateMemory(VkDevice device, const VkMemoryAll
     AHardwareBuffer_Desc ahwbuf_desc;
     AHardwareBuffer_describe(importAHWBuf->buffer, &ahwbuf_desc);
     if (memoryDedicatedAllocateInfo->pNext && memoryDedicatedAllocateInfo->image != VK_NULL_HANDLE && memoryDedicatedAllocateInfo->buffer == VK_NULL_HANDLE && ahwbuf_desc.format == AHARDWAREBUFFER_FORMAT_R8G8B8A8_UNORM) {
-        AHWBufInfo bufInfo = {importAHWBuf->buffer, (ahwbuf_desc.stride > ahwbuf_desc.width) ? ahwbuf_desc.stride : ahwbuf_desc.width, ahwbuf_desc.height};
+        AHWBufInfo bufInfo = {importAHWBuf->buffer, ahwbuf_desc.stride, ahwbuf_desc.width, ahwbuf_desc.height};
         deviceMemoryToAHWBufInfo[*pMemory] = bufInfo;
     }
     return result;
@@ -2524,6 +2605,7 @@ static PFN_vkVoidFunction intercept_core_device_command(const char *name) {
         {"vkCmdBeginRenderPass", reinterpret_cast<PFN_vkVoidFunction>(CmdBeginRenderPass)},
         {"vkCmdEndRenderPass", reinterpret_cast<PFN_vkVoidFunction>(CmdEndRenderPass)},
         {"vkBeginCommandBuffer", reinterpret_cast<PFN_vkVoidFunction>(BeginCommandBuffer)},
+        {"vkEndCommandBuffer", reinterpret_cast<PFN_vkVoidFunction>(EndCommandBuffer)},
         {"vkCmdExecuteCommands", reinterpret_cast<PFN_vkVoidFunction>(CmdExecuteCommands)},
         {"vkCreateImage", reinterpret_cast<PFN_vkVoidFunction>(CreateImage)},
         {"vkCreateImageView", reinterpret_cast<PFN_vkVoidFunction>(CreateImageView)},
@@ -2538,6 +2620,10 @@ static PFN_vkVoidFunction intercept_core_device_command(const char *name) {
         {"vkCmdBeginRenderPass2KHR", reinterpret_cast<PFN_vkVoidFunction>(CmdBeginRenderPass2KHR)},
         {"vkCmdEndRenderPass2KHR", reinterpret_cast<PFN_vkVoidFunction>(CmdEndRenderPass2KHR)},
         {"vkQueueSubmit2KHR", reinterpret_cast<PFN_vkVoidFunction>(QueueSubmit2KHR)},
+        {"vkDestroyFramebuffer", reinterpret_cast<PFN_vkVoidFunction>(DestroyFramebuffer)},
+        {"vkDestroyImage", reinterpret_cast<PFN_vkVoidFunction>(DestroyImage)},
+        {"vkDestroyImageView", reinterpret_cast<PFN_vkVoidFunction>(DestroyImageView)},
+        {"vkDestroyRenderPass", reinterpret_cast<PFN_vkVoidFunction>(DestroyRenderPass)},
 #ifdef ANDROID
         {"vkCreateSemaphore", reinterpret_cast<PFN_vkVoidFunction>(CreateSemaphore)},
         {"vkAllocateMemory", reinterpret_cast<PFN_vkVoidFunction>(AllocateMemory)},

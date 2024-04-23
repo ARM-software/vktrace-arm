@@ -3,7 +3,7 @@
 # Copyright (c) 2015-2016, 2019 Valve Corporation
 # Copyright (c) 2015-2016, 2019 LunarG, Inc.
 # Copyright (c) 2015-2016, 2019 Google Inc.
-# Copyright (C) 2019-2023 ARM Limited
+# Copyright (C) 2019 ARM Limited
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -504,7 +504,6 @@ std::ostream& dump_text_{sctName}(const {sctName}& object, const ApiDumpSettings
 std::ostream& dump_text_{unName}(const {unName}& object, const ApiDumpSettings& settings, int indents);
 @end union
 
-
 template <typename T>
 inline void dump_text_double_pointer(const T *const* pointer, const ApiDumpSettings &settings, const char *type_string, const char *name, int indents) {{
     settings.formatNameType(settings.stream(), indents, name, type_string);
@@ -541,7 +540,6 @@ std::ostream& dump_text_pNext_trampoline(const void* object, const ApiDumpSettin
         break;
         @end if
     @end struct
-
     case 47: // VK_STRUCTURE_TYPE_LOADER_INSTANCE_CREATE_INFO
     case 48: // VK_STRUCTURE_TYPE_LOADER_DEVICE_CREATE_INFO
         if(static_cast<const VkBaseInStructure*>(object)->pNext != nullptr){{
@@ -581,7 +579,6 @@ std::ostream& dump_text_pNext_struct_name(const void* object, const ApiDumpSetti
         break;
         @end if
     @end struct
-
     case 47: // VK_STRUCTURE_TYPE_LOADER_INSTANCE_CREATE_INFO
     case 48: // VK_STRUCTURE_TYPE_LOADER_DEVICE_CREATE_INFO
         settings.formatNameType(settings.stream(), indents, "pNext", "const void*");
@@ -675,23 +672,18 @@ std::ostream& dump_text_{enumName}({enumName} object, const ApiDumpSettings& set
         break;
     @end option
     @if('{enumName}' == 'VkDescriptorType')
-
     @end if
 
     @if('{enumName}' == 'VkFormat')
-
     @end if
 
     @if('{enumName}' == 'VkPipelineBindPoint')
-
     @end if
 
-    @if('{enumName}' == 'VkFrameBoundaryFlagsEXT')
-
+    @if('{enumName}' == 'VkFrameBoundaryFlagBitsEXT')
     @end if
 
     @if('{enumName}' == 'VkStructureType')
-
     @end if
     default:
         settings.stream() << "UNKNOWN (";
@@ -739,8 +731,6 @@ inline std::ostream& dump_text_{flagName}({flagName} object, const ApiDumpSettin
     return settings.stream() << object;
 }}
 @end flag
-
-
 
 //======================= Func Pointer Implementations ======================//
 
@@ -875,8 +865,6 @@ std::ostream& dump_text_VkPhysicalDeviceGroupProperties(const VkPhysicalDeviceGr
     dump_text_value<const VkBool32>(object.subsetAllocation, settings, "VkBool32", "subsetAllocation", indents + 1, dump_text_VkBool32); // KET
     return settings.stream();
 }}
-
-
 
 //========================== Union Implementations ==========================//
 

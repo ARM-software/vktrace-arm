@@ -3,7 +3,7 @@
  * Copyright 2014-2016 Valve Corporation
  * Copyright (C) 2014-2016 LunarG, Inc.
  * Copyright (C) 2016 Advanced Micro Devices, Inc.
- * Copyright (C) 2019-2023 ARM Limited
+ * Copyright (C) 2019 ARM Limited
  * All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -460,11 +460,28 @@ void vktrace_add_pnext_structs_to_trace_packet(vktrace_trace_packet_header* pHea
         pInNext = (void*)((VkApplicationInfo*)pIn)->pNext;
         size_t size = 0;
         get_struct_size(pInNext, &size);
-
         if (size > 0) {
             vktrace_add_buffer_to_trace_packet(pHeader, ppOutNext, size, pInNext);
             // TODO: Might be able codegen this switch statement
             switch (((VkApplicationInfo*)*ppOutNext)->sType) {
+                case VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_TRIANGLES_OPACITY_MICROMAP_EXT:
+                    AddPointerWithCountToTracebuffer(VkAccelerationStructureTrianglesOpacityMicromapEXT, VkMicromapUsageEXT, pUsageCounts,
+                                                     usageCountsCount);
+                    VkAccelerationStructureTrianglesOpacityMicromapEXT* pInASTriangleOMM = (VkAccelerationStructureTrianglesOpacityMicromapEXT*)pInNext;
+                    if (pInASTriangleOMM->pNext != NULL) {
+                        VkApplicationInfo* pNext = (VkApplicationInfo*)(pInASTriangleOMM->pNext);
+                        if (pNext->sType == VK_STRUCTURE_TYPE_MAX_ENUM) {
+                            int triangleCount = 0;
+                            for (int i = 0; i < pInASTriangleOMM->usageCountsCount; i++) {
+                                triangleCount += pInASTriangleOMM->pUsageCounts[i].count;
+                            }
+                            int indexBufferSize = triangleCount * pInASTriangleOMM->indexStride;
+                            vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(((VkAccelerationStructureTrianglesOpacityMicromapEXT*)(*ppOutNext))->indexBuffer.hostAddress), indexBufferSize, (void*)(((VkAccelerationStructureTrianglesOpacityMicromapEXT*)pInNext)->indexBuffer.hostAddress));
+                            vktrace_finalize_buffer_address(pHeader, (void**)(&((VkAccelerationStructureTrianglesOpacityMicromapEXT*)(*ppOutNext))->indexBuffer.hostAddress));
+                            pInASTriangleOMM->pNext = (void*)(pNext->pNext);
+                        }
+                    }
+                    break;
                 case VK_STRUCTURE_TYPE_DEVICE_GROUP_DEVICE_CREATE_INFO:
                     AddPointerWithCountToTracebuffer(VkDeviceGroupDeviceCreateInfo, VkPhysicalDevice, pPhysicalDevices,
                                                      physicalDeviceCount);
@@ -589,6 +606,9 @@ void vktrace_add_pnext_structs_to_trace_packet(vktrace_trace_packet_header* pHea
                 case VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR:
                     AddPointerWithCountToTracebuffer(VkPipelineRenderingCreateInfoKHR, VkFormat, pColorAttachmentFormats, colorAttachmentCount);
                     break;
+                case VK_STRUCTURE_TYPE_COMMAND_BUFFER_INHERITANCE_RENDERING_INFO:
+                    AddPointerWithCountToTracebuffer(VkCommandBufferInheritanceRenderingInfo, VkFormat, pColorAttachmentFormats, colorAttachmentCount);
+                    break;
                 default:
                     // The cases in this switch statement are only those pnext struct types that have
                     // pointers inside them that need to be added. The pnext list may contain
@@ -600,6 +620,7 @@ void vktrace_add_pnext_structs_to_trace_packet(vktrace_trace_packet_header* pHea
             vktrace_finalize_buffer_address(pHeader, ppOutNext);
         } else {
             // Skip and remove from chain, must be an unknown type
+            vktrace_LogError("The struct type %llu does not exist.", ((VkApplicationInfo*)pInNext)->sType);
             ((VkApplicationInfo*)pOut)->pNext = *ppOutNext ? ((VkApplicationInfo*)*ppOutNext)->pNext : NULL;
             pIn = pInNext;  // Should not remove from original struct, just skip
         }
@@ -736,6 +757,9 @@ void add_VkAccelerationStructureBuildGeometryInfoKHR_to_packet(vktrace_trace_pac
             VkAccelerationStructureGeometryDataKHR *pSrc = (VkAccelerationStructureGeometryDataKHR*)&((pInStruct)->pGeometries[i].geometry);
             // The size of instance data is usually not too large. So we record instance data of vkBuildAccelerationStructuresKHR into
             // the package, no matter pSrc->instances.data.hostAddress is a real system memory address or mapped from a VkBuffer
+            if (pInStruct->pGeometries[i].geometryType == VK_GEOMETRY_TYPE_TRIANGLES_KHR) {
+                vktrace_add_pnext_structs_to_trace_packet(pHeader, (void*)&(pDst->triangles), (void*)&(pSrc->triangles));
+            }
             if (pInStruct->pGeometries[i].geometryType == VK_GEOMETRY_TYPE_INSTANCES_KHR && pBuildRangeInfos != NULL && hostAddr) {
                 vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pDst->instances.data.hostAddress), sizeof(VkAccelerationStructureInstanceKHR) * pBuildRangeInfos[i].primitiveCount, pSrc->instances.data.hostAddress);
                 vktrace_finalize_buffer_address(pHeader, (void**)&(pDst->instances.data.hostAddress));
@@ -1095,6 +1119,16 @@ VkAccelerationStructureBuildGeometryInfoKHR* interpret_VkAccelerationStructureBu
         if (pVkASBuildGeometryInfoKHR->geometryCount > 0 && pVkASBuildGeometryInfoKHR->pGeometries) {
             for (i = 0; i < pVkASBuildGeometryInfoKHR->geometryCount; i++) {
                 VkAccelerationStructureGeometryKHR *pTmp = (VkAccelerationStructureGeometryKHR *)&pVkASBuildGeometryInfoKHR->pGeometries[i];
+                if (pTmp->geometryType == VK_GEOMETRY_TYPE_TRIANGLES_KHR) {
+                    if (hostAddress) {
+                        /*when replaying, we borrow the entrypoint_end_time variable to express whether those VkDeviceOrHostAddressConstKHR address
+                        in the VkAccelerationStructureGeometryDataKHR structure is host address or device address,if set entrypoint_end_time to
+                        VK_STRUCTURE_TYPE_MAX_ENUM, then VkDeviceOrHostAddressConstKHR is a host address.
+                        */
+                        pHeader->entrypoint_end_time = (uint64_t)VK_STRUCTURE_TYPE_MAX_ENUM;
+                    }
+                    vkreplay_interpret_pnext_pointers(pHeader, (void*)&(pTmp->geometry.triangles));
+                }
                 // Host instance data are stored in the package, so it can be interpreted here.
                 if (pTmp->geometryType == VK_GEOMETRY_TYPE_INSTANCES_KHR && hostAddress)
                     pTmp->geometry.instances.data.hostAddress = vktrace_trace_packet_interpret_buffer_pointer(pHeader, (intptr_t)pTmp->geometry.instances.data.hostAddress);
@@ -1275,6 +1309,32 @@ VkDeviceCreateInfo* interpret_VkDeviceCreateInfo(vktrace_trace_packet_header* pH
     return pVkDeviceCreateInfo;
 }
 
+void interpret_VkMicromapBuildInfoEXT(vktrace_trace_packet_header* pHeader, VkMicromapBuildInfoEXT* pBuildInfo, int DeviceOrHostAddressType) {
+    if (pBuildInfo->usageCountsCount > 0 && pBuildInfo->pUsageCounts) {
+        pBuildInfo->pUsageCounts = (const VkMicromapUsageEXT*)vktrace_trace_packet_interpret_buffer_pointer(pHeader, (intptr_t)pBuildInfo->pUsageCounts);
+    }
+    if (pBuildInfo->usageCountsCount > 0 && pBuildInfo->ppUsageCounts) {
+        pBuildInfo->ppUsageCounts = (const VkMicromapUsageEXT* const*)vktrace_trace_packet_interpret_buffer_pointer(pHeader, (intptr_t)pBuildInfo->ppUsageCounts);
+    }
+    if (DeviceOrHostAddressType == 0) {
+        return ;
+    }
+    if (DeviceOrHostAddressType == 1) {
+        return ;
+    }
+    if (DeviceOrHostAddressType == 2) {
+        if (pBuildInfo->data.hostAddress) {
+            pBuildInfo->data.hostAddress = vktrace_trace_packet_interpret_buffer_pointer(pHeader, (intptr_t)pBuildInfo->data.hostAddress);
+        }
+        if (pBuildInfo->scratchData.hostAddress) {
+            pBuildInfo->scratchData.hostAddress = vktrace_trace_packet_interpret_buffer_pointer(pHeader, (intptr_t)pBuildInfo->scratchData.hostAddress);
+        }
+        if (pBuildInfo->triangleArray.hostAddress) {
+            pBuildInfo->triangleArray.hostAddress = vktrace_trace_packet_interpret_buffer_pointer(pHeader, (intptr_t)pBuildInfo->triangleArray.hostAddress);
+        }
+    }
+}
+
 void interpret_VkPipelineShaderStageCreateInfo(vktrace_trace_packet_header* pHeader, VkPipelineShaderStageCreateInfo* pShader) {
     if (pShader != NULL) {
         pShader->pName = (const char*)vktrace_trace_packet_interpret_buffer_pointer(pHeader, (intptr_t)pShader->pName);
@@ -1288,6 +1348,28 @@ void interpret_VkPipelineShaderStageCreateInfo(vktrace_trace_packet_header* pHea
             pInfo->pData =
                 (const void*)vktrace_trace_packet_interpret_buffer_pointer(pHeader, (intptr_t)pShader->pSpecializationInfo->pData);
         }
+    }
+}
+
+void interpret_VkSubmitInfo2(vktrace_trace_packet_header* pHeader, VkSubmitInfo2* pSubmitInfo) {
+    vkreplay_interpret_pnext_pointers(pHeader, pSubmitInfo);
+
+    VkSemaphoreSubmitInfo* pWaitSemaphoreInfos = (VkSemaphoreSubmitInfo*)vktrace_trace_packet_interpret_buffer_pointer(pHeader, (intptr_t)pSubmitInfo->pWaitSemaphoreInfos);
+    pSubmitInfo->pWaitSemaphoreInfos = pWaitSemaphoreInfos;
+    for (int i = 0; i < pSubmitInfo->waitSemaphoreInfoCount; i++) {
+        vkreplay_interpret_pnext_pointers(pHeader, (void*)&(pSubmitInfo->pWaitSemaphoreInfos[i]));
+    }
+
+    VkCommandBufferSubmitInfo *pCommandBufferInfos = (VkCommandBufferSubmitInfo*)vktrace_trace_packet_interpret_buffer_pointer(pHeader, (intptr_t)pSubmitInfo->pCommandBufferInfos);
+    pSubmitInfo->pCommandBufferInfos = pCommandBufferInfos;
+    for (int i = 0; i < pSubmitInfo->commandBufferInfoCount; i++) {
+        vkreplay_interpret_pnext_pointers(pHeader, (void*)&(pSubmitInfo->pCommandBufferInfos[i]));
+    }
+
+    VkSemaphoreSubmitInfo* pSignalSemaphoreInfos = (VkSemaphoreSubmitInfo*)vktrace_trace_packet_interpret_buffer_pointer(pHeader, (intptr_t)pSubmitInfo->pSignalSemaphoreInfos);
+    pSubmitInfo->pSignalSemaphoreInfos = pSignalSemaphoreInfos;
+    for (int i = 0; i < pSubmitInfo->signalSemaphoreInfoCount; i++) {
+        vkreplay_interpret_pnext_pointers(pHeader, (void*)&(pSubmitInfo->pSignalSemaphoreInfos[i]));
     }
 }
 
@@ -1338,6 +1420,15 @@ void vkreplay_interpret_pnext_pointers(vktrace_trace_packet_header* pHeader, voi
                         pHeader, (intptr_t)struct_ptr_cur->pBindings[i].pImmutableSamplers);
                 }
             } break;
+            case VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_TRIANGLES_OPACITY_MICROMAP_EXT:
+                {
+                    InterpretPointerInPNext(VkAccelerationStructureTrianglesOpacityMicromapEXT, VkMicromapUsageEXT, pUsageCounts);
+                    if (pHeader->entrypoint_end_time == (uint64_t)VK_STRUCTURE_TYPE_MAX_ENUM) {
+                        VkAccelerationStructureTrianglesOpacityMicromapEXT* pASTriangleOMM = (VkAccelerationStructureTrianglesOpacityMicromapEXT*)(((VkApplicationInfo*)struct_ptr)->pNext);
+                        pASTriangleOMM->indexBuffer.hostAddress = vktrace_trace_packet_interpret_buffer_pointer(pHeader, (intptr_t)pASTriangleOMM->indexBuffer.hostAddress);
+                    }
+                }
+                break;
             case VK_STRUCTURE_TYPE_DEVICE_GROUP_DEVICE_CREATE_INFO:
                 InterpretPointerInPNext(VkDeviceGroupDeviceCreateInfo, VkPhysicalDevice, pPhysicalDevices);
                 break;
@@ -1450,6 +1541,9 @@ void vkreplay_interpret_pnext_pointers(vktrace_trace_packet_header* pHeader, voi
             case VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR:
                 InterpretPointerInPNext(VkPipelineRenderingCreateInfoKHR, VkFormat, pColorAttachmentFormats);
                 break;
+            case VK_STRUCTURE_TYPE_COMMAND_BUFFER_INHERITANCE_RENDERING_INFO:
+                InterpretPointerInPNext(VkCommandBufferInheritanceRenderingInfo, VkFormat, pColorAttachmentFormats);
+                break;
             default:
                 // The cases in this switch statement are only those pnext struct types that have
                 // pointers inside them that need to be interpreted. The pnext list may contain
@@ -1465,10 +1559,7 @@ BOOL vktrace_append_portabilitytable(uint16_t packet_id) {
         packet_id == VKTRACE_TPI_VK_vkBindBufferMemory || packet_id == VKTRACE_TPI_VK_vkBindBufferMemory2 || packet_id == VKTRACE_TPI_VK_vkBindBufferMemory2KHR ||
         packet_id == VKTRACE_TPI_VK_vkAllocateMemory || packet_id == VKTRACE_TPI_VK_vkDestroyImage ||
         packet_id == VKTRACE_TPI_VK_vkDestroyBuffer || packet_id == VKTRACE_TPI_VK_vkFreeMemory ||
-        packet_id == VKTRACE_TPI_VK_vkCreateBuffer || packet_id == VKTRACE_TPI_VK_vkCreateImage ||
-        packet_id == VKTRACE_TPI_VK_vkCreateWeightsARM || packet_id == VKTRACE_TPI_VK_vkCreateTensorEXT ||
-        packet_id == VKTRACE_TPI_VK_vkDestroyWeightsARM || packet_id == VKTRACE_TPI_VK_vkDestroyTensorEXT ||
-        packet_id == VKTRACE_TPI_VK_vkBindWeightsMemoryARM || packet_id == VKTRACE_TPI_VK_vkBindTensorMemoryEXT) {
+        packet_id == VKTRACE_TPI_VK_vkCreateBuffer || packet_id == VKTRACE_TPI_VK_vkCreateImage) {
         return TRUE;
     }
     return FALSE;

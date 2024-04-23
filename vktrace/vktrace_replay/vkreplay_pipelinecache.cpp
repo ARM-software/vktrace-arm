@@ -1,19 +1,3 @@
-/*
- * Copyright (C) 2019-2023 ARM Limited
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
 #include <vkreplay_pipelinecache.h>
 
 #include <sys/types.h>
@@ -127,7 +111,7 @@ namespace vktrace_replay {
     }
 
     std::pair<void*, size_t> PipelineCacheAccessor::GetPipelineCache(const VkPipelineCache &cache_handle) const {
-        const uint64_t key = reinterpret_cast<uint64_t>(cache_handle);
+        const uint64_t key = m_pipelineCacheToGpi.at(cache_handle);
         std::pair<void*, size_t> result({nullptr, 0});
         const auto iter = m_cachemap.find(key);
         if (m_cachemap.end() == iter) {
@@ -143,7 +127,8 @@ namespace vktrace_replay {
         const std::string root_path = m_cachepath;
         std::stringstream ss;
         std::string &&uuid = PipelinecacheUUIDToString(pipelinecache_uuid);
-        ss << root_path << "/" << cache_handle_value << "-" << gpu_info << "-" << uuid << ".dat";
+        uint64_t gpi = m_pipelineCacheToGpi[cache_handle];
+        ss << root_path << "/" << gpi << "-" << cache_handle_value << "-" << gpu_info << "-" << uuid << ".dat";
 
         const std::string file_name = ss.str();
         std::ofstream file;
@@ -219,36 +204,50 @@ namespace vktrace_replay {
         if (iter != m_collected_packetinfo_list.end()) {
             m_collected_packetinfo_list.erase(iter);
         }
+        auto it = m_pipelineCacheToGpi.find(cache_key);
+        if (it != m_pipelineCacheToGpi.end()) {
+            m_pipelineCacheToGpi.erase(it);
+        }
     }
 
-    std::string PipelineCacheAccessor::FindFile(const VkPipelineCache &cache_handle) const {
+    std::string PipelineCacheAccessor::FindFile(const uint64_t &gpi, const VkPipelineCache &cache_handle) {
         std::string result;
         std::vector<std::string> &&file_list = GetFileList(m_cachepath);
         if (file_list.empty()) {
             return result;
         }
-
+        m_pipelineCacheToGpi[cache_handle] = gpi;
         const uint64_t cache_handle_value = reinterpret_cast<uint64_t>(cache_handle);
         std::stringstream ss;
+        std::stringstream ss_gpi_value;
+        ss_gpi_value << gpi;
         ss << cache_handle_value;
         for (const auto &full_path : file_list) {
-            if (std::string::npos == full_path.find(ss.str())) {
-                continue;
+            if (std::string::npos != full_path.find(ss.str()) &&
+                std::string::npos != full_path.find(ss_gpi_value.str())) {
+                result = full_path;
+                break;
             }
-            result = full_path;
         }
 
         return result;
     }
 
-    std::string PipelineCacheAccessor::FindFile(const VkPipelineCache &cache_handle, const uint64_t &gpu_info, const uint8_t *pipelinecache_uuid) const {
+    std::string PipelineCacheAccessor::FindFile(const uint64_t &gpi, const VkPipelineCache &cache_handle, const uint64_t &gpu_info, const uint8_t *pipelinecache_uuid) {
         std::string result;
         std::vector<std::string> &&file_list = GetFileList(m_cachepath);
+        const uint64_t cache_handle_value = reinterpret_cast<uint64_t>(cache_handle);
+        std::stringstream ss_gpi_value;
+        if (gpi != UINT64_MAX) {
+            m_pipelineCacheToGpi[cache_handle] = gpi;
+            ss_gpi_value << gpi;
+        } else {
+            ss_gpi_value << m_pipelineCacheToGpi.at(cache_handle);
+        }
         if (file_list.empty()) {
             return result;
         }
 
-        const uint64_t cache_handle_value = reinterpret_cast<uint64_t>(cache_handle);
         std::stringstream ss_cache_handle;
         std::stringstream ss_gpu_info;
         std::stringstream ss_pipelinecache_uuid;
@@ -256,7 +255,8 @@ namespace vktrace_replay {
         ss_gpu_info << gpu_info;
         std::string &&uuid = PipelinecacheUUIDToString(pipelinecache_uuid);
         for (const auto &full_path : file_list) {
-            if (std::string::npos != full_path.find(ss_cache_handle.str()) &&
+            if (std::string::npos != full_path.find(ss_gpi_value.str()) &&
+                std::string::npos != full_path.find(ss_cache_handle.str()) &&
                 std::string::npos != full_path.find(ss_gpu_info.str()) &&
                 std::string::npos != full_path.find(uuid)) {
                 result = full_path;

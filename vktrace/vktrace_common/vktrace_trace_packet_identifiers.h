@@ -2,7 +2,6 @@
  *
  * Copyright 2014-2016 Valve Corporation
  * Copyright (C) 2014-2016 LunarG, Inc.
- * Copyright (C) 2020-2023 ARM Limited
  * All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -543,29 +542,21 @@ typedef enum _VKTRACE_TRACE_PACKET_ID_VK {
     VKTRACE_TPI_VK_vkReleaseProfilingLockKHR = 457,
     VKTRACE_TPI_VK_vkGetImageSubresourceLayout2EXT = 458,
 
-    VKTRACE_TPI_VK_vkCreateTensorEXT = 6000,
-    VKTRACE_TPI_VK_vkDestroyTensorEXT = 6001,
-    VKTRACE_TPI_VK_vkCreateTensorViewEXT = 6002,
-    VKTRACE_TPI_VK_vkDestroyTensorViewEXT = 6003,
-    VKTRACE_TPI_VK_vkGetTensorMemoryRequirementsEXT = 6004,
-    VKTRACE_TPI_VK_vkBindTensorMemoryEXT = 6005,
-    VKTRACE_TPI_VK_vkGetDeviceTensorMemoryRequirementsEXT = 6006,
-    VKTRACE_TPI_VK_vkCmdCopyTensorEXT = 6007,
-    VKTRACE_TPI_VK_vkCreateNEPipelinesARM = 6008,
-    VKTRACE_TPI_VK_vkCmdDispatchNEARM = 6009,
-    VKTRACE_TPI_VK_vkCreateWeightsARM = 6010,
-    VKTRACE_TPI_VK_vkDestroyWeightsARM = 6011,
-    VKTRACE_TPI_VK_vkGetWeightsMemoryRequirementsARM = 6012,
-    VKTRACE_TPI_VK_vkBindWeightsMemoryARM = 6013,
-    VKTRACE_TPI_VK_vkGetWeightsDeviceAddressARM = 6014,
-    VKTRACE_TPI_VK_vkGetTensorDeviceAddressARM = 6015,
-    VKTRACE_TPI_VK_vkGetPhysicalDeviceGraphInstructionSetsEXT = 6016,
-    VKTRACE_TPI_VK_vkCreateGraphPipelinesEXT = 6017,
-    VKTRACE_TPI_VK_vkCreateGraphPipelineSessionEXT = 6018,
-    VKTRACE_TPI_VK_vkGetGraphPipelineSessionMemoryRequirementsEXT = 6019,
-    VKTRACE_TPI_VK_vkBindGraphPipelineSessionMemoryEXT = 6020,
-    VKTRACE_TPI_VK_vkDestroyGraphPipelineSessionEXT = 6021,
-    VKTRACE_TPI_VK_vkCmdDispatchGraphEXT = 6022,
+    //****************Opacity Micromap**************
+    VKTRACE_TPI_VK_vkCreateMicromapEXT = 459,
+    VKTRACE_TPI_VK_vkDestroyMicromapEXT = 460,
+    VKTRACE_TPI_VK_vkCmdBuildMicromapsEXT = 461,
+    VKTRACE_TPI_VK_vkBuildMicromapsEXT = 462,
+    VKTRACE_TPI_VK_vkCopyMicromapEXT = 463,
+    VKTRACE_TPI_VK_vkCopyMicromapToMemoryEXT = 464,
+    VKTRACE_TPI_VK_vkCopyMemoryToMicromapEXT = 465,
+    VKTRACE_TPI_VK_vkWriteMicromapsPropertiesEXT = 466,
+    VKTRACE_TPI_VK_vkCmdCopyMicromapEXT = 467,
+    VKTRACE_TPI_VK_vkCmdCopyMicromapToMemoryEXT = 468,
+    VKTRACE_TPI_VK_vkCmdCopyMemoryToMicromapEXT = 469,
+    VKTRACE_TPI_VK_vkCmdWriteMicromapsPropertiesEXT = 470,
+    VKTRACE_TPI_VK_vkGetDeviceMicromapCompatibilityEXT = 471,
+    VKTRACE_TPI_VK_vkGetMicromapBuildSizesEXT = 472,
 
 #if VK_ANDROID_frame_boundary
     VKTRACE_TPI_VK_vkFrameBoundaryANDROID = 0xFFEB,              // non-standard API derived
@@ -622,7 +613,7 @@ typedef enum VKTRACE_TRACER_FEATURE {
 
 typedef enum VKTRACE_FILE_HEADER_FLAG {
     VKTRACE_USE_ACCELERATION_STRUCTURE_API_BIT        = 0x1,
-    VKTRACE_RQ_POSTPROCESSED_BIT                      = 0x2             // This trace file is post-processed by vktrace_rq_pp
+    VKTRACE_RQ_POSTPROCESSED_BIT                      = 0x2
 } VKTRACE_FILE_HEADER_FLAG;
 
 typedef enum VKTRACE_VKBUFFER_USAGE_FLAG {
@@ -659,7 +650,8 @@ typedef struct {
     ALIGN8 uint64_t os;
 
     // Reserve some spaece in case more fields need to be added in the future
-    ALIGN8 uint64_t reserved2[5];
+    ALIGN8 uint64_t reserved2[4];
+    ALIGN8 uint64_t changeid; // change id of gerrit when compiling the source
     ALIGN8 uint64_t meta_data_offset;
     ALIGN8 uint64_t enabled_tracer_features;
     ALIGN8 uint64_t decompress_file_size;

@@ -2,7 +2,7 @@
  *
  * Copyright 2015-2016 Valve Corporation
  * Copyright (C) 2015-2016 LunarG, Inc.
- * Copyright (C) 2019-2023 ARM Limited.
+ * Copyright (C) 2019 ARM Limited.
  * All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -55,8 +55,8 @@ namespace vktrace_replay {
             void                     CollectPacketInfo(const VkDevice &device, const VkPipelineCache &cache_key);
             void                     RemoveCollectedPacketInfo(const VkDevice &device, const VkPipelineCache &cache_key);
 
-            std::string              FindFile(const VkPipelineCache &cache_handle) const;
-            std::string              FindFile(const VkPipelineCache &cache_handle, const uint64_t &gpu_info, const uint8_t *pipelinecache_uuid) const;
+            std::string              FindFile(const uint64_t &gpi, const VkPipelineCache &cache_handle);
+            std::string              FindFile(const uint64_t &gpi, const VkPipelineCache &cache_handle, const uint64_t &gpu_info, const uint8_t *pipelinecache_uuid);
 
             std::list<std::pair<VkDevice, VkPipelineCache>> GetCollectedPacketInfo() const;
         private:
@@ -64,6 +64,7 @@ namespace vktrace_replay {
 
         private:
             std::map<uint64_t, std::pair<void*, size_t>>           m_cachemap;
+            std::map<VkPipelineCache, uint64_t>                    m_pipelineCacheToGpi;
             std::list<std::pair<VkDevice, VkPipelineCache>>        m_collected_packetinfo_list;
             std::string                                            m_cachepath;
     };

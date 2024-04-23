@@ -4,7 +4,6 @@
  * Copyright (C) 2016 Valve Corporation
  * Copyright (C) 2016 LunarG, Inc.
  * Copyright (C) 2016 Google Inc.
- * Copyright (C) 2019-2023 ARM Limited
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.

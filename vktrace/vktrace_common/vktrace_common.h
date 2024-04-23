@@ -2,7 +2,7 @@
  *
  * Copyright 2014-2016 Valve Corporation
  * Copyright (C) 2014-2016 LunarG, Inc.
- * Copyright (C) 2019-2023 ARM Limited
+ * Copyright (C) 2019 ARM Limited
  * All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -322,3 +322,7 @@ static uint32_t getAHardwareBufBPP(uint32_t fmt) {
 // buildScratchSize returned by vkGetAccelerationStructureBuildSizesKHR
 // If this env var is not defined, the default VKTRACE_AS_BUILD_RESIZE = 1.
 #define VKTRACE_AS_BUILD_RESIZE_ENV "VKTRACE_AS_BUILD_RESIZE"
+
+// VKTRACE_SWAPCHAIN_MINIMAGECOUNT env var specifies the minImageCount of CreateSwapChain
+// If this env var is not defined, the default VKTRACE_SWAPCHAIN_MINIMAGECOUNT is not enabled.
+#define VKTRACE_SWAPCHAIN_MINIMAGECOUNT_ENV "VKTRACE_SWAPCHAIN_MINIMAGECOUNT"

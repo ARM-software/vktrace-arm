@@ -41,6 +41,7 @@ set(SRC_LIST
     vktrace_lib_trim_statetracker.cpp
     vktrace_lib_trim_descriptoriterator.cpp
     vktrace_lib_trim_cmdbuild_as.cpp
+    vktrace_lib_trim_build_as.cpp
     vktrace_lib_trim_utils.cpp
     vktrace_vk_exts.cpp
     ${GENERATED_FILES_DIR}/vktrace_vk_vk.cpp
@@ -55,6 +56,7 @@ set(HDR_LIST
     vktrace_lib_trim_statetracker.h
     vktrace_lib_trim_descriptoriterator.h
     vktrace_lib_trim_cmdbuild_as.h
+    vktrace_lib_trim_build_as.h
     vktrace_lib_pagestatusarray.h
     vktrace_lib_pageguardmappedmemory.h
     vktrace_lib_pageguardcapture.h
@@ -129,7 +131,7 @@ add_dependencies(${PROJECT_NAME} vktrace_generate_helper_files)
 
 # Set Compiler Flags, Libraries
 if (${CMAKE_SYSTEM_NAME} MATCHES "Linux")
-    set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11")
+    set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++17")
     set(OS_TRACER_LIBS
         -shared
         -ldl

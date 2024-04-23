@@ -2,7 +2,7 @@
  *
  * Copyright (C) 2015-2017 Valve Corporation
  * Copyright (C) 2015-2017 LunarG, Inc.
- * Copyright (C) 2019-2023 ARM Limited.
+ * Copyright (C) 2019 ARM Limited.
  * All Rights Reserved
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -116,6 +116,7 @@ extern "C" {
 #define PREMAP_SHIFT (0x1 << 15)
 
 extern vkreplayer_settings* g_pReplaySettings;
+extern std::unordered_map<VkImageView, VkImage> g_imageviewToImage;
 extern int g_ruiFrames;
 
 class vkReplay {
@@ -155,12 +156,6 @@ class vkReplay {
     std::unordered_map<VkDevice, VkPhysicalDevice> &get_ReplayPhysicalDevices () { return replayPhysicalDevices; };
     VkLayerInstanceDispatchTable* get_VkLayerInstanceDispatchTable() { return &m_vkFuncs; };
     VkLayerDispatchTable* get_VkLayerDispatchTable() { return &m_vkDeviceFuncs; };
-
-    bool isTraceFilePostProcessedByRqpp() {
-        if (m_pFileHeader->bit_flags & VKTRACE_RQ_POSTPROCESSED_BIT)
-            return true;
-        return false;
-    }
 
    private:
     void init_funcs(void* handle);
@@ -270,6 +265,21 @@ class vkReplay {
 
     std::vector<struct ValidationMsg> m_validationMsgs;
     std::vector<int> m_screenshotFrames;
+
+    VkResult manually_replay_vkCreateMicromapEXT(packet_vkCreateMicromapEXT* pPacket);
+    void manually_replay_vkDestroyMicromapEXT(packet_vkDestroyMicromapEXT* pPacket);
+    VkResult manually_replay_vkBuildMicromapsEXT(packet_vkBuildMicromapsEXT* pPacket);
+    void manually_replay_vkCmdBuildMicromapsEXT(packet_vkCmdBuildMicromapsEXT* pPacket);
+    VkResult manually_replay_vkCopyMicromapEXT(packet_vkCopyMicromapEXT* pPacket);
+    void manually_replay_vkCmdCopyMicromapEXT(packet_vkCmdCopyMicromapEXT* pPacket);
+    VkResult manually_replay_vkCopyMicromapToMemoryEXT(packet_vkCopyMicromapToMemoryEXT* pPacket);
+    void manually_replay_vkCmdCopyMicromapToMemoryEXT(packet_vkCmdCopyMicromapToMemoryEXT* pPacket);
+    VkResult manually_replay_vkCopyMemoryToMicromapEXT(packet_vkCopyMemoryToMicromapEXT* pPacket);
+    void manually_replay_vkCmdCopyMemoryToMicromapEXT(packet_vkCmdCopyMemoryToMicromapEXT* pPacket);
+    VkResult manually_replay_vkWriteMicromapsPropertiesEXT(packet_vkWriteMicromapsPropertiesEXT* pPacket);
+    void manually_replay_vkCmdWriteMicromapsPropertiesEXT(packet_vkCmdWriteMicromapsPropertiesEXT* pPacket);
+    void manually_replay_vkGetDeviceMicromapCompatibilityEXT(packet_vkGetDeviceMicromapCompatibilityEXT* pPacket);
+    void manually_replay_vkGetMicromapBuildSizesEXT(packet_vkGetMicromapBuildSizesEXT* pPacket);
 
 #if VK_ANDROID_frame_boundary
     VkResult manually_replay_vkFrameBoundaryANDROID(packet_vkFrameBoundaryANDROID* pPacket);
@@ -427,6 +437,9 @@ class vkReplay {
     void manually_replay_vkCmdPipelineBarrier2KHR(packet_vkCmdPipelineBarrier2KHR *pPacket);
     void manually_replay_vkCmdPipelineBarrier2(packet_vkCmdPipelineBarrier2 *pPacket);
     VkResult manually_replay_vkWaitSemaphoresKHR(packet_vkWaitSemaphoresKHR* pPacket);
+    VkResult manually_replay_vkQueueSubmit2(packet_vkQueueSubmit2 *pPacket);
+    void manually_replay_vkCmdBeginRendering(packet_vkCmdBeginRendering *pPacket);
+    VkResult manually_replay_vkImportSemaphoreFdKHR(packet_vkImportSemaphoreFdKHR* pPacket);
 
     void process_screenshot_list(const char* list) {
         std::string spec(list), word;
@@ -495,6 +508,14 @@ class vkReplay {
     std::unordered_map<VkPipeline, VkDevice> replayRayTracingPipelinesNVToDevice;
     std::unordered_map<VkPrivateDataSlot, VkDevice> replayPrivateDataSlotToDevice;
     std::unordered_map<VkPrivateDataSlotEXT, VkDevice> replayPrivateDataSlotEXTToDevice;
+
+    // micromap
+    std::unordered_map<VkMicromapEXT, void*> replayMicromapToCopyAddress;
+    std::unordered_map<VkMicromapEXT, VkDevice> replayMicromapEXTToDevice;
+    std::unordered_map<VkMicromapEXT, VkMicromapBuildSizesInfoEXT> replayMicromapToMicromapBuildSizes;
+    std::unordered_map<VkDeviceSize, VkMicromapBuildSizesInfoEXT> traceMicromapSizeToReplayMicromapBuildSizes;
+    std::unordered_map<VkDeviceSize, VkMicromapBuildSizesInfoEXT> traceBuildSizeToReplayMicromapBuildSizes;
+    std::unordered_map<VkQueryPool, std::unordered_set<int> > replayQueryPoolMicromapCompactSize;
     // Map VkSwapchainKHR to vector of VkImage, so we can unmap swapchain images at vkDestroySwapchainKHR
     std::unordered_map<VkSwapchainKHR, std::vector<VkImage>> traceSwapchainToImages;
     std::unordered_map<VkSwapchainKHR, std::vector<VkImage>> traceSwapchainToReplayImages;
@@ -560,6 +581,7 @@ class vkReplay {
 
     std::unordered_set<VkDeviceMemory> traceSkippedDeviceMemories;
     std::vector<VkImage> hardwarebufferImage;
+    std::vector<packet_vkGetMicromapBuildSizesEXT> micromapBuildSizesInfoVec;
 
     // Map VkSurfaceKHR to VkSurfaceCapabilitiesKHR
     std::unordered_map<VkSurfaceKHR, VkSurfaceCapabilitiesKHR> replaySurfaceCapabilities;
@@ -585,6 +607,9 @@ class vkReplay {
 
     RayTracingPipelineHandler *rtHandler;
 
+    VkDeviceAddress m_minTraceBufferDeviceAddress = UINT64_MAX;
+    VkDeviceAddress m_maxTraceBufferDeviceAddress = 0;
+    std::unordered_map<VkSemaphore, int> traceSemaphoreHandleToTraceFD;
     std::unordered_map<VkDeviceAddress, objDeviceAddr> traceDeviceAddrToReplayDeviceAddr4Buf;
     std::unordered_map<VkDeviceAddress, VkBuffer> traceDeviceAddrTotraceBuffer4Buf;
     std::unordered_map<VkDeviceAddress, objDeviceAddr> traceDeviceAddrToReplayDeviceAddr4AS;
@@ -596,6 +621,9 @@ class vkReplay {
     std::unordered_map<VkBuffer, VkDeviceSize> traceBufferToASBuildSizes;
     std::unordered_map<VkBuffer, VkDeviceSize> replayBufferToASBuildSizes;
     std::unordered_map<VkAccelerationStructureKHR, VkAccelerationStructureBuildSizesInfoKHR> replayASToASBuildSizes;
+#if defined(_DEBUG)
+    std::unordered_map<VkAccelerationStructureKHR, VkAccelerationStructureCreateInfoKHR> replayASToASCreateInfo;
+#endif
     std::unordered_map<VkDeviceSize, VkAccelerationStructureBuildSizesInfoKHR> traceASSizeToReplayASBuildSizes;
     std::unordered_map<VkDeviceSize, VkAccelerationStructureBuildSizesInfoKHR> traceUpdateSizeToReplayASBuildSizes;
     std::unordered_map<VkDeviceSize, VkAccelerationStructureBuildSizesInfoKHR> traceBuildSizeToReplayASBuildSizes;
@@ -625,6 +653,9 @@ class vkReplay {
     bool remapReplayPatternDeviceAddresssInFlushMemory(VkDevice remappedDevice, const void* pSrcData);
     void remapReplayInstanceBufferDeviceAddresss(VkDevice remappedDevice, VkDeviceMemory dataMemory, VkDeviceSize size, uint64_t offset);
     void remapInstanceBufferDeviceAddressInCopyBuffer(VkBuffer traceSrcBuffer, VkBuffer traceDstBuffer, VkDeviceSize srcOffset, VkDeviceSize copySize);
+#if defined(_DEBUG)
+    void checkAccelerationStructureSizes(VkAccelerationStructureKHR replayDstAS, const VkAccelerationStructureBuildGeometryInfoKHR* pInfos, const VkAccelerationStructureBuildRangeInfoKHR* pBuildRangeInfos, std::unordered_map<VkDeviceAddress, vkReplay::objDeviceAddr>::iterator it, VkDeviceSize scratchBufferOffset);
+#endif
     uint32_t swapchainRefCount = 0;
     uint32_t surfRefCount = 0;
     uint32_t m_instCount = 0;

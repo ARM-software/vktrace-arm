@@ -5,7 +5,7 @@ set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/../)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/../)
 
 if (${CMAKE_SYSTEM_NAME} MATCHES "Linux")
-    set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11")
+    set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++17")
     set(OS_REPLAYER_LIBS xcb  ${LIBRARIES})
 
     # Make sure the exe directory is searched when loading libraries with dlopen

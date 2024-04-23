@@ -1,6 +1,5 @@
 /*
 * Copyright (c) 2016 Advanced Micro Devices, Inc. All rights reserved.
-* Copyright (C) 2020-2023 ARM Limited
 *
 * Licensed under the Apache License, Version 2.0 (the "License");
 * you may not use this file except in compliance with the License.
@@ -81,6 +80,7 @@ typedef struct _BuildAsBufferInfo
     VkDeviceMemory      stagingMem; // memory bound to the new staging buffer
     VkBuffer            stagingBuf; // a new staging buffer to blt the buffer to
     VkDeviceAddress     stagingAddr;
+    void*               hostAddress;
 }BuildAsBufferInfo;
 typedef struct _BuildAsGeometryInfo
 {
@@ -113,14 +113,16 @@ typedef struct _BuildAsGeometryInfo
 typedef struct _BuildAsInfo
 {
     vktrace_trace_packet_header*                pCmdBuildAccelerationtStructure;
+    vktrace_trace_packet_header*                pBuildAccelerationtStructure;
     std::vector<BuildAsGeometryInfo>            geometryInfo;
     std::vector<vktrace_trace_packet_header*>   AssistCommand;
 }BuildAsInfo;
 
-typedef struct _cmdCopyAsInfo
+typedef struct _CopyAsInfo
 {
     vktrace_trace_packet_header*                pCmdCopyAccelerationStructureKHR;
-}cmdCopyAsInfo;
+    vktrace_trace_packet_header*                pCopyAccelerationStructureKHR;
+}CopyAsInfo;
 
 //-------------------------------------------------------------------------
 // Some of the items in this struct are based on what is tracked in the
@@ -314,6 +316,7 @@ typedef struct _Trim_ObjectInfo {
             uint32_t numSets;
         } DescriptorPool;
         struct _DescriptorSet {  // VkDescriptorSet
+            vktrace_trace_packet_header *pAllocatePacket;
             VkDescriptorPool descriptorPool;
             VkDescriptorSetLayout layout;
             uint32_t numBindings;           // this is the number of elements allocated in
@@ -464,11 +467,14 @@ class StateTracker {
     ObjectInfo &add_DescriptorSet(VkDescriptorSet var);
     ObjectInfo &add_DescriptorUpdateTemplate(VkDescriptorUpdateTemplate var);
     ObjectInfo &add_AccelerationStructure(VkAccelerationStructureKHR var);
-    void add_BuildAccelerationStructure(vktrace_trace_packet_header* pBuildAS);
+    BuildAsInfo& add_BuildAccelerationStructure(BuildAsInfo BuildAS);
+    std::vector<BuildAsInfo>& get_BuildAccelerationStrucutres();
     BuildAsInfo& add_cmdBuildAccelerationStructure(BuildAsInfo BuildAS);
     std::vector<BuildAsInfo>& get_cmdBuildAccelerationStrucutres();
-    cmdCopyAsInfo& add_cmdCopyAccelerationStructure(cmdCopyAsInfo copyAs);
-    std::vector<cmdCopyAsInfo>& get_cmdCopyAccelerationStructure();
+    CopyAsInfo& add_CopyAccelerationStructure(CopyAsInfo copyAs);
+    std::vector<CopyAsInfo>& get_CopyAccelerationStructure();
+    CopyAsInfo& add_cmdCopyAccelerationStructure(CopyAsInfo copyAs);
+    std::vector<CopyAsInfo>& get_cmdCopyAccelerationStructure();
 
     ObjectInfo *get_Instance(VkInstance var);
     ObjectInfo *get_PhysicalDevice(VkPhysicalDevice var);
@@ -532,9 +538,10 @@ class StateTracker {
     void remove_DescriptorUpdateTemplate(const VkDescriptorUpdateTemplate var);
     void remove_DescriptorSet(const VkDescriptorSet var);
     void remove_AccelerationStructure(const VkAccelerationStructureKHR var);
-    void remove_BuildAccelerationStructure(vktrace_trace_packet_header* pBuildAS);
+    void remove_BuildAccelerationStructure(BuildAsInfo& BuildAS);
+    void remove_CopyAccelerationStructure(CopyAsInfo copyAs);
     void remove_cmdBuildAccelerationStructure(BuildAsInfo& BuildAS);
-    void remove_cmdCopyAccelerationStructure(cmdCopyAsInfo copyAs);
+    void remove_cmdCopyAccelerationStructure(CopyAsInfo copyAs);
 
     static void copy_VkRenderPassCreateInfo(VkApplicationInfo *pDst, VkApplicationInfo *psrc);
 
@@ -595,9 +602,10 @@ class StateTracker {
     std::unordered_map<VkDescriptorUpdateTemplate, ObjectInfo> createdDescriptorUpdateTemplates;
     std::unordered_map<VkDescriptorSet, ObjectInfo> createdDescriptorSets;
     std::unordered_map<VkAccelerationStructureKHR, ObjectInfo> createdAccelerationStructures;
-    std::vector<vktrace_trace_packet_header *> buildAccelerationStructures;
+    std::vector<BuildAsInfo> BuildAccelerationStructures;
+    std::vector<CopyAsInfo> CopyAccelerationStructure;
     std::vector<BuildAsInfo> cmdBuildAccelerationStructures;
-    std::vector<cmdCopyAsInfo> cmdCopyAccelerationStructure;
+    std::vector<CopyAsInfo> cmdCopyAccelerationStructure;
 
     std::unordered_set<VkShaderModule> destroyedShaderModules;
     std::unordered_set<VkPipelineCache> destroyedPipelineCaches;

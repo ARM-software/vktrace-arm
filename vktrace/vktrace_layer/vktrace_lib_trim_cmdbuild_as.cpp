@@ -1,6 +1,6 @@
 /*
  *
- * Copyright (C) 2019-2023 ARM Limited
+ * Copyright (C) 2019 ARM Limited
  * All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -23,10 +23,8 @@
 #include <vector>
 #include <stdio.h>
 #include <fstream>
-
+#include "vktrace_lib_trim_cmdbuild_as.h"
 #include "vktrace_vk_vk.h"
-#include "vulkan/vulkan.h"
-#include "vulkan/vk_layer.h"
 #include "vktrace_platform.h"
 #include "vk_dispatch_table_helper.h"
 #include "vktrace_common.h"
@@ -153,6 +151,10 @@ VkResult dump_build_AS_buffer_data(VkCommandBuffer commandBuffer, BuildAsBufferI
     VkDeviceMemory stagingMem;
     result = mdd(commandBuffer)->devTable.AllocateMemory(device, &allocInfo, NULL, &stagingMem);
     if (result != VK_SUCCESS) {
+        allocateFlagsInfo.flags &= ~VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_CAPTURE_REPLAY_BIT;
+        result = mdd(commandBuffer)->devTable.AllocateMemory(device, &allocInfo, NULL, &stagingMem);
+    }
+    if (result != VK_SUCCESS) {
         mdd(commandBuffer)->devTable.DestroyBuffer(device, stagingBuf, NULL);
         vktrace_LogError("Failed to allocate staging buffer memory to dump build AS input buffers when trim!");
         return result;
@@ -162,7 +164,7 @@ VkResult dump_build_AS_buffer_data(VkCommandBuffer commandBuffer, BuildAsBufferI
     if (result != VK_SUCCESS) {
         mdd(commandBuffer)->devTable.DestroyBuffer(device, stagingBuf, NULL);
         mdd(commandBuffer)->devTable.FreeMemory(device, stagingMem, NULL);
-        vktrace_LogError("Failed to allocate staging buffer memory to dump build AS input buffers when trim!");
+        vktrace_LogError("Failed to bind staging buffer memory to dump build AS input buffers when trim!");
         return result;
     }
 
@@ -172,6 +174,9 @@ VkResult dump_build_AS_buffer_data(VkCommandBuffer commandBuffer, BuildAsBufferI
     VkBufferDeviceAddressInfo bufInfo = {
         .sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO, .pNext = NULL, .buffer = stagingBuf};
     info.stagingAddr = mdd(commandBuffer)->devTable.GetBufferDeviceAddressKHR(device, &bufInfo);
+    if (info.stagingAddr == 0) {
+        info.stagingAddr = mdd(commandBuffer)->devTable.GetBufferDeviceAddress(device, &bufInfo);
+    }
 
     VkBufferMemoryBarrier barrier[2];
     barrier[0].sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
@@ -232,7 +237,7 @@ VkResult dump_build_AS_buffer_data(VkCommandBuffer commandBuffer, BuildAsBufferI
     return VK_SUCCESS;
 }
 
-VkResult verify_buffer(ObjectInfo* objInfo, VkDeviceAddress beginOffset, VkDeviceAddress size) {
+VkResult verify_buffer(ObjectInfo* objInfo, VkDeviceSize beginOffset, VkDeviceSize size) {
     if (beginOffset < objInfo->ObjectInfo.Buffer.memoryOffset) {
         // vktrace_LogError("verify_buffer fail! Buffer begin offset is smaller than buffer begin!");
         return VK_ERROR_UNKNOWN;
@@ -254,8 +259,8 @@ VkResult verify_buffer(ObjectInfo* objInfo, VkDeviceAddress beginOffset, VkDevic
 // bufOffset: new offset from buffer beginning
 // device: device used to create the memory and buffer
 // memOffset: offset from the memory beginning
-VkResult get_cmdbuildas_memory_buffer(VkDeviceAddress address, VkDeviceAddress size, VkDeviceAddress* bufOffset,
-                                      VkDeviceMemory* memory, VkBuffer* buffer, VkDeviceAddress* memOffset, uint64_t* buf_gid,
+VkResult get_cmdbuildas_memory_buffer(VkDeviceAddress address, VkDeviceSize size, VkDeviceSize* bufOffset,
+                                      VkDeviceMemory* memory, VkBuffer* buffer, VkDeviceSize* memOffset, uint64_t* buf_gid,
                                       uint64_t* bufMem_gid) {
     *memory = VK_NULL_HANDLE;
     *buffer = VK_NULL_HANDLE;
@@ -342,17 +347,20 @@ VkResult get_cmdbuildas_memory_buffer(VkDeviceAddress address, VkDeviceAddress s
     return VK_ERROR_UNKNOWN;
 }
 
-VkResult remove_cmdbuild_by_as(VkAccelerationStructureKHR as) {
+VkResult remove_cmdbuild_by_as(VkDevice device, VkAccelerationStructureKHR as) {
     VkResult result = VK_SUCCESS;
-    std::vector<BuildAsInfo>& buildAsInfo = get_cmdBuildAccelerationStrucutres();
+    std::vector<BuildAsInfo>& buildAsInfo = get_cmdBuildAccelerationStrucutres_object();
     bool foundAsInDst = false, foundAsInSrc = false, isVkreplayClearing = false;
     auto it_info = buildAsInfo.begin();
     while (it_info != buildAsInfo.end()) {
+        foundAsInDst = false;
+        foundAsInSrc = false;
         vktrace_trace_packet_header* pHeader = copy_packet(it_info->pCmdBuildAccelerationtStructure);
         packet_vkCmdBuildAccelerationStructuresKHR* pPacket = interpret_body_as_vkCmdBuildAccelerationStructuresKHR(pHeader);
         for (uint32_t i = 0; i < pPacket->infoCount; ++i) {
             if (pPacket->pInfos[i].dstAccelerationStructure == as) {
                 foundAsInDst = true;
+                break;
             } else if (pPacket->pInfos[i].srcAccelerationStructure == as) {
                 foundAsInSrc = true;
                 // Vkreplay destorys AS out of order in the end of trace, but it always frees
@@ -361,7 +369,8 @@ VkResult remove_cmdbuild_by_as(VkAccelerationStructureKHR as) {
                 if (NULL == get_CommandBuffer_objectInfo(pPacket->commandBuffer)) isVkreplayClearing = true;
             }
         }
-        if (foundAsInDst && !foundAsInSrc) {
+        if (foundAsInDst) {
+            only_cmdbuildas_destroy_inputs(device, *it_info);
             it_info = buildAsInfo.erase(it_info);
         } else {
             it_info++;
@@ -380,14 +389,16 @@ VkResult remove_cmdbuild_by_as(VkAccelerationStructureKHR as) {
 
 VkResult remove_cmdCopyAs_by_as(VkAccelerationStructureKHR as) {
     VkResult result = VK_SUCCESS;
-    std::vector<cmdCopyAsInfo>& cmdCopyAsInfo = get_cmdCopyAccelerationStructure();
-    auto it_info = cmdCopyAsInfo.begin();
+    std::vector<CopyAsInfo>& CopyAsInfo = get_cmdCopyAccelerationStructure_object();
+    auto it_info = CopyAsInfo.begin();
     bool foundAsInDst = false, foundAsInSrc = false, isVkreplayClearing = false;
-    while (it_info != cmdCopyAsInfo.end()) {
+    while (it_info != CopyAsInfo.end()) {
         vktrace_trace_packet_header* pHeader = copy_packet(it_info->pCmdCopyAccelerationStructureKHR);
         packet_vkCmdCopyAccelerationStructureKHR* pPacket = interpret_body_as_vkCmdCopyAccelerationStructureKHR(pHeader);
         if (pPacket->pInfo->dst == as) {
-            it_info = cmdCopyAsInfo.erase(it_info);
+            vktrace_trace_packet_header* pCmdCopyAs= it_info->pCmdCopyAccelerationStructureKHR;
+            vktrace_delete_trace_packet_no_lock(&pCmdCopyAs);
+            it_info = CopyAsInfo.erase(it_info);
             foundAsInDst = true;
         } else if (pPacket->pInfo->src == as) {
             foundAsInSrc = true;
@@ -403,7 +414,7 @@ VkResult remove_cmdCopyAs_by_as(VkAccelerationStructureKHR as) {
     }
     if (!foundAsInDst && foundAsInSrc && !isVkreplayClearing) {
         vktrace_LogError(
-            "Skip removing cmdCopyAsInfo because target AS is only found as src of vkCmdCopyAccelerationStructureKHR"
+            "Skip removing CopyAsInfo because target AS is only found as src of vkCmdCopyAccelerationStructureKHR"
             " and dst AS hasn't been handled yet!");
         result = VK_ERROR_UNKNOWN;
     }
@@ -429,7 +440,7 @@ void set_scratch_size(VkDevice device, VkDeviceSize buildSize, VkDeviceSize upda
     }
 }
 
-_scratch_size g_scratch = {200 * 1024 * 1024, 200 * 1024 * 1024};
+_scratch_size g_scratch = {MAX_BUFFER_DEVICEADDRESS_SIZE, MAX_BUFFER_DEVICEADDRESS_SIZE};
 _scratch_size* get_max_scratch_size(VkDevice device) {
     auto iter = max_scratch_size.find(device);
     if (iter != max_scratch_size.end()) {
@@ -502,6 +513,17 @@ VkResult generate_shader_device_buffer(bool makeCall, VkDevice device, VkDeviceS
     allocInfo.pNext = &allocateFlagsInfo;
     allocInfo.allocationSize = mem_reqs.size;
     allocInfo.memoryTypeIndex = memIndex;
+
+    VkDeviceMemory verifiedMem;
+    VkResult result = mdd(device)->devTable.AllocateMemory(device, &allocInfo, NULL, &verifiedMem);
+    if (result != VK_SUCCESS) {
+        allocateFlagsInfo.flags &= ~VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_CAPTURE_REPLAY_BIT;
+        result = mdd(device)->devTable.AllocateMemory(device, &allocInfo, NULL, &verifiedMem);
+    }
+    if (result == VK_SUCCESS) {
+        mdd(device)->devTable.FreeMemory(device, verifiedMem, NULL);
+    }
+
     vktrace_trace_packet_header* pheadAlloMem = generate::vkAllocateMemory(makeCall, device, &allocInfo, NULL, &devBuffer.memory);
     packet_vkAllocateMemory* pAllocMem = (packet_vkAllocateMemory*)pheadAlloMem->pBody;
     assert(pAllocMem->result == VK_SUCCESS);
@@ -563,7 +585,7 @@ void generate_destroy_shader_device_buffer(VkDevice device, _shader_device_buffe
     vktrace_delete_trace_packet(&pHeader);
 }
 
-VkResult geneate_create_as_input(VkDevice device, uint32_t queueFamilyIndex, BuildAsBufferInfo& buildAsBufInfo) {
+static VkResult geneate_create_as_input(VkDevice device, uint32_t queueFamilyIndex, BuildAsBufferInfo& buildAsBufInfo) {
     if (buildAsBufInfo.dataSize == 0) {
         return VK_SUCCESS;
     }
@@ -589,7 +611,7 @@ VkResult geneate_create_as_input(VkDevice device, uint32_t queueFamilyIndex, Bui
     return VK_SUCCESS;
 }
 
-VkResult generate_buildas_create_inputs(VkDevice device, uint32_t queueFamilyIndex, BuildAsInfo& buildAsInfo) {
+VkResult generate_cmdbuildas_create_inputs(VkDevice device, uint32_t queueFamilyIndex, BuildAsInfo& buildAsInfo) {
     VkResult result = VK_SUCCESS;
     packet_vkCmdBuildAccelerationStructuresKHR* pPacket =
         (packet_vkCmdBuildAccelerationStructuresKHR*)buildAsInfo.pCmdBuildAccelerationtStructure->pBody;
@@ -606,7 +628,7 @@ VkResult generate_buildas_create_inputs(VkDevice device, uint32_t queueFamilyInd
         if (geoInfo.type == VK_GEOMETRY_TYPE_TRIANGLES_KHR) {
             result = geneate_create_as_input(device, queueFamilyIndex, geoInfo.triangle.vb);
             if (result != VK_SUCCESS) {
-                vktrace_LogError("generate_buildas_input_buffers: create vb buffer fail!");
+                vktrace_LogError("generate_cmdbuildas_create_inputs: create vb buffer fail!");
                 assert(0);
             } else if (geoInfo.triangle.vb.dataSize > 0) {
                 offset = (uint64_t)(&pcmdBuildPacket->pInfos[infoIndex]
@@ -619,7 +641,7 @@ VkResult generate_buildas_create_inputs(VkDevice device, uint32_t queueFamilyInd
 
             result = geneate_create_as_input(device, queueFamilyIndex, geoInfo.triangle.ib);
             if (result != VK_SUCCESS) {
-                vktrace_LogError("generate_buildas_input_buffers: create ib buffer fail!");
+                vktrace_LogError("generate_cmdbuildas_create_inputs: create ib buffer fail!");
                 assert(0);
             } else if (geoInfo.triangle.ib.dataSize > 0) {
                 offset = (uint64_t)(&pcmdBuildPacket->pInfos[infoIndex]
@@ -632,7 +654,7 @@ VkResult generate_buildas_create_inputs(VkDevice device, uint32_t queueFamilyInd
 
             result = geneate_create_as_input(device, queueFamilyIndex, geoInfo.triangle.tb);
             if (result != VK_SUCCESS) {
-                vktrace_LogError("generate_buildas_input_buffers: create tb buffer fail!");
+                vktrace_LogError("generate_cmdbuildas_create_inputs: create tb buffer fail!");
                 assert(0);
             } else if (geoInfo.triangle.tb.dataSize > 0) {
                 offset = (uint64_t)(&pcmdBuildPacket->pInfos[infoIndex].pGeometries[geoIndex].geometry.triangles.transformData.deviceAddress) - (uint64_t)pcmdBuildPacket;
@@ -642,7 +664,7 @@ VkResult generate_buildas_create_inputs(VkDevice device, uint32_t queueFamilyInd
         } else if (geoInfo.type == VK_GEOMETRY_TYPE_AABBS_KHR) {
             result = geneate_create_as_input(device, queueFamilyIndex, geoInfo.aabb.info);
             if (result != VK_SUCCESS) {
-                vktrace_LogError("generate_buildas_input_buffers: create aabb buffer fail!");
+                vktrace_LogError("generate_cmdbuildas_create_inputs: create aabb buffer fail!");
                 assert(0);
             } else if (geoInfo.aabb.info.dataSize > 0) {
                 offset = (uint64_t)(&pcmdBuildPacket->pInfos[infoIndex].pGeometries[geoIndex].geometry.aabbs.data.deviceAddress) -
@@ -653,7 +675,7 @@ VkResult generate_buildas_create_inputs(VkDevice device, uint32_t queueFamilyInd
         } else if (geoInfo.type == VK_GEOMETRY_TYPE_INSTANCES_KHR) {
             result = geneate_create_as_input(device, queueFamilyIndex, geoInfo.instance.info);
             if (result != VK_SUCCESS) {
-                vktrace_LogError("generate_buildas_input_buffers: create instance buffer fail!");
+                vktrace_LogError("generate_cmdbuildas_create_inputs: create instance buffer fail!");
                 assert(0);
             } else if (geoInfo.instance.info.dataSize > 0) {
                 offset =
@@ -689,7 +711,7 @@ VkResult generate_buildas_create_inputs(VkDevice device, uint32_t queueFamilyInd
     return result;
 }
 
-VkResult geneate_destroy_as_input(VkDevice device, BuildAsBufferInfo& buildAsBufInfo) {
+static VkResult geneate_destroy_as_input(VkDevice device, BuildAsBufferInfo& buildAsBufInfo) {
     if (buildAsBufInfo.dataSize == 0) {
         return VK_SUCCESS;
     }
@@ -699,7 +721,7 @@ VkResult geneate_destroy_as_input(VkDevice device, BuildAsBufferInfo& buildAsBuf
     return VK_SUCCESS;
 }
 
-VkResult generate_buildas_destroy_inputs(VkDevice device, BuildAsInfo& buildAsInfo) {
+VkResult generate_cmdbuildas_destroy_inputs(VkDevice device, BuildAsInfo& buildAsInfo) {
     VkResult result = VK_SUCCESS;
     int geoInfoSize = buildAsInfo.geometryInfo.size();
     for (int j = 0; j < geoInfoSize; j++) {
@@ -707,29 +729,29 @@ VkResult generate_buildas_destroy_inputs(VkDevice device, BuildAsInfo& buildAsIn
         if (geoInfo.type == VK_GEOMETRY_TYPE_TRIANGLES_KHR) {
             result = geneate_destroy_as_input(device, geoInfo.triangle.vb);
             if (result != VK_SUCCESS) {
-                vktrace_LogError("generate_buildas_destroy_input: destroy vb buffer fail!");
+                vktrace_LogError("generate_cmdbuildas_destroy_inputs: destroy vb buffer fail!");
                 assert(0);
             }
             result = geneate_destroy_as_input(device, geoInfo.triangle.ib);
             if (result != VK_SUCCESS) {
-                vktrace_LogError("generate_buildas_destroy_input: destroy ib buffer fail!");
+                vktrace_LogError("generate_cmdbuildas_destroy_inputs: destroy ib buffer fail!");
                 assert(0);
             }
             result = geneate_destroy_as_input(device, geoInfo.triangle.tb);
             if (result != VK_SUCCESS) {
-                vktrace_LogError("generate_buildas_destroy_input: destroy tb buffer fail!");
+                vktrace_LogError("generate_cmdbuildas_destroy_inputs: destroy tb buffer fail!");
                 assert(0);
             }
         } else if (geoInfo.type == VK_GEOMETRY_TYPE_AABBS_KHR) {
             result = geneate_destroy_as_input(device, geoInfo.aabb.info);
             if (result != VK_SUCCESS) {
-                vktrace_LogError("generate_buildas_destroy_input: destroy aabb buffer fail!");
+                vktrace_LogError("generate_cmdbuildas_destroy_inputs: destroy aabb buffer fail!");
                 assert(0);
             }
         } else if (geoInfo.type == VK_GEOMETRY_TYPE_INSTANCES_KHR) {
             result = geneate_destroy_as_input(device, geoInfo.instance.info);
             if (result != VK_SUCCESS) {
-                vktrace_LogError("generate_buildas_destroy_input: destroy instance buffer fail!");
+                vktrace_LogError("generate_cmdbuildas_destroy_inputs: destroy instance buffer fail!");
                 assert(0);
             }
         } else {
@@ -737,6 +759,67 @@ VkResult generate_buildas_destroy_inputs(VkDevice device, BuildAsInfo& buildAsIn
             assert(geoInfo.type == VK_GEOMETRY_TYPE_MAX_ENUM_KHR);
         }
     }
+    return result;
+}
+
+static VkResult only_destroy_as_input(VkDevice device, BuildAsBufferInfo& buildAsBufInfo) {
+    if (buildAsBufInfo.dataSize == 0) {
+        return VK_SUCCESS;
+    }
+
+    if (buildAsBufInfo.stagingBuf != VK_NULL_HANDLE) {
+        mdd(device)->devTable.DestroyBuffer(device, buildAsBufInfo.stagingBuf, NULL);
+    }
+
+    if (buildAsBufInfo.stagingMem != VK_NULL_HANDLE) {
+        mdd(device)->devTable.FreeMemory(device, buildAsBufInfo.stagingMem, NULL);
+    }
+
+    return VK_SUCCESS;
+}
+
+VkResult only_cmdbuildas_destroy_inputs(VkDevice device, BuildAsInfo& buildAsInfo) {
+    VkResult result = VK_SUCCESS;
+    int geoInfoSize = buildAsInfo.geometryInfo.size();
+    for (int j = 0; j < geoInfoSize; j++) {
+        BuildAsGeometryInfo& geoInfo = buildAsInfo.geometryInfo[j];
+        if (geoInfo.type == VK_GEOMETRY_TYPE_TRIANGLES_KHR) {
+            result = only_destroy_as_input(device, geoInfo.triangle.vb);
+            if (result != VK_SUCCESS) {
+                vktrace_LogError("only_cmdbuildas_destroy_inputs: destroy vb buffer fail!");
+                assert(0);
+            }
+            result = only_destroy_as_input(device, geoInfo.triangle.ib);
+            if (result != VK_SUCCESS) {
+                vktrace_LogError("only_cmdbuildas_destroy_inputs: destroy ib buffer fail!");
+                assert(0);
+            }
+            result = only_destroy_as_input(device, geoInfo.triangle.tb);
+            if (result != VK_SUCCESS) {
+                vktrace_LogError("only_cmdbuildas_destroy_inputs: destroy tb buffer fail!");
+                assert(0);
+            }
+        } else if (geoInfo.type == VK_GEOMETRY_TYPE_AABBS_KHR) {
+            result = only_destroy_as_input(device, geoInfo.aabb.info);
+            if (result != VK_SUCCESS) {
+                vktrace_LogError("only_cmdbuildas_destroy_inputs: destroy aabb buffer fail!");
+                assert(0);
+            }
+        } else if (geoInfo.type == VK_GEOMETRY_TYPE_INSTANCES_KHR) {
+            result = only_destroy_as_input(device, geoInfo.instance.info);
+            if (result != VK_SUCCESS) {
+                vktrace_LogError("only_cmdbuildas_destroy_inputs: destroy instance buffer fail!");
+                assert(0);
+            }
+        } else {
+            // a haked type to dump dst as to file
+            assert(geoInfo.type == VK_GEOMETRY_TYPE_MAX_ENUM_KHR);
+        }
+    }
+
+    vktrace_trace_packet_header* pHeader = buildAsInfo.pCmdBuildAccelerationtStructure;
+    vktrace_delete_trace_packet_no_lock(&pHeader);
+
     return result;
 }
 }  // namespace trim

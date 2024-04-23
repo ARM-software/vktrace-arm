@@ -1,6 +1,6 @@
 #!/usr/bin/python3 -i
 #
-# Copyright (c) 2015-2023 ARM Corporation
+# Copyright (c) 2015-2020, 2020 ARM Corporation
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -24,7 +24,7 @@ from common_codegen import *
 
 EMPTYDRIVER_CODEGEN = """
 /*
- * Copyright (C) 2020-2023 ARM Limited
+ * (C) COPYRIGHT 2020 ARM Limited
  * ALL RIGHTS RESERVED
  *
  * Licensed under the Apache License, Version 2.0 (the "License");

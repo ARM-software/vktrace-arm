@@ -2,7 +2,6 @@
 #
 # Copyright (c) 2015-2017 Valve Corporation
 # Copyright (c) 2015-2017 LunarG, Inc.
-# Copyright (C) 2020-2023 ARM Limited
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -88,9 +87,9 @@ if __name__ == '__main__':
             contents += 'LOCAL_C_INCLUDES += $(LOCAL_PATH)/$(LVL_DIR)/layers\n'
             contents += 'LOCAL_C_INCLUDES += $(LOCAL_PATH)/$(LVL_DIR)/layers/generated\n'
             contents += 'LOCAL_C_INCLUDES += $(LOCAL_PATH)/$(SRC_DIR)/layer_factory/%s\n' % factory_layer
-            contents += 'LOCAL_C_INCLUDES += $(LOCAL_PATH)/$(LVL_DIR)/loader\n'
+            contents += 'LOCAL_C_INCLUDES += $(LOCAL_PATH)/$(LOADER_DIR)/loader\n'
             contents += 'LOCAL_STATIC_LIBRARIES += layer_utils\n'
-            contents += 'LOCAL_CPPFLAGS += -std=c++11 -DVK_PROTOTYPES -Wall -Werror -Wno-unused-function -Wno-unused-const-variable\n'
+            contents += 'LOCAL_CPPFLAGS += -std=c++17 -DVK_PROTOTYPES -Wall -Werror -Wno-unused-function -Wno-unused-const-variable\n'
             contents += 'LOCAL_CPPFLAGS += -DVK_USE_PLATFORM_ANDROID_KHR -fvisibility=hidden\n'
             contents += 'LOCAL_LDLIBS    := -llog\n'
             contents += 'LOCAL_LDFLAGS   += -Wl,-Bsymbolic\n'

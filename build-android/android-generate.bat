@@ -1,7 +1,6 @@
 @echo off
 REM # Copyright 2015-2018 The Android Open Source Project
 REM # Copyright (C) 2015-2018 Valve Corporation
-REM # Copyright (C) 2019-2023 ARM Limited
 REM
 REM # Licensed under the Apache License, Version 2.0 (the "License");
 REM # you may not use this file except in compliance with the License.

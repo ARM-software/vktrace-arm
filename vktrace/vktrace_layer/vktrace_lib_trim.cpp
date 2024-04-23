@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2016-2019 Advanced Micro Devices, Inc. All rights reserved.
- * Copyright (C) 2019-2023 ARM Limited. All rights reserved.
+ * Copyright (C) 2019 ARM Limited. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -1840,12 +1840,6 @@ void snapshot_state_tracker() {
             VkDevice device = bufferIter->second.belongsToDevice;
             VkBuffer buffer = static_cast<VkBuffer>(bufferIter->first);
 
-            auto it2 = std::find(g_scratchBufferInCmdBuildAS.begin(), g_scratchBufferInCmdBuildAS.end(), buffer);
-            if (it2 != g_scratchBufferInCmdBuildAS.end()) {
-                bufferIter->second.ObjectInfo.Buffer.needsStagingBuffer = false;
-                continue;
-            }
-
             if ((bufferIter->second.ObjectInfo.Buffer.pBindBufferMemoryPacket != nullptr) &&
                 (bufferIter->second.ObjectInfo.Buffer.size != 0)) {
                 // Similiar with image handling, skip the following process
@@ -2291,10 +2285,15 @@ void delete_objects_for_destroy_device(VkDevice device) {
     }
     delete_objects_number += AccelerationStructureToRemove.size();
 
-    for (size_t i = 0; i < s_trimGlobalStateTracker.buildAccelerationStructures.size(); i++) {
-        trim::remove_BuildAccelerationStructure_object(s_trimGlobalStateTracker.buildAccelerationStructures[i]);
+    for (size_t i = 0; i < s_trimGlobalStateTracker.BuildAccelerationStructures.size(); i++) {
+        trim::remove_BuildAccelerationStructure_object(s_trimGlobalStateTracker.BuildAccelerationStructures[i]);
     }
-    delete_objects_number += s_trimGlobalStateTracker.buildAccelerationStructures.size();
+    delete_objects_number += s_trimGlobalStateTracker.BuildAccelerationStructures.size();
+
+    for (size_t i = 0; i < s_trimGlobalStateTracker.CopyAccelerationStructure.size(); i++) {
+        trim::remove_CopyAccelerationStructure_object(s_trimGlobalStateTracker.CopyAccelerationStructure[i]);
+    }
+    delete_objects_number += s_trimGlobalStateTracker.CopyAccelerationStructure.size();
 
     for (size_t i = 0; i < s_trimGlobalStateTracker.cmdBuildAccelerationStructures.size(); i++) {
         trim::remove_cmdBuildAccelerationStructure_object(s_trimGlobalStateTracker.cmdBuildAccelerationStructures[i]);
@@ -3428,10 +3427,18 @@ ObjectInfo *get_AccelerationStructure_objectInfo(VkAccelerationStructureKHR var)
     return pResult;
 }
 
-void add_BuildAccelerationStructure_object(vktrace_trace_packet_header* var) {
+BuildAsInfo& add_BuildAccelerationStructure_object(BuildAsInfo var) {
     vktrace_enter_critical_section(&trimStateTrackerLock);
-    s_trimGlobalStateTracker.add_BuildAccelerationStructure(var);
+    BuildAsInfo& info = s_trimGlobalStateTracker.add_BuildAccelerationStructure(var);
     vktrace_leave_critical_section(&trimStateTrackerLock);
+    return info;
+}
+
+std::vector<BuildAsInfo>& get_BuildAccelerationStrucutres_object() {
+    vktrace_enter_critical_section(&trimStateTrackerLock);
+    std::vector<BuildAsInfo>& info = s_trimGlobalStateTracker.get_BuildAccelerationStrucutres();
+    vktrace_leave_critical_section(&trimStateTrackerLock);
+    return info;
 }
 
 BuildAsInfo& add_cmdBuildAccelerationStructure_object(BuildAsInfo var) {
@@ -3441,31 +3448,52 @@ BuildAsInfo& add_cmdBuildAccelerationStructure_object(BuildAsInfo var) {
     return info;
 }
 
-std::vector<BuildAsInfo>& get_cmdBuildAccelerationStrucutres() {
+std::vector<BuildAsInfo>& get_cmdBuildAccelerationStrucutres_object() {
     vktrace_enter_critical_section(&trimStateTrackerLock);
     std::vector<BuildAsInfo>& info = s_trimGlobalStateTracker.get_cmdBuildAccelerationStrucutres();
     vktrace_leave_critical_section(&trimStateTrackerLock);
     return info;
 }
 
-cmdCopyAsInfo& add_cmdCopyAccelerationStructure_object(cmdCopyAsInfo var) {
+CopyAsInfo& add_CopyAccelerationStructure_object(CopyAsInfo var) {
     vktrace_enter_critical_section(&trimStateTrackerLock);
-    cmdCopyAsInfo& info = s_trimGlobalStateTracker.add_cmdCopyAccelerationStructure(var);
+    CopyAsInfo& info = s_trimGlobalStateTracker.add_CopyAccelerationStructure(var);
     vktrace_leave_critical_section(&trimStateTrackerLock);
     return info;
 }
 
-std::vector<cmdCopyAsInfo>& get_cmdCopyAccelerationStructure() {
+std::vector<CopyAsInfo>& get_CopyAccelerationStructure_object() {
     vktrace_enter_critical_section(&trimStateTrackerLock);
-    std::vector<cmdCopyAsInfo>& info = s_trimGlobalStateTracker.get_cmdCopyAccelerationStructure();
+    std::vector<CopyAsInfo>& info = s_trimGlobalStateTracker.get_CopyAccelerationStructure();
     vktrace_leave_critical_section(&trimStateTrackerLock);
     return info;
 }
 
-void remove_BuildAccelerationStructure_object(vktrace_trace_packet_header* var)
+CopyAsInfo& add_cmdCopyAccelerationStructure_object(CopyAsInfo var) {
+    vktrace_enter_critical_section(&trimStateTrackerLock);
+    CopyAsInfo& info = s_trimGlobalStateTracker.add_cmdCopyAccelerationStructure(var);
+    vktrace_leave_critical_section(&trimStateTrackerLock);
+    return info;
+}
+
+std::vector<CopyAsInfo>& get_cmdCopyAccelerationStructure_object() {
+    vktrace_enter_critical_section(&trimStateTrackerLock);
+    std::vector<CopyAsInfo>& info = s_trimGlobalStateTracker.get_cmdCopyAccelerationStructure();
+    vktrace_leave_critical_section(&trimStateTrackerLock);
+    return info;
+}
+
+void remove_BuildAccelerationStructure_object(BuildAsInfo& var)
 {
     vktrace_enter_critical_section(&trimStateTrackerLock);
     s_trimGlobalStateTracker.remove_BuildAccelerationStructure(var);
+    vktrace_leave_critical_section(&trimStateTrackerLock);
+}
+
+void remove_CopyAccelerationStructure_object(CopyAsInfo& var)
+{
+    vktrace_enter_critical_section(&trimStateTrackerLock);
+    s_trimGlobalStateTracker.remove_CopyAccelerationStructure(var);
     vktrace_leave_critical_section(&trimStateTrackerLock);
 }
 
@@ -3476,7 +3504,7 @@ void remove_cmdBuildAccelerationStructure_object(BuildAsInfo& var)
     vktrace_leave_critical_section(&trimStateTrackerLock);
 }
 
-void remove_cmdCopyAccelerationStructure_object(cmdCopyAsInfo& var)
+void remove_cmdCopyAccelerationStructure_object(CopyAsInfo& var)
 {
     vktrace_enter_critical_section(&trimStateTrackerLock);
     s_trimGlobalStateTracker.remove_cmdCopyAccelerationStructure(var);
@@ -3734,8 +3762,8 @@ bool isValidDescriptorIndex(const VkWriteDescriptorSet *pDescriptorWrites, uint3
             case VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR: {
                 if (pDescriptorWrites->pNext != nullptr) {
                     VkWriteDescriptorSetAccelerationStructureKHR* pWriteDSAS = (VkWriteDescriptorSetAccelerationStructureKHR*)(pDescriptorWrites->pNext);
-                    for (unsigned i = 0; i < pWriteDSAS->accelerationStructureCount; i++){
-                        ObjectInfo *objectInfo = trim::get_AccelerationStructure_objectInfo(pWriteDSAS->pAccelerationStructures[i]);
+                    if (pWriteDSAS->pAccelerationStructures && pWriteDSAS->pAccelerationStructures[index]) {
+                        ObjectInfo *objectInfo = trim::get_AccelerationStructure_objectInfo(pWriteDSAS->pAccelerationStructures[index]);
                         if (objectInfo == nullptr) {
                             isValidDescriptor = false;
                             break;
@@ -3804,6 +3832,17 @@ void copyDescriptorByIndex(const VkWriteDescriptorSet *pDescriptorWrites, uint32
                     memcpy(const_cast<VkDescriptorBufferInfo *>(pDescriptorWrites->pBufferInfo + dst),
                            const_cast<VkDescriptorBufferInfo *>(pDescriptorWrites->pBufferInfo + src),
                            sizeof(VkDescriptorBufferInfo));
+                } else {
+                    assert(false);
+                    vktrace_LogWarning(
+                        "The descriptorType does not match when trim generate vkUpdateDescriptorSets call for update the bindings "
+                        "of the DescriptorSet.");
+                }
+            } break;
+            case VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR: {
+                if (pDescriptorWrites->pNext != nullptr) {
+                    VkWriteDescriptorSetAccelerationStructureKHR* pWriteDSAS = (VkWriteDescriptorSetAccelerationStructureKHR*)(pDescriptorWrites->pNext);
+                    const_cast<VkAccelerationStructureKHR*>(pWriteDSAS->pAccelerationStructures)[dst] = pWriteDSAS->pAccelerationStructures[src];
                 } else {
                     assert(false);
                     vktrace_LogWarning(
@@ -3942,6 +3981,11 @@ void recreate_physical_device_mem_queue(StateTracker &stateTracker) {
                                        vktrace_trace_get_trace_file());
             vktrace_delete_trace_packet_no_lock(&(obj->second.ObjectInfo.PhysicalDevice.pGetPhysicalDeviceProperties2KHRPacket));
         }
+        for (auto it = g_getPhysicalDevice2Packets.begin(); it != g_getPhysicalDevice2Packets.end(); ++it) {
+            vktrace_write_trace_packet(it->second, vktrace_trace_get_trace_file());
+            vktrace_delete_trace_packet_no_lock(&(it->second));
+        }
+        g_getPhysicalDevice2Packets.clear();
 
         if (obj->second.ObjectInfo.PhysicalDevice.pGetPhysicalDeviceMemoryPropertiesPacket != nullptr) {
             vktrace_write_trace_packet(obj->second.ObjectInfo.PhysicalDevice.pGetPhysicalDeviceMemoryPropertiesPacket,
@@ -4769,8 +4813,25 @@ void recreate_imageviews(StateTracker &stateTracker) {
             trim::remove_ImageView_object((VkImageView)obj->first);
             continue;
         }
-        vktrace_write_trace_packet(obj->second.ObjectInfo.ImageView.pCreatePacket, vktrace_trace_get_trace_file());
-        vktrace_delete_trace_packet_no_lock(&(obj->second.ObjectInfo.ImageView.pCreatePacket));
+        for (auto objImg = stateTracker.createdImages.begin(); objImg != stateTracker.createdImages.end(); objImg++) {
+            VkImage image = (VkImage)objImg->first;
+            if (image == obj->second.ObjectInfo.ImageView.image) {
+                vktrace_write_trace_packet(obj->second.ObjectInfo.ImageView.pCreatePacket, vktrace_trace_get_trace_file());
+                vktrace_delete_trace_packet_no_lock(&(obj->second.ObjectInfo.ImageView.pCreatePacket));
+                break;
+            }
+        }
+    }
+}
+
+void recreate_as(StateTracker &stateTracker){
+    for (auto obj = stateTracker.createdAccelerationStructures.begin(); obj != stateTracker.createdAccelerationStructures.end(); obj++) {
+        vktrace_write_trace_packet(obj->second.ObjectInfo.AccelerationStructure.pCreatePacket, vktrace_trace_get_trace_file());
+        vktrace_delete_trace_packet_no_lock(&(obj->second.ObjectInfo.AccelerationStructure.pCreatePacket));
+        if (obj->second.ObjectInfo.AccelerationStructure.pGetAccelerationStructureDeviceAddressPacket != nullptr) {
+            vktrace_write_trace_packet(obj->second.ObjectInfo.AccelerationStructure.pGetAccelerationStructureDeviceAddressPacket, vktrace_trace_get_trace_file());
+            vktrace_delete_trace_packet_no_lock(&(obj->second.ObjectInfo.AccelerationStructure.pGetAccelerationStructureDeviceAddressPacket));
+        }
     }
 }
 
@@ -4782,6 +4843,9 @@ void recreate_buffers(StateTracker &stateTracker) {
 
     // record created buffers
     record_created_buffers(stateTracker);
+
+    // AccelerationStructure
+    recreate_as(stateTracker);
 
     // Create command pool per device per queueFamilyIndex and command buffer per pool
     create_commandbuffers();
@@ -4820,22 +4884,6 @@ void recreate_as_build_sizes() {
     g_pGetAccelerationStructureBuildSizePackets.clear();
 }
 
-void recreate_as(StateTracker &stateTracker){
-    for (auto obj = stateTracker.createdAccelerationStructures.begin(); obj != stateTracker.createdAccelerationStructures.end(); obj++) {
-        vktrace_write_trace_packet(obj->second.ObjectInfo.AccelerationStructure.pCreatePacket, vktrace_trace_get_trace_file());
-        vktrace_delete_trace_packet_no_lock(&(obj->second.ObjectInfo.AccelerationStructure.pCreatePacket));
-        if (obj->second.ObjectInfo.AccelerationStructure.pGetAccelerationStructureDeviceAddressPacket != nullptr) {
-            vktrace_write_trace_packet(obj->second.ObjectInfo.AccelerationStructure.pGetAccelerationStructureDeviceAddressPacket, vktrace_trace_get_trace_file());
-            vktrace_delete_trace_packet_no_lock(&(obj->second.ObjectInfo.AccelerationStructure.pGetAccelerationStructureDeviceAddressPacket));
-        }
-    }
-    for (auto obj = stateTracker.buildAccelerationStructures.begin(); obj != stateTracker.buildAccelerationStructures.end(); obj++) {
-        // the packet maybe is BuildAccelerationStructuresKHR or CopyAccelerationStructureKHR
-        vktrace_write_trace_packet(*obj, vktrace_trace_get_trace_file());
-        vktrace_delete_trace_packet_no_lock(&(*obj));
-    }
-}
-
 void recreate_device_persistently_map_mem(StateTracker &stateTracker) {
     for (auto obj = stateTracker.createdDeviceMemorys.begin(); obj != stateTracker.createdDeviceMemorys.end(); obj++) {
         if (obj->second.ObjectInfo.DeviceMemory.pPersistentlyMapMemoryPacket != NULL) {
@@ -4853,8 +4901,14 @@ void recreate_bufferviews(StateTracker &stateTracker) {
             trim::remove_BufferView_object((VkBufferView)obj->first);
             continue;
         }
-        vktrace_write_trace_packet(obj->second.ObjectInfo.BufferView.pCreatePacket, vktrace_trace_get_trace_file());
-        vktrace_delete_trace_packet_no_lock(&(obj->second.ObjectInfo.BufferView.pCreatePacket));
+        for (auto objBuf = stateTracker.createdBuffers.begin(); objBuf != stateTracker.createdBuffers.end(); objBuf++) {
+            VkBuffer buffer = (VkBuffer)objBuf->first;
+            if (buffer == obj->second.ObjectInfo.BufferView.buffer) {
+                vktrace_write_trace_packet(obj->second.ObjectInfo.BufferView.pCreatePacket, vktrace_trace_get_trace_file());
+                vktrace_delete_trace_packet_no_lock(&(obj->second.ObjectInfo.BufferView.pCreatePacket));
+                break;
+            }
+        }
     }
 }
 
@@ -5057,21 +5111,10 @@ void recreate_descriptor_pools(StateTracker &stateTracker) {
         vktrace_write_trace_packet(poolObj->second.ObjectInfo.DescriptorPool.pCreatePacket, vktrace_trace_get_trace_file());
         vktrace_delete_trace_packet_no_lock(&(poolObj->second.ObjectInfo.DescriptorPool.pCreatePacket));
 
-        if (poolObj->second.ObjectInfo.DescriptorPool.numSets > 0) {
-            // now allocate all DescriptorSets that are part of this pool
-            uint64_t vktraceStartTime = vktrace_get_time();
-            VkDescriptorSetAllocateInfo allocateInfo;
-            allocateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-            allocateInfo.pNext = NULL;
-            allocateInfo.descriptorPool = poolObj->first;
-
-            VkDescriptorSetLayout *pSetLayouts = new VkDescriptorSetLayout[poolObj->second.ObjectInfo.DescriptorPool.numSets];
-            allocateInfo.pSetLayouts = pSetLayouts;
-            VkDescriptorSet *pDescriptorSets = new VkDescriptorSet[poolObj->second.ObjectInfo.DescriptorPool.numSets];
-            uint32_t setIndex = 0;
-
+        if (poolObj->second.ObjectInfo.DescriptorPool.createFlags & VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT) {
+            std::unordered_map<VkDescriptorSet, uint32_t> descriptorSetMap;
             for (auto setObj = stateTracker.createdDescriptorSets.begin(); setObj != stateTracker.createdDescriptorSets.end();
-                 setObj++) {
+                setObj++) {
                 // get descriptorSetLayouts and DescriptorSets specific to this
                 // pool
                 if (g_trimPostProcess && !setObj->second.bReferencedInTrim) {
@@ -5079,33 +5122,129 @@ void recreate_descriptor_pools(StateTracker &stateTracker) {
                     trim::remove_DescriptorSet_object((VkDescriptorSet)setObj->first);
                     continue;
                 }
-                if (setObj->second.ObjectInfo.DescriptorSet.descriptorPool == allocateInfo.descriptorPool &&
-                    setIndex < poolObj->second.ObjectInfo.DescriptorPool.numSets) {
-                    pSetLayouts[setIndex] = setObj->second.ObjectInfo.DescriptorSet.layout;
-                    pDescriptorSets[setIndex] = setObj->first;
-                    setIndex++;
+
+                if (setObj->second.ObjectInfo.DescriptorSet.pAllocatePacket &&
+                    setObj->second.ObjectInfo.DescriptorSet.descriptorPool == poolObj->first) {
+
+                    vktrace_trace_packet_header* pHeader = copy_packet(setObj->second.ObjectInfo.DescriptorSet.pAllocatePacket);
+                    packet_vkAllocateDescriptorSets* pPacket = interpret_body_as_vkAllocateDescriptorSets(pHeader);
+                    bool isCreated = false;
+
+                    for (uint32_t j = 0; j < pPacket->pAllocateInfo->descriptorSetCount; j++) {
+                        if (descriptorSetMap.find(pPacket->pDescriptorSets[j]) == descriptorSetMap.end()) {
+                            descriptorSetMap[pPacket->pDescriptorSets[j]]++;
+                        } else {
+                            isCreated = true;
+                        }
+                    }
+
+                    if (!isCreated) {
+                        // write the vkAllocateDescriptorSets packet
+                        vktrace_write_trace_packet(setObj->second.ObjectInfo.DescriptorSet.pAllocatePacket, vktrace_trace_get_trace_file());
+                    }
+
+                    vktrace_delete_trace_packet_no_lock(&(setObj->second.ObjectInfo.DescriptorSet.pAllocatePacket));
+                    vktrace_delete_trace_packet_no_lock(&(pHeader));
                 }
             }
+        } else {
+            for (auto it = g_updateDescriptorSetsPackets.begin(); it != g_updateDescriptorSetsPackets.end(); ++it) {
+                vktrace_delete_trace_packet_no_lock(&(it->second));
+            }
+            g_updateDescriptorSetsPackets.clear();
 
-            // update descriptorSetCount to ensure it is correct
-            allocateInfo.descriptorSetCount = setIndex;
+            if (poolObj->second.ObjectInfo.DescriptorPool.numSets > 0) {
+                // now allocate all DescriptorSets that are part of this pool
+                uint64_t vktraceStartTime = vktrace_get_time();
+                VkDescriptorSetAllocateInfo allocateInfo;
+                allocateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+                allocateInfo.pNext = NULL;
+                allocateInfo.descriptorPool = poolObj->first;
 
-            VkDevice device = poolObj->second.belongsToDevice;
+                VkDescriptorSetLayout *pSetLayouts = new VkDescriptorSetLayout[poolObj->second.ObjectInfo.DescriptorPool.numSets];
+                allocateInfo.pSetLayouts = pSetLayouts;
+                VkDescriptorSet *pDescriptorSets = new VkDescriptorSet[poolObj->second.ObjectInfo.DescriptorPool.numSets];
+                uint32_t setIndex = 0;
 
-            vktrace_trace_packet_header *pHeader =
-                generate::vkAllocateDescriptorSets(false, device, &allocateInfo, pDescriptorSets);
-            pHeader->vktrace_begin_time = vktraceStartTime;
-            vktrace_write_trace_packet(pHeader, vktrace_trace_get_trace_file());
-            vktrace_delete_trace_packet(&(pHeader));
+                for (auto setObj = stateTracker.createdDescriptorSets.begin(); setObj != stateTracker.createdDescriptorSets.end();
+                    setObj++) {
+                    // get descriptorSetLayouts and DescriptorSets specific to this
+                    // pool
+                    if (g_trimPostProcess && !setObj->second.bReferencedInTrim) {
+                        // TODO: Find a way to not remove from s_trimGlobalStateTracker.
+                        trim::remove_DescriptorSet_object((VkDescriptorSet)setObj->first);
+                        continue;
+                    }
 
-            delete[] pSetLayouts;
-            delete[] pDescriptorSets;
+                    if (setObj->second.ObjectInfo.DescriptorSet.descriptorPool == allocateInfo.descriptorPool &&
+                        setIndex < poolObj->second.ObjectInfo.DescriptorPool.numSets) {
+                        pSetLayouts[setIndex] = setObj->second.ObjectInfo.DescriptorSet.layout;
+                        pDescriptorSets[setIndex] = setObj->first;
+                        setIndex++;
+                    }
+                }
+
+                // update descriptorSetCount to ensure it is correct
+                allocateInfo.descriptorSetCount = setIndex;
+
+                VkDevice device = poolObj->second.belongsToDevice;
+
+                vktrace_trace_packet_header *pHeader =
+                    generate::vkAllocateDescriptorSets(false, device, &allocateInfo, pDescriptorSets);
+                pHeader->vktrace_begin_time = vktraceStartTime;
+                vktrace_write_trace_packet(pHeader, vktrace_trace_get_trace_file());
+                vktrace_delete_trace_packet(&(pHeader));
+
+                delete[] pSetLayouts;
+                delete[] pDescriptorSets;
+            }
         }
     }
 }
 
 void recreate_descriptor_sets(StateTracker &stateTracker) {
     // Update DescriptorSets
+    if (g_updateDescriptorSetsPackets.size() > 0) {
+        for (auto it = g_updateDescriptorSetsPackets.begin(); it != g_updateDescriptorSetsPackets.end(); ++it) {
+            vktrace_trace_packet_header* pHeader = copy_packet(it->second);
+            packet_vkUpdateDescriptorSets* pPacket = interpret_body_as_vkUpdateDescriptorSets(pHeader);
+            bool validDesc = true;
+            for (uint32_t i = 0; i < pPacket->descriptorWriteCount; i++) {
+                for (uint32_t j = 0; j < pPacket->pDescriptorWrites[i].descriptorCount; j++) {
+                    trim::ObjectInfo* objInfo = trim::get_DescriptorSet_objectInfo(pPacket->pDescriptorWrites[i].dstSet);
+                    if (objInfo == nullptr) {
+                        validDesc = false;
+                        break;
+                    }
+                    if (!isValidDescriptorIndex(&(pPacket->pDescriptorWrites[i]), j)) {
+                        validDesc = false;
+                        break;
+                    }
+                }
+            }
+            for (uint32_t i = 0; i < pPacket->descriptorCopyCount; i++) {
+                trim::ObjectInfo* objInfo = trim::get_DescriptorSet_objectInfo(pPacket->pDescriptorCopies[i].srcSet);
+                if (objInfo == nullptr) {
+                    validDesc = false;
+                    break;
+                }
+                objInfo = trim::get_DescriptorSet_objectInfo(pPacket->pDescriptorCopies[i].dstSet);
+                if (objInfo == nullptr) {
+                    validDesc = false;
+                    break;
+                }
+            }
+            if (validDesc) {
+                vktrace_write_trace_packet(it->second, vktrace_trace_get_trace_file());
+            }
+
+            vktrace_delete_trace_packet_no_lock(&pHeader);
+            vktrace_delete_trace_packet_no_lock(&(it->second));
+        }
+        g_updateDescriptorSetsPackets.clear();
+        return;
+    }
+
     // needs to be done per-Device
     for (auto deviceObj = stateTracker.createdDevices.begin(); deviceObj != stateTracker.createdDevices.end(); deviceObj++) {
         for (auto setObj = stateTracker.createdDescriptorSets.begin(); setObj != stateTracker.createdDescriptorSets.end();
@@ -5320,6 +5459,151 @@ void recreate_query_pools(StateTracker &stateTracker) {
     }
 }
 
+void generateBuildAsWorkflow(StateTracker &stateTracker) {
+    if (stateTracker.BuildAccelerationStructures.size() > 0) {
+        // prepare command buffer for later operations
+        vktrace_trace_packet_header *pHeader;
+
+        // get the correct device and queue family index
+        VkDevice    device = NULL;
+        uint32_t    queueFamilyIndex = UINT_MAX;
+        uint32_t    max_geoinfo = 0;
+        for (auto obj = stateTracker.BuildAccelerationStructures.begin();
+             obj != stateTracker.BuildAccelerationStructures.end(); obj++) {
+            if (obj->geometryInfo.size() == 0) {
+                continue;
+            }
+            auto &geoInfo = obj->geometryInfo;
+            max_geoinfo = max_geoinfo > geoInfo.size() ? max_geoinfo:geoInfo.size();
+            for (int i = 0; i < geoInfo.size(); i++) {
+                pHeader = copy_packet(obj->pBuildAccelerationtStructure);
+                packet_vkBuildAccelerationStructuresKHR *pBuildPacket = interpret_body_as_vkBuildAccelerationStructuresKHR(pHeader);
+                assert (pBuildPacket->infoCount >= 1);
+                VkAccelerationStructureKHR dstAs = pBuildPacket->pInfos[0].dstAccelerationStructure;
+                ObjectInfo *objAs = get_AccelerationStructure_objectInfo(dstAs);
+                device = ((packet_vkCreateAccelerationStructureKHR*)(objAs->ObjectInfo.AccelerationStructure.pCreatePacket->pBody))->device;
+                vktrace_delete_trace_packet(&pHeader);
+
+                ObjectInfo *objDevice = get_Device_objectInfo(device);
+                if (objDevice == NULL || device == VK_NULL_HANDLE) {
+                    vktrace_LogError("recreate_as: cannot find device 0x%llux!", device);
+                    continue;
+                }
+                // get a correct queue family which supports VK_QUEUE_GRAPHICS_BIT
+                pHeader = copy_packet(objDevice->ObjectInfo.Device.pCreatePacket);
+                packet_vkCreateDevice *pPacket = interpret_body_as_vkCreateDevice(pHeader);
+                VkPhysicalDevice            physicalDevice = pPacket->physicalDevice;
+                uint32_t                    queueFamilyCnt;
+                VkQueueFamilyProperties*    pQueueFamilyProp;
+                mid(physicalDevice)->instTable.GetPhysicalDeviceQueueFamilyProperties(physicalDevice, &queueFamilyCnt, NULL);
+                pQueueFamilyProp = (VkQueueFamilyProperties*)malloc(queueFamilyCnt * sizeof(VkQueueFamilyProperties));
+                assert(pQueueFamilyProp != NULL);
+                mid(physicalDevice)->instTable.GetPhysicalDeviceQueueFamilyProperties(physicalDevice, &queueFamilyCnt, pQueueFamilyProp);
+
+                for (int i = 0; i < pPacket->pCreateInfo->queueCreateInfoCount; i++) {
+                    if ((pPacket->pCreateInfo->pQueueCreateInfos[i].flags & VK_DEVICE_QUEUE_CREATE_PROTECTED_BIT) == 0 &&
+                        pQueueFamilyProp[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) {
+                            queueFamilyIndex = i;
+                        break;
+                    }
+                }
+                vktrace_delete_trace_packet(&pHeader);
+                assert(queueFamilyIndex != UINT_MAX);
+                free (pQueueFamilyProp);
+                break;
+            }
+            if (device != NULL) {
+                break;
+            }
+        }
+
+        for (auto obj = stateTracker.BuildAccelerationStructures.begin();
+             obj != stateTracker.BuildAccelerationStructures.end(); obj++) {
+            pHeader = copy_packet(obj->pBuildAccelerationtStructure);
+            packet_vkBuildAccelerationStructuresKHR *pBuildPacket = interpret_body_as_vkBuildAccelerationStructuresKHR(pHeader);
+            assert (pBuildPacket->infoCount >= 1);
+            max_geoinfo = max_geoinfo > pBuildPacket->infoCount ? max_geoinfo:pBuildPacket->infoCount;
+            vktrace_delete_trace_packet(&pHeader);
+        }
+
+        // create scratch buffers
+        _scratch_size *max_scratch_size = get_max_scratch_size(device);
+        uint32_t max_size = max_scratch_size->buildSize > max_scratch_size->updateSize ?
+                            max_scratch_size->buildSize : max_scratch_size->updateSize;
+        std::vector<_shader_host_buffer> scratch_buffers;
+        for (int i = 0; i < max_geoinfo; i++) {
+            _shader_host_buffer scratch_buffer;
+            VkResult result = generate_shader_device_buffer(true, device, max_size, queueFamilyIndex, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, scratch_buffer);
+            assert(result == VK_SUCCESS);
+            scratch_buffers.push_back(scratch_buffer);
+            assert(scratch_buffers.size() > i);
+        }
+
+        // loop all the vkBuildAccelerationStructuresKHR() calls
+        // regenerate them in the trimed trace
+        auto obj = stateTracker.BuildAccelerationStructures.begin();
+        auto objCopy = stateTracker.CopyAccelerationStructure.begin();
+        while (obj != stateTracker.BuildAccelerationStructures.end() || objCopy != stateTracker.CopyAccelerationStructure.end()) {
+            if ((objCopy == stateTracker.CopyAccelerationStructure.end()) ||
+                ((obj != stateTracker.BuildAccelerationStructures.end()) &&
+                 (obj->pBuildAccelerationtStructure->global_packet_index < objCopy->pCopyAccelerationStructureKHR->global_packet_index))) {
+                // create input buffers (vb/ib/tb/aabb/instance), and restore data
+                // don't use the original buffer, it's because the old buffer might be destoried already
+                generate_buildas_create_inputs(device, queueFamilyIndex, *obj);
+
+                // vkBuildAccelerationStructure
+                pHeader = obj->pBuildAccelerationtStructure;
+                packet_vkBuildAccelerationStructuresKHR *pPacket = (packet_vkBuildAccelerationStructuresKHR*)pHeader->pBody;
+
+                // replace the scratch buffer host address with the new one
+                vktrace_trace_packet_header* pBuildHeader = copy_packet(obj->pBuildAccelerationtStructure);
+                packet_vkBuildAccelerationStructuresKHR* pBuildPacket = interpret_body_as_vkBuildAccelerationStructuresKHR(pBuildHeader);
+                assert(pBuildPacket->infoCount <= scratch_buffers.size());
+                for (uint32_t i = 0; i < pBuildPacket->infoCount; ++i) {
+                    uint64_t offset = (uint64_t)(&pBuildPacket->pInfos[i].scratchData.deviceAddress) - (uint64_t)pBuildPacket;
+                    VkDeviceAddress* pAddr = (VkDeviceAddress*)((uint64_t)pPacket + offset);
+                    *pAddr = (uint64_t)scratch_buffers[i].hostAddress;
+                }
+                vktrace_delete_trace_packet(&pBuildHeader);
+
+                vktrace_write_trace_packet(obj->pBuildAccelerationtStructure, vktrace_trace_get_trace_file());
+                vktrace_delete_trace_packet(&pHeader);
+                obj++;
+            }
+            else {
+                assert((obj == stateTracker.BuildAccelerationStructures.end()) ||
+                       (obj->pBuildAccelerationtStructure->global_packet_index > objCopy->pCopyAccelerationStructureKHR->global_packet_index));
+
+                // vkCopyAccelerationStructureKHR
+                vktrace_write_trace_packet(objCopy->pCopyAccelerationStructureKHR, vktrace_trace_get_trace_file());
+                vktrace_delete_trace_packet(&pHeader);
+                objCopy++;
+            }
+        }
+
+        // destroy scratch buffers
+        for (uint32_t i = 0; i < scratch_buffers.size(); i++) {
+            generate_destroy_shader_device_buffer(device, scratch_buffers[i]);
+        }
+
+        // destroy AS input staging buffers
+        for (auto obj = stateTracker.BuildAccelerationStructures.begin(); obj != stateTracker.BuildAccelerationStructures.end(); obj++)  {
+            generate_buildas_destroy_inputs(device, *obj);
+        }
+    }
+
+    for (size_t i = 0; i < s_trimGlobalStateTracker.BuildAccelerationStructures.size(); i++) {
+        trim::remove_BuildAccelerationStructure_object(s_trimGlobalStateTracker.BuildAccelerationStructures[i]);
+    }
+
+    for (size_t i = 0; i < s_trimGlobalStateTracker.CopyAccelerationStructure.size(); i++) {
+        trim::remove_CopyAccelerationStructure_object(s_trimGlobalStateTracker.CopyAccelerationStructure[i]);
+    }
+
+    s_trimGlobalStateTracker.BuildAccelerationStructures.clear();
+    s_trimGlobalStateTracker.CopyAccelerationStructure.clear();
+}
+
 void generateCmdBuildAsWorkflow(StateTracker &stateTracker){
     if (stateTracker.cmdBuildAccelerationStructures.size() > 0) {
         // prepare command buffer for later operations
@@ -5387,19 +5671,6 @@ void generateCmdBuildAsWorkflow(StateTracker &stateTracker){
             vktrace_delete_trace_packet(&pHeader);
         }
 
-        // create scratch buffers
-        _scratch_size *max_scratch_size = get_max_scratch_size(device);
-        uint32_t max_size = max_scratch_size->buildSize > max_scratch_size->updateSize ?
-                            max_scratch_size->buildSize : max_scratch_size->updateSize;
-        std::vector<_shader_device_buffer> scratch_buffers;
-        for (int i = 0; i < max_geoinfo; i++) {
-            _shader_device_buffer scratch_buffer;
-            VkResult result = generate_shader_device_buffer(true, device, max_size, queueFamilyIndex, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, scratch_buffer);
-            assert(result == VK_SUCCESS);
-            scratch_buffers.push_back(scratch_buffer);
-            assert(scratch_buffers.size() > i);
-        }
-
         // create command pool packets
         // create a real commandPool to get a valid handle for the later packets
         // no real commands in the command pool
@@ -5436,24 +5707,18 @@ void generateCmdBuildAsWorkflow(StateTracker &stateTracker){
         auto obj = stateTracker.cmdBuildAccelerationStructures.begin();
         auto objCopy = stateTracker.cmdCopyAccelerationStructure.begin();
         while (obj != stateTracker.cmdBuildAccelerationStructures.end() || objCopy != stateTracker.cmdCopyAccelerationStructure.end()) {
+            // create scratch buffers
+            std::vector<_shader_device_buffer> scratch_buffers;
+            bool isBuildAs = false;
+
             if ((objCopy == stateTracker.cmdCopyAccelerationStructure.end()) ||
                 ((obj != stateTracker.cmdBuildAccelerationStructures.end()) &&
                  (obj->pCmdBuildAccelerationtStructure->global_packet_index < objCopy->pCmdCopyAccelerationStructureKHR->global_packet_index))) {
                 // create input buffers (vb/ib/tb/aabb/instance), and restore data
                 // don't use the original buffer, it's because the old buffer might be destoried already
-                generate_buildas_create_inputs(device, queueFamilyIndex, *obj);
+                generate_cmdbuildas_create_inputs(device, queueFamilyIndex, *obj);
+                isBuildAs = true;
 
-                // begin command buffer packets
-                VkCommandBufferBeginInfo commandBufferBeginInfo;
-                commandBufferBeginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-                commandBufferBeginInfo.pNext = NULL;
-                commandBufferBeginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-                commandBufferBeginInfo.pInheritanceInfo = NULL;
-                pHeader = generate::vkBeginCommandBuffer(false, commandBuffer, &commandBufferBeginInfo);
-                vktrace_write_trace_packet(pHeader, vktrace_trace_get_trace_file());
-                vktrace_delete_trace_packet(&pHeader);
-
-                // vkCmdBuildAccelerationStructure
                 pHeader = obj->pCmdBuildAccelerationtStructure;
                 packet_vkCmdBuildAccelerationStructuresKHR *pPacket = (packet_vkCmdBuildAccelerationStructuresKHR*)pHeader->pBody;
                 pPacket->commandBuffer = commandBuffer;
@@ -5461,17 +5726,46 @@ void generateCmdBuildAsWorkflow(StateTracker &stateTracker){
                 // replace the scratch buffer device address with the new one
                 vktrace_trace_packet_header* pcmdBuildHeader = copy_packet(obj->pCmdBuildAccelerationtStructure);
                 packet_vkCmdBuildAccelerationStructuresKHR* pcmdBuildPacket = interpret_body_as_vkCmdBuildAccelerationStructuresKHR(pcmdBuildHeader);
-                assert(pcmdBuildPacket->infoCount <= scratch_buffers.size());
-                for (uint32_t i = 0; i < pcmdBuildPacket->infoCount; ++i) {
+
+                for (uint32_t i = 0; i < pcmdBuildPacket->infoCount; i++) {
+                    // max primitive counts
+                    std::vector<uint32_t> primitiveCounts = {};
+                    for (uint32_t j = 0; j < pcmdBuildPacket->pInfos[i].geometryCount; j++) {
+                        primitiveCounts.push_back(pcmdBuildPacket->ppBuildRangeInfos[i][j].primitiveCount);
+                    }
+
+                    // get the AS build size and compare
+                    VkAccelerationStructureBuildSizesInfoKHR buildSizeInfo = {VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR, NULL, 0, 0, 0};
+                    mdd(device)->devTable.GetAccelerationStructureBuildSizesKHR(device, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, &(pcmdBuildPacket->pInfos[i]), primitiveCounts.data(), &buildSizeInfo);
+                    vktrace_LogDebug("Get AS buildSizeInfo buildScratchSize %llu", buildSizeInfo.buildScratchSize);
+                    assert(buildSizeInfo.buildScratchSize != 0);
+
+                    _shader_device_buffer scratch_buffer;
+                    VkResult result = generate_shader_device_buffer(true, device, buildSizeInfo.buildScratchSize, queueFamilyIndex, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, scratch_buffer);
+                    assert(result == VK_SUCCESS);
+                    scratch_buffers.push_back(scratch_buffer);
+
                     uint64_t offset = (uint64_t)(&pcmdBuildPacket->pInfos[i].scratchData.deviceAddress) - (uint64_t)pcmdBuildPacket;
                     VkDeviceAddress* pAddr = (VkDeviceAddress*)((uint64_t)pPacket + offset);
-                    *pAddr = scratch_buffers[i].address;
+                    assert(scratch_buffer.address != 0);
+                    *pAddr = scratch_buffer.address;
                 }
+
                 vktrace_delete_trace_packet(&pcmdBuildHeader);
 
+                // begin command buffer packets
+                VkCommandBufferBeginInfo commandBufferBeginInfo;
+                commandBufferBeginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+                commandBufferBeginInfo.pNext = NULL;
+                commandBufferBeginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+                commandBufferBeginInfo.pInheritanceInfo = NULL;
+                vktrace_trace_packet_header* pCmdBufHeader = generate::vkBeginCommandBuffer(false, commandBuffer, &commandBufferBeginInfo);
+                vktrace_write_trace_packet(pCmdBufHeader, vktrace_trace_get_trace_file());
+                vktrace_delete_trace_packet(&pCmdBufHeader);
+
+                // vkCmdBuildAccelerationStructure
                 vktrace_write_trace_packet(obj->pCmdBuildAccelerationtStructure, vktrace_trace_get_trace_file());
                 vktrace_delete_trace_packet(&pHeader);
-                obj++;
             }
             else {
                 assert((obj == stateTracker.cmdBuildAccelerationStructures.end()) ||
@@ -5493,7 +5787,6 @@ void generateCmdBuildAsWorkflow(StateTracker &stateTracker){
 
                 vktrace_write_trace_packet(objCopy->pCmdCopyAccelerationStructureKHR, vktrace_trace_get_trace_file());
                 vktrace_delete_trace_packet(&pHeader);
-                objCopy++;
             }
 
             // end command buffer packets
@@ -5511,16 +5804,19 @@ void generateCmdBuildAsWorkflow(StateTracker &stateTracker){
             pHeader = generate::vkQueueWaitIdle(false, queue);
             vktrace_write_trace_packet(pHeader, vktrace_trace_get_trace_file());
             vktrace_delete_trace_packet(&pHeader);
-        }
 
-        // destroy scratch buffers
-        for (uint32_t i = 0; i < scratch_buffers.size(); i++) {
-            generate_destroy_shader_device_buffer(device, scratch_buffers[i]);
-        }
+            if (isBuildAs) {
+                // destroy AS input staging buffers
+                generate_cmdbuildas_destroy_inputs(device, *obj);
+                obj++;
+            } else {
+                objCopy++;
+            }
 
-        // destroy AS input staging buffers
-        for (auto obj = stateTracker.cmdBuildAccelerationStructures.begin(); obj != stateTracker.cmdBuildAccelerationStructures.end(); obj++)  {
-            generate_buildas_destroy_inputs(device, *obj);
+            // destroy scratch buffers
+            for (uint32_t i = 0; i < scratch_buffers.size(); i++) {
+                generate_destroy_shader_device_buffer(device, scratch_buffers[i]);
+            }
         }
 
         // destory command buffer packets
@@ -5536,6 +5832,17 @@ void generateCmdBuildAsWorkflow(StateTracker &stateTracker){
         vktrace_write_trace_packet(pHeader, vktrace_trace_get_trace_file());
         vktrace_delete_trace_packet(&pHeader);
     }
+
+    for (size_t i = 0; i < s_trimGlobalStateTracker.cmdBuildAccelerationStructures.size(); i++) {
+        trim::remove_cmdBuildAccelerationStructure_object(s_trimGlobalStateTracker.cmdBuildAccelerationStructures[i]);
+    }
+
+    for (size_t i = 0; i < s_trimGlobalStateTracker.cmdCopyAccelerationStructure.size(); i++) {
+        trim::remove_cmdCopyAccelerationStructure_object(s_trimGlobalStateTracker.cmdCopyAccelerationStructure[i]);
+    }
+
+    s_trimGlobalStateTracker.cmdBuildAccelerationStructures.clear();
+    s_trimGlobalStateTracker.cmdCopyAccelerationStructure.clear();
 }
 
 void generateCmdBuildAsWorkflow(cmdBuildASPacketInfo& packetInfo) {
@@ -5640,6 +5947,7 @@ void recreate_allocated_command_buffers(StateTracker &stateTracker) {
     // write out the packets to recreate the command buffers that were allocated
     vktrace_enter_critical_section(&trimCommandBufferPacketLock);
     if (g_TraceEnableCopyAsBuf) {
+        generateBuildAsWorkflow(stateTracker);
         generateCmdBuildAsWorkflow(stateTracker);
     } else {
         for(auto& e: g_cmdBuildASPacket) {
@@ -6146,9 +6454,6 @@ void write_all_referenced_object_calls() {
     // DeviceMemory (Persistently Map Memory)
     recreate_device_persistently_map_mem(stateTracker);
 
-    // AccelerationStructure
-    recreate_as(stateTracker);
-
     // BufferView
     recreate_bufferviews(stateTracker);
 
@@ -6466,6 +6771,24 @@ void add_destroy_device_object_packets(VkDevice device) {
         }
     }
 
+    // BufferView
+    for (auto obj = s_trimGlobalStateTracker.createdBufferViews.begin(); obj != s_trimGlobalStateTracker.createdBufferViews.end();
+         obj++) {
+        for (auto objBuf = s_trimGlobalStateTracker.createdBuffers.begin(); objBuf != s_trimGlobalStateTracker.createdBuffers.end(); objBuf++) {
+            VkBuffer buffer = (VkBuffer)objBuf->first;
+            if (buffer == obj->second.ObjectInfo.BufferView.buffer) {
+                if (obj->second.belongsToDevice == device) {
+                    vktrace_trace_packet_header *pHeader =
+                        generate::vkDestroyBufferView(false, obj->second.belongsToDevice, (VkBufferView)obj->first,
+                                                    get_Allocator(obj->second.ObjectInfo.BufferView.pAllocator));
+                    vktrace_write_trace_packet(pHeader, vktrace_trace_get_trace_file());
+                    vktrace_delete_trace_packet(&pHeader);
+                }
+                break;
+            }
+        }
+    }
+
     // Buffer
     for (auto obj = s_trimGlobalStateTracker.createdBuffers.begin(); obj != s_trimGlobalStateTracker.createdBuffers.end(); obj++) {
         if (obj->second.belongsToDevice == device) {
@@ -6486,15 +6809,21 @@ void add_destroy_device_object_packets(VkDevice device) {
         }
     }
 
-    // BufferView
-    for (auto obj = s_trimGlobalStateTracker.createdBufferViews.begin(); obj != s_trimGlobalStateTracker.createdBufferViews.end();
+    // ImageView
+    for (auto obj = s_trimGlobalStateTracker.createdImageViews.begin(); obj != s_trimGlobalStateTracker.createdImageViews.end();
          obj++) {
-        if (obj->second.belongsToDevice == device) {
-            vktrace_trace_packet_header *pHeader =
-                generate::vkDestroyBufferView(false, obj->second.belongsToDevice, (VkBufferView)obj->first,
-                                              get_Allocator(obj->second.ObjectInfo.BufferView.pAllocator));
-            vktrace_write_trace_packet(pHeader, vktrace_trace_get_trace_file());
-            vktrace_delete_trace_packet(&pHeader);
+        for (auto objImg = s_trimGlobalStateTracker.createdImages.begin(); objImg != s_trimGlobalStateTracker.createdImages.end(); objImg++) {
+            VkImage image = (VkImage)objImg->first;
+            if (image == obj->second.ObjectInfo.ImageView.image) {
+                if (obj->second.belongsToDevice == device) {
+                    vktrace_trace_packet_header *pHeader =
+                        generate::vkDestroyImageView(false, obj->second.belongsToDevice, (VkImageView)obj->first,
+                                                    get_Allocator(obj->second.ObjectInfo.ImageView.pAllocator));
+                    vktrace_write_trace_packet(pHeader, vktrace_trace_get_trace_file());
+                    vktrace_delete_trace_packet(&pHeader);
+                }
+                break;
+            }
         }
     }
 
@@ -6508,18 +6837,6 @@ void add_destroy_device_object_packets(VkDevice device) {
                 vktrace_write_trace_packet(pHeader, vktrace_trace_get_trace_file());
                 vktrace_delete_trace_packet(&pHeader);
             }
-        }
-    }
-
-    // ImageView
-    for (auto obj = s_trimGlobalStateTracker.createdImageViews.begin(); obj != s_trimGlobalStateTracker.createdImageViews.end();
-         obj++) {
-        if (obj->second.belongsToDevice == device) {
-            vktrace_trace_packet_header *pHeader =
-                generate::vkDestroyImageView(false, obj->second.belongsToDevice, (VkImageView)obj->first,
-                                             get_Allocator(obj->second.ObjectInfo.ImageView.pAllocator));
-            vktrace_write_trace_packet(pHeader, vktrace_trace_get_trace_file());
-            vktrace_delete_trace_packet(&pHeader);
         }
     }
 

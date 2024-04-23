@@ -1,5 +1,5 @@
 /*
- * (C) COPYRIGHT 2019-2023 ARM Limited
+ * (C) COPYRIGHT 2019 ARM Limited
  * ALL RIGHTS RESERVED
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -290,6 +290,7 @@ static uint64_t load_packet(FileLike* file, void* load_addr, uint64_t packet_siz
             replayer = replayerArray[pHeader->tracer_id];
             if (replayer == NULL) {
                 vktrace_LogWarning("Tracer_id %d has no valid replayer.", pHeader->tracer_id);
+                break;
             }
             if (pHeader->packet_id >= VKTRACE_TPI_VK_vkApiVersion) {
                 // replay the API packet
@@ -336,7 +337,7 @@ static uint64_t load_packet(FileLike* file, void* load_addr, uint64_t packet_siz
                             const VkPipelineCache cache_handle = *(pPacket->pPipelineCache);
                             // We don't have gpu info and pipeline cache uuid info in this period
                             // so we only use cache handle to search cache file.
-                            std::string &&full_path = accessor->FindFile(cache_handle);
+                            std::string &&full_path = accessor->FindFile(pPacket->header->global_packet_index, cache_handle);
                             if (false == full_path.empty()) {
                                 if (accessor->LoadPipelineCache(full_path)) {
                                     auto cache_data = accessor->GetPipelineCache(cache_handle);
