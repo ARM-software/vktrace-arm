@@ -81,6 +81,9 @@ vktrace_trace_packet_header *vkCreateBuffer(bool makeCall, VkDevice device, cons
 vktrace_trace_packet_header *vkGetBufferMemoryRequirements(bool makeCall, VkDevice device, VkBuffer buffer,
                                                            VkMemoryRequirements *pMemoryRequirements);
 
+vktrace_trace_packet_header *vkGetImageMemoryRequirements(bool makeCall, VkDevice device, VkImage image,
+                                                           VkMemoryRequirements *pMemoryRequirements);
+
 vktrace_trace_packet_header *vkAllocateMemory(bool makeCall, VkDevice device, const VkMemoryAllocateInfo *pAllocateInfo,
                                               const VkAllocationCallbacks *pAllocator, VkDeviceMemory *pMemory);
 
@@ -107,6 +110,8 @@ vktrace_trace_packet_header *vkDestroyBuffer(bool makeCall, VkDevice device, VkB
 
 vktrace_trace_packet_header *vkDestroyAccelerationStructureKHR(bool makeCall, VkDevice device, VkAccelerationStructureKHR accelerationStructure,
                                                                const VkAllocationCallbacks* pAllocator);
+
+vktrace_trace_packet_header *vkDestroyMicromapEXT(bool makeCall, VkDevice device, VkMicromapEXT micromap, const VkAllocationCallbacks* pAllocator);
 
 vktrace_trace_packet_header *vkDestroyBufferView(bool makeCall, VkDevice device, VkBufferView bufferView,
                                                  const VkAllocationCallbacks *pAllocator);
@@ -214,8 +219,11 @@ vktrace_trace_packet_header *vkCmdCopyBufferToImage(bool makeCall, VkCommandBuff
                                                     VkImage dstImage, VkImageLayout dstImageLayout, uint32_t regionCount,
                                                     const VkBufferImageCopy *pRegions);
 
-vktrace_trace_packet_header * vkGetDeviceQueue(bool makeCall,  VkDevice device, uint32_t queueFamilyIndex, uint32_t queueIndex, VkQueue* pQueue);
+vktrace_trace_packet_header *vkGetDeviceQueue(bool makeCall,  VkDevice device, uint32_t queueFamilyIndex, uint32_t queueIndex, VkQueue* pQueue);
 
-vktrace_trace_packet_header * vkGetBufferDeviceAddressKHR(bool makeCall, VkDevice device,const VkBufferDeviceAddressInfo* pInfo, VkDeviceAddress* addr);
+vktrace_trace_packet_header *vkGetBufferDeviceAddressKHR(bool makeCall, VkDevice device,const VkBufferDeviceAddressInfo* pInfo, VkDeviceAddress* addr);
+
+vktrace_trace_packet_header *vkGetMicromapBuildSizesEXT(bool makeCall, VkDevice device, VkAccelerationStructureBuildTypeKHR buildType, const VkMicromapBuildInfoEXT* pBuildInfo, VkMicromapBuildSizesInfoEXT* pSizeInfo);
+
 }  // namespace generate
 }  // namespace trim

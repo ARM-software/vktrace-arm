@@ -2,7 +2,7 @@
  *
  * Copyright 2014-2016 Valve Corporation
  * Copyright (C) 2014-2016 LunarG, Inc.
- * Copyright (C) 2019 ARM Limited
+ * Copyright (C) 2016-2024 ARM Limited
  * All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -188,6 +188,8 @@ VkDebugUtilsLabelEXT* interpret_VkDebugUtilsLabelEXT(vktrace_trace_packet_header
 VkDebugUtilsObjectNameInfoEXT* interpret_VkDebugUtilsObjectNameInfoEXT(vktrace_trace_packet_header* pHeader, intptr_t ptr_variable);
 VkDebugUtilsObjectTagInfoEXT* interpret_VkDebugUtilsObjectTagInfoEXT(vktrace_trace_packet_header* pHeader, intptr_t ptr_variable);
 VkDebugUtilsMessengerCallbackDataEXT* interpret_VkDebugUtilsMessengerCallbackDataEXT(vktrace_trace_packet_header* pHeader, intptr_t ptr_variable);
+VkDebugMarkerObjectTagInfoEXT* interpret_VkDebugMarkerObjectTagInfoEXT(vktrace_trace_packet_header* pHeader, intptr_t ptr_variable);
+
 VkInstanceCreateInfo* interpret_VkInstanceCreateInfo(vktrace_trace_packet_header* pHeader, intptr_t ptr_variable);
 VkDependencyInfo* interpret_VkDependencyInfo(vktrace_trace_packet_header* pHeader, intptr_t ptr_variable);
 VkDeviceCreateInfo* interpret_VkDeviceCreateInfo(vktrace_trace_packet_header* pHeader, intptr_t ptr_variable);

@@ -55,6 +55,7 @@ LOCAL_STATIC_LIBRARIES += layer_utils
 LOCAL_CPPFLAGS += -std=c++17 -Wall -Werror -Wno-unused-function -Wno-unused-const-variable -mxgot
 LOCAL_CPPFLAGS += -DVK_ENABLE_BETA_EXTENSIONS -DVK_USE_PLATFORM_ANDROID_KHR -DVK_PROTOTYPES -fvisibility=hidden
 LOCAL_LDLIBS    := -llog
+LOCAL_LDFLAGS   += -Wl,-z,max-page-size=16384
 include $(BUILD_SHARED_LIBRARY)
 
 include $(CLEAR_VARS)
@@ -71,6 +72,7 @@ LOCAL_STATIC_LIBRARIES += layer_utils
 LOCAL_CPPFLAGS += -std=c++17 -Wall -Werror -Wno-unused-function -Wno-unused-const-variable -mxgot
 LOCAL_CPPFLAGS += -DVK_ENABLE_BETA_EXTENSIONS -DVK_USE_PLATFORM_ANDROID_KHR -DVK_PROTOTYPES -fvisibility=hidden
 LOCAL_LDLIBS    := -llog
+LOCAL_LDFLAGS   += -Wl,-z,max-page-size=16384
 include $(BUILD_SHARED_LIBRARY)
 
 include $(CLEAR_VARS)
@@ -98,6 +100,7 @@ LOCAL_STATIC_LIBRARIES += layer_utils
 LOCAL_CPPFLAGS += -std=c++17 -Wall -Werror -Wno-unused-function -Wno-unused-const-variable -mxgot
 LOCAL_CPPFLAGS += -DVK_ENABLE_BETA_EXTENSIONS -DVK_USE_PLATFORM_ANDROID_KHR -DVK_PROTOTYPES -fvisibility=hidden -fexceptions
 LOCAL_LDLIBS    := -llog
+LOCAL_LDFLAGS   += -Wl,-z,max-page-size=16384
 include $(BUILD_SHARED_LIBRARY)
 
 include $(CLEAR_VARS)
@@ -115,6 +118,7 @@ LOCAL_STATIC_LIBRARIES += layer_utils
 LOCAL_CPPFLAGS += -std=c++17 -Wall -Werror -Wno-unused-function -Wno-unused-const-variable -mxgot
 LOCAL_CPPFLAGS += -DVK_ENABLE_BETA_EXTENSIONS -DVK_USE_PLATFORM_ANDROID_KHR -DVK_PROTOTYPES -fvisibility=hidden
 LOCAL_LDLIBS    := -llog -landroid
+LOCAL_LDFLAGS   += -Wl,-z,max-page-size=16384
 include $(BUILD_SHARED_LIBRARY)
 
 include $(CLEAR_VARS)
@@ -132,6 +136,7 @@ LOCAL_STATIC_LIBRARIES += layer_utils
 LOCAL_CPPFLAGS += -std=c++17 -Wall -Werror -Wno-unused-function -Wno-unused-const-variable -mxgot
 LOCAL_CPPFLAGS += -DVK_ENABLE_BETA_EXTENSIONS -DVK_USE_PLATFORM_ANDROID_KHR -DVK_PROTOTYPES -fvisibility=hidden
 LOCAL_LDLIBS    := -llog
+LOCAL_LDFLAGS   += -Wl,-z,max-page-size=16384
 include $(BUILD_SHARED_LIBRARY)
 
 include $(CLEAR_VARS)
@@ -148,6 +153,7 @@ LOCAL_STATIC_LIBRARIES += layer_utils
 LOCAL_CPPFLAGS += -std=c++17 -Wall -Werror -Wno-unused-function -Wno-unused-const-variable -mxgot
 LOCAL_CPPFLAGS += -DVK_ENABLE_BETA_EXTENSIONS -DVK_USE_PLATFORM_ANDROID_KHR -DVK_PROTOTYPES -fvisibility=hidden
 LOCAL_LDLIBS    := -llog
+LOCAL_LDFLAGS   += -Wl,-z,max-page-size=16384
 include $(BUILD_SHARED_LIBRARY)
 
 include $(CLEAR_VARS)
@@ -168,6 +174,7 @@ LOCAL_CPPFLAGS += -DVK_ENABLE_BETA_EXTENSIONS -DVK_USE_PLATFORM_ANDROID_KHR -DVK
 LOCAL_CPPFLAGS += -DPLATFORM_LINUX=1
 LOCAL_CFLAGS += -DPLATFORM_LINUX=1
 LOCAL_LDLIBS    := -llog -landroid
+LOCAL_LDFLAGS   += -Wl,-z,max-page-size=16384
 include $(BUILD_SHARED_LIBRARY)
 
 include $(CLEAR_VARS)
@@ -188,6 +195,7 @@ LOCAL_STATIC_LIBRARIES += layer_utils
 LOCAL_CPPFLAGS += -std=c++17 -Wall -Werror -Wno-unused-function -Wno-unused-const-variable -mxgot
 LOCAL_CPPFLAGS += -DVK_ENABLE_BETA_EXTENSIONS -DVK_USE_PLATFORM_ANDROID_KHR -DVK_PROTOTYPES -fvisibility=hidden
 LOCAL_LDLIBS    := -llog
+LOCAL_LDFLAGS   += -Wl,-z,max-page-size=16384
 include $(BUILD_SHARED_LIBRARY)
 
 include $(CLEAR_VARS)
@@ -208,6 +216,7 @@ LOCAL_STATIC_LIBRARIES += layer_utils
 LOCAL_CPPFLAGS += -std=c++17 -Wall -Werror -Wno-unused-function -Wno-unused-const-variable -mxgot
 LOCAL_CPPFLAGS += -DVK_ENABLE_BETA_EXTENSIONS -DVK_USE_PLATFORM_ANDROID_KHR -fexceptions
 LOCAL_LDLIBS    := -llog
+LOCAL_LDFLAGS   += -Wl,-z,max-page-size=16384
 include $(BUILD_SHARED_LIBRARY)
 
 include $(CLEAR_VARS)
@@ -229,6 +238,8 @@ LOCAL_SRC_FILES += $(SRC_DIR)/vktrace/vktrace_common/compression/lz4compressor.c
 LOCAL_SRC_FILES += $(SRC_DIR)/vktrace/vktrace_layer/vktrace_lib_trace.cpp
 LOCAL_SRC_FILES += $(SRC_DIR)/vktrace/vktrace_layer/vktrace_lib_helpers.cpp
 LOCAL_SRC_FILES += $(SRC_DIR)/vktrace/vktrace_layer/vktrace_vk_exts.cpp
+LOCAL_SRC_FILES += $(SRC_DIR)/external/gfxreconstruct/util/page_guard_manager.cpp
+LOCAL_SRC_FILES += $(SRC_DIR)/external/gfxreconstruct/util/page_guard_manager_uffd.cpp
 LOCAL_SRC_FILES += $(SRC_DIR)/vktrace/vktrace_layer/vktrace_lib_pagestatusarray.cpp
 LOCAL_SRC_FILES += $(SRC_DIR)/vktrace/vktrace_layer/vktrace_lib_pageguardmappedmemory.cpp
 LOCAL_SRC_FILES += $(SRC_DIR)/vktrace/vktrace_layer/vktrace_lib_pageguardcapture.cpp
@@ -249,6 +260,7 @@ LOCAL_C_INCLUDES += $(LOCAL_PATH)/$(SRC_DIR)/vktrace/include \
                     $(LOCAL_PATH)/$(ANDROID_DIR)/third_party/jsoncpp/dist \
                     $(LOCAL_PATH)/$(LAYER_DIR)/include \
                     $(LOCAL_PATH)/$(SRC_DIR)/external/submodules/lz4/lib \
+                    $(LOCAL_PATH)/$(SRC_DIR)/external/gfxreconstruct \
                     $(LOCAL_PATH)/$(SRC_DIR)/vktrace/vktrace_common \
                     $(LOCAL_PATH)/$(SRC_DIR)/vktrace/vktrace_layer \
                     $(LOCAL_PATH)/$(SRC_DIR)/vktrace/vktrace_layer/vktrace_lib_pageguardmappedmemory.h \
@@ -269,6 +281,7 @@ ifdef VKTRACE_GERRIT_CHANGE_ID
     LOCAL_CPPFLAGS += -DVKTRACE_GERRIT_CHANGE_ID=\"$(VKTRACE_GERRIT_CHANGE_ID)\"
 endif
 LOCAL_LDLIBS    := -llog -lz -lnativewindow
+LOCAL_LDFLAGS   += -Wl,-z,max-page-size=16384
 include $(BUILD_SHARED_LIBRARY)
 
 include $(CLEAR_VARS)
@@ -320,6 +333,7 @@ LOCAL_CFLAGS += -DPLATFORM_POSIX=1
 LOCAL_CFLAGS += -DVK_ENABLE_BETA_EXTENSIONS -DVK_USE_PLATFORM_ANDROID_KHR
 LOCAL_LDLIBS    := -llog -landroid -lz
 LOCAL_LDFLAGS   := -u ANativeActivity_onCreate
+LOCAL_LDFLAGS   += -Wl,-z,max-page-size=16384
 include $(BUILD_SHARED_LIBRARY)
 
 $(call import-module,android/native_app_glue)

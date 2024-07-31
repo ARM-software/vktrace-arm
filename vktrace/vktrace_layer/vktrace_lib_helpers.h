@@ -2,7 +2,7 @@
  *
  * Copyright (C) 2015-2016 Valve Corporation
  * Copyright (C) 2015-2016 LunarG, Inc.
- * Copyright (C) 2019 ARM Limited
+ * Copyright (C) 2016-2024 ARM Limited
  * All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -83,7 +83,6 @@ typedef struct _VKMemInfo {
 typedef VkResult (VKAPI_PTR *PFN_vkFrameBoundaryANDROID)(VkDevice device, VkSemaphore semaphore, VkImage image);
 static VKAPI_ATTR VkResult VKAPI_CALL StubFrameBoundaryANDROID(VkDevice device, VkSemaphore semaphore, VkImage image) { vktrace_LogAlways("VKAPI_CALL StubFrameBoundaryANDROID"); return VK_SUCCESS; };
 #endif
-
 typedef struct _layer_device_data {
     VkLayerDispatchTable devTable;
     bool KHRDeviceSwapchainEnabled;

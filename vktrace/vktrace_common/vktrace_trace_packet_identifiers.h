@@ -608,12 +608,13 @@ typedef enum VKTRACE_COMPRESS_TYPE {
 typedef enum VKTRACE_TRACER_FEATURE {
     TRACER_FEAT_FORCE_FIFO              = 0x1,
     TRACER_FEAT_PG_SYNC_GPU_DATA_BACK   = 0x2,
-    TRACER_FEAT_DELAY_SIGNAL_FENCE      = 0x4
+    TRACER_FEAT_DELAY_SIGNAL_FENCE      = 0x4,
+    TRACER_FEAT_GFXRECON_PAGEGURAD      = 0x8
 } VKTRACE_TRACER_FEATURE;
 
 typedef enum VKTRACE_FILE_HEADER_FLAG {
     VKTRACE_USE_ACCELERATION_STRUCTURE_API_BIT        = 0x1,
-    VKTRACE_RQ_POSTPROCESSED_BIT                      = 0x2
+    VKTRACE_RQ_POSTPROCESSED_BIT                      = 0x2             // This trace file is post-processed by vktrace_rq_pp
 } VKTRACE_FILE_HEADER_FLAG;
 
 typedef enum VKTRACE_VKBUFFER_USAGE_FLAG {

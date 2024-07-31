@@ -1,6 +1,6 @@
 /*
  *
- * Copyright (C) 2019 ARM Limited
+ * Copyright (C) 2016-2024 ARM Limited
  * All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -35,6 +35,8 @@ struct _shader_device_buffer {
     VkDeviceAddress address;
 };
 
+VkDevice get_device_from_commandbuf(VkCommandBuffer commandBuffer);
+
 VkResult create_staging_buffer_on_memory(VkCommandBuffer commandBuffer, VkBuffer* buffer, VkDeviceMemory memory,
                                          VkDeviceSize offset, VkDeviceSize size);
 
@@ -42,13 +44,19 @@ VkResult get_cmdbuildas_memory_buffer(VkDeviceAddress address, VkDeviceSize size
                                       VkDeviceMemory* memory, VkBuffer* buffer, VkDeviceSize* memOffset, uint64_t* buf_gid,
                                       uint64_t* bufMem_gid);
 
-VkResult dump_build_AS_buffer_data(VkCommandBuffer commandBuffer, trim::BuildAsBufferInfo& info);
+VkResult dump_cmdbuild_AS_buffer_data(VkCommandBuffer commandBuffer, trim::BuildAsBufferInfo& info);
 
 VkResult remove_cmdbuild_by_as(VkDevice device, VkAccelerationStructureKHR as);
 VkResult remove_cmdCopyAs_by_as(VkAccelerationStructureKHR as);
+VkResult remove_cmdbuild_by_mp(VkDevice device, VkMicromapEXT mp);
+VkResult remove_cmdCopyMp_by_mp(VkMicromapEXT mp);
+VkResult remove_cmdWriteMp_by_mp(VkMicromapEXT mp);
 
 VkResult generate_cmdbuildas_create_inputs(VkDevice device, uint32_t queueFamilyIndex, BuildAsInfo& buildAsInfo);
 VkResult generate_cmdbuildas_destroy_inputs(VkDevice device, BuildAsInfo& buildAsInfo);
+
+VkResult generate_cmdbuildmp_create_inputs(VkDevice device, uint32_t queueFamilyIndex, BuildMpInfo& buildMpInfo);
+VkResult generate_cmdbuildmp_destroy_inputs(VkDevice device, BuildMpInfo& buildMpInfo);
 
 void set_scratch_size(VkDevice device, VkDeviceSize buildSize, VkDeviceSize updateSize);
 _scratch_size* get_max_scratch_size(VkDevice device);

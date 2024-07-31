@@ -611,6 +611,26 @@ vktrace_trace_packet_header *vkGetBufferMemoryRequirements(bool makeCall, VkDevi
 }
 
 //=====================================================================
+vktrace_trace_packet_header *vkGetImageMemoryRequirements(bool makeCall, VkDevice device, VkImage image,
+                                                           VkMemoryRequirements *pMemoryRequirements) {
+    vktrace_trace_packet_header *pHeader;
+    packet_vkGetImageMemoryRequirements *pPacket = NULL;
+    CREATE_TRACE_PACKET(vkGetImageMemoryRequirements, sizeof(VkMemoryRequirements));
+    if (makeCall) {
+        mdd(device)->devTable.GetImageMemoryRequirements(device, image, pMemoryRequirements);
+    }
+    vktrace_set_packet_entrypoint_end_time(pHeader);
+    pPacket = interpret_body_as_vkGetImageMemoryRequirements(pHeader);
+    pPacket->device = device;
+    pPacket->image = image;
+    vktrace_add_buffer_to_trace_packet(pHeader, (void **)&(pPacket->pMemoryRequirements), sizeof(VkMemoryRequirements),
+                                       pMemoryRequirements);
+    vktrace_finalize_buffer_address(pHeader, (void **)&(pPacket->pMemoryRequirements));
+    vktrace_finalize_trace_packet(pHeader);
+    return pHeader;
+}
+
+//=====================================================================
 vktrace_trace_packet_header *vkAllocateMemory(bool makeCall, VkDevice device, const VkMemoryAllocateInfo *pAllocateInfo,
                                               const VkAllocationCallbacks *pAllocator, VkDeviceMemory *pMemory) {
     VkResult result = VK_SUCCESS;
@@ -841,6 +861,23 @@ vktrace_trace_packet_header *vkDestroyAccelerationStructureKHR(bool makeCall, Vk
     pPacket = interpret_body_as_vkDestroyAccelerationStructureKHR(pHeader);
     pPacket->device = device;
     pPacket->accelerationStructure = accelerationStructure;
+    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pAllocator), sizeof(VkAllocationCallbacks), NULL);
+    vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pAllocator));
+    vktrace_finalize_trace_packet(pHeader);
+    return pHeader;
+}
+
+vktrace_trace_packet_header *vkDestroyMicromapEXT(bool makeCall, VkDevice device, VkMicromapEXT micromap, const VkAllocationCallbacks* pAllocator) {
+    vktrace_trace_packet_header* pHeader = NULL;
+    packet_vkDestroyMicromapEXT* pPacket = NULL;
+    CREATE_TRACE_PACKET(vkDestroyMicromapEXT, sizeof(VkAllocationCallbacks));
+    if (makeCall) {
+        mdd(device)->devTable.DestroyMicromapEXT(device, micromap, pAllocator);
+    }
+    vktrace_set_packet_entrypoint_end_time(pHeader);
+    pPacket = interpret_body_as_vkDestroyMicromapEXT(pHeader);
+    pPacket->device = device;
+    pPacket->micromap = micromap;
     vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pAllocator), sizeof(VkAllocationCallbacks), NULL);
     vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pAllocator));
     vktrace_finalize_trace_packet(pHeader);
@@ -1795,7 +1832,7 @@ vktrace_trace_packet_header * vkGetDeviceQueue(bool makeCall,  VkDevice device, 
 }
 
 //=====================================================================
-vktrace_trace_packet_header * vkGetBufferDeviceAddressKHR(bool makeCall, VkDevice device, const VkBufferDeviceAddressInfo* pInfo, VkDeviceAddress* addr) {
+vktrace_trace_packet_header *vkGetBufferDeviceAddressKHR(bool makeCall, VkDevice device, const VkBufferDeviceAddressInfo* pInfo, VkDeviceAddress* addr) {
     if (makeCall) {
         *addr = mdd(device)->devTable.GetBufferDeviceAddressKHR(device, pInfo);
         if (*addr == 0) {
@@ -1813,6 +1850,37 @@ vktrace_trace_packet_header * vkGetBufferDeviceAddressKHR(bool makeCall, VkDevic
 
     return pHeader;
 
+}
+
+//=====================================================================
+vktrace_trace_packet_header *vkGetMicromapBuildSizesEXT(bool makeCall, VkDevice device, VkAccelerationStructureBuildTypeKHR buildType, const VkMicromapBuildInfoEXT* pBuildInfo, VkMicromapBuildSizesInfoEXT* pSizeInfo) {
+    if (makeCall) {
+        mdd(device)->devTable.GetMicromapBuildSizesEXT(device, buildType, pBuildInfo, pSizeInfo);
+    }
+    vktrace_trace_packet_header *pHeader = nullptr;
+    packet_vkGetMicromapBuildSizesEXT* pPacket = NULL;
+    CREATE_TRACE_PACKET(vkGetMicromapBuildSizesEXT, sizeof(VkMicromapBuildInfoEXT) + get_struct_chain_size((void*)pBuildInfo) + (pBuildInfo->usageCountsCount) * sizeof(VkMicromapUsageEXT) + sizeof(VkMicromapBuildSizesInfoEXT) + get_struct_chain_size((void*)pSizeInfo));
+
+    vktrace_set_packet_entrypoint_end_time(pHeader);
+    pPacket = interpret_body_as_vkGetMicromapBuildSizesEXT(pHeader);
+    pPacket->device = device;
+    pPacket->buildType = buildType;
+    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pBuildInfo), sizeof(VkMicromapBuildInfoEXT), pBuildInfo);
+    if (pBuildInfo != nullptr) vktrace_add_pnext_structs_to_trace_packet(pHeader, (void*)pPacket->pBuildInfo, pBuildInfo);
+    if (pBuildInfo->usageCountsCount && pBuildInfo->pUsageCounts != nullptr) {
+        vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pBuildInfo->pUsageCounts), pBuildInfo->usageCountsCount * sizeof(VkMicromapUsageEXT), pBuildInfo->pUsageCounts);
+        vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pBuildInfo->pUsageCounts));
+    }
+    if (pBuildInfo->usageCountsCount && pBuildInfo->ppUsageCounts != nullptr) {
+        vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pBuildInfo->ppUsageCounts), pBuildInfo->usageCountsCount * sizeof(VkMicromapUsageEXT*), pBuildInfo->ppUsageCounts);
+        vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pBuildInfo->ppUsageCounts));
+    }
+    vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pSizeInfo), sizeof(VkMicromapBuildSizesInfoEXT), pSizeInfo);
+    if (pSizeInfo != nullptr) vktrace_add_pnext_structs_to_trace_packet(pHeader, (void*)pPacket->pSizeInfo, pSizeInfo);
+    vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pBuildInfo));
+    vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pSizeInfo));
+
+    return pHeader;
 }
 //=====================================================================
 }  // namespace generate

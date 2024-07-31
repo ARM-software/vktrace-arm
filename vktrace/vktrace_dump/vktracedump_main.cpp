@@ -290,7 +290,15 @@ static string enabled_features_to_str(uint64_t enabled_features) {
         }
     }
 
-    if ((enabled_features & ~0x7) > 0) {
+    if (enabled_features & TRACER_FEAT_GFXRECON_PAGEGURAD) {
+        if (str == "null") {
+            str = "TRACER_FEAT_GFXRECON_PAGEGURAD";
+        } else {
+            str += " | TRACER_FEAT_GFXRECON_PAGEGURAD";
+        }
+    }
+
+    if ((enabled_features & ~0xf) > 0) {
         if (str == "null") {
             str = "TRACER_FEAT_UNKNOWN";
         } else {
@@ -488,6 +496,9 @@ int main(int argc, char** argv) {
                                 dump_packet(pInterpretedHeader);
                             }
                             switch (pInterpretedHeader->packet_id) {
+#if VK_ANDROID_frame_boundary
+                                case VKTRACE_TPI_VK_vkFrameBoundaryANDROID:
+#endif
                                 case VKTRACE_TPI_VK_vkQueuePresentKHR: {
                                     frameNumber++;
                                     if (g_params.simpleDumpFile && change_dump_file_name(g_params.simpleDumpFile, frameNumber)) {

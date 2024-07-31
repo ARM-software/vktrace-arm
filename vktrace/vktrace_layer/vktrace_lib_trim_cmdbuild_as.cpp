@@ -1,6 +1,6 @@
 /*
  *
- * Copyright (C) 2019 ARM Limited
+ * Copyright (C) 2016-2024 ARM Limited
  * All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -87,7 +87,7 @@ VkResult create_staging_buffer_on_memory(VkCommandBuffer commandBuffer, VkBuffer
     return result;
 }
 
-VkResult dump_build_AS_buffer_data(VkCommandBuffer commandBuffer, BuildAsBufferInfo& info) {
+VkResult dump_cmdbuild_AS_buffer_data(VkCommandBuffer commandBuffer, BuildAsBufferInfo& info) {
     VkBufferCreateInfo bufCreateInfo;
     bufCreateInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
     bufCreateInfo.pNext = NULL;
@@ -387,6 +387,33 @@ VkResult remove_cmdbuild_by_as(VkDevice device, VkAccelerationStructureKHR as) {
     return result;
 }
 
+VkResult remove_cmdbuild_by_mp(VkDevice device, VkMicromapEXT mp) {
+    VkResult result = VK_SUCCESS;
+    std::vector<BuildMpInfo>& buildMpInfo = get_cmdBuildMicromaps_object();
+    auto it_info = buildMpInfo.begin();
+    bool foundMp = false;
+    while (it_info != buildMpInfo.end()) {
+        foundMp = false;
+        vktrace_trace_packet_header* pHeader = copy_packet(it_info->pCmdBuildMicromap);
+        packet_vkCmdBuildMicromapsEXT* pPacket = interpret_body_as_vkCmdBuildMicromapsEXT(pHeader);
+        for (uint32_t i = 0; i < pPacket->infoCount; ++i) {
+            if (pPacket->pInfos[i].dstMicromap == mp) {
+                foundMp = true;
+                break;
+            }
+        }
+        if (foundMp) {
+            it_info = buildMpInfo.erase(it_info);
+        } else {
+            it_info++;
+        }
+        vktrace_delete_trace_packet_no_lock(&pHeader);
+    }
+    return result;
+}
+
+
+
 VkResult remove_cmdCopyAs_by_as(VkAccelerationStructureKHR as) {
     VkResult result = VK_SUCCESS;
     std::vector<CopyAsInfo>& CopyAsInfo = get_cmdCopyAccelerationStructure_object();
@@ -417,6 +444,47 @@ VkResult remove_cmdCopyAs_by_as(VkAccelerationStructureKHR as) {
             "Skip removing CopyAsInfo because target AS is only found as src of vkCmdCopyAccelerationStructureKHR"
             " and dst AS hasn't been handled yet!");
         result = VK_ERROR_UNKNOWN;
+    }
+    return result;
+}
+
+VkResult remove_cmdCopyMp_by_mp(VkMicromapEXT mp) {
+    VkResult result = VK_SUCCESS;
+    std::vector<CopyMpInfo>& CopyMpInfo = get_cmdCopyMicromap_object();
+    auto it_info = CopyMpInfo.begin();
+    while (it_info != CopyMpInfo.end()) {
+        vktrace_trace_packet_header* pHeader = copy_packet(it_info->pCmdCopyMicromap);
+        packet_vkCmdCopyMicromapEXT* pPacket = interpret_body_as_vkCmdCopyMicromapEXT(pHeader);
+        if (pPacket->pInfo->dst == mp || pPacket->pInfo->src == mp) {
+            it_info = CopyMpInfo.erase(it_info);
+        } else {
+            it_info++;
+        }
+        vktrace_delete_trace_packet_no_lock(&pHeader);
+    }
+    return result;
+}
+
+VkResult remove_cmdWriteMp_by_mp(VkMicromapEXT mp) {
+    VkResult result = VK_SUCCESS;
+    std::vector<WriteMpProperties>& WriteMpsProperties  = get_cmdWriteMicromapsProperties_object();
+    auto it_info = WriteMpsProperties.begin();
+    while (it_info != WriteMpsProperties.end()) {
+        bool bFind = false;
+        vktrace_trace_packet_header* pHeader = copy_packet(it_info->pCmdWriteMicromapsProperties);
+        packet_vkCmdWriteMicromapsPropertiesEXT* pPacket = interpret_body_as_vkCmdWriteMicromapsPropertiesEXT(pHeader);
+        for (int i = 0; i < pPacket->micromapCount; i++) {
+            if (pPacket->pMicromaps[i] == mp) {
+                bFind = true;
+                break;
+            }
+        }
+        if (bFind) {
+            it_info = WriteMpsProperties.erase(it_info);
+        } else {
+            it_info++;
+        }
+        vktrace_delete_trace_packet_no_lock(&pHeader);
     }
     return result;
 }
@@ -711,6 +779,37 @@ VkResult generate_cmdbuildas_create_inputs(VkDevice device, uint32_t queueFamily
     return result;
 }
 
+VkResult generate_cmdbuildmp_create_inputs(VkDevice device, uint32_t queueFamilyIndex, BuildMpInfo& buildMpInfo) {
+    VkResult result = VK_SUCCESS;
+    packet_vkCmdBuildMicromapsEXT* pPacket = (packet_vkCmdBuildMicromapsEXT*)buildMpInfo.pCmdBuildMicromap->pBody;
+    vktrace_trace_packet_header* pCmdBuildHeader = copy_packet(buildMpInfo.pCmdBuildMicromap);
+    packet_vkCmdBuildMicromapsEXT* pCmdBuildPacket = interpret_body_as_vkCmdBuildMicromapsEXT(pCmdBuildHeader);
+    for (auto& trangleInfo : buildMpInfo.triangleInfo) {
+        uint64_t offset = 0;
+        VkDeviceAddress* pAddr = nullptr;
+        result = geneate_create_as_input(device, 0, trangleInfo.data);
+        if (result != VK_SUCCESS) {
+            vktrace_LogError("generate_cmdbuildas_create_inputs: create data device buffer fail!");
+            assert(0);
+        } else if (trangleInfo.data.dataSize > 0) {
+            offset = (uint64_t)(&pCmdBuildPacket->pInfos[trangleInfo.infoIndex].data.deviceAddress) - (uint64_t)pCmdBuildPacket;
+            pAddr = (VkDeviceAddress*)((uint64_t)pPacket + offset);
+            *pAddr = trangleInfo.data.stagingAddr;
+        }
+        result = geneate_create_as_input(device, 0, trangleInfo.triangleArray);
+        if (result != VK_SUCCESS) {
+            vktrace_LogError("generate_cmdbuildas_create_inputs: create triangleArray device buffer fail!");
+            assert(0);
+        } else if (trangleInfo.triangleArray.dataSize > 0) {
+            offset = (uint64_t)(&pCmdBuildPacket->pInfos[trangleInfo.infoIndex].triangleArray.deviceAddress) - (uint64_t)pCmdBuildPacket;
+            pAddr = (VkDeviceAddress*)((uint64_t)pPacket + offset);
+            *pAddr = trangleInfo.triangleArray.stagingAddr;
+        }
+    }
+    vktrace_delete_trace_packet(&pCmdBuildHeader);
+    return result;
+}
+
 static VkResult geneate_destroy_as_input(VkDevice device, BuildAsBufferInfo& buildAsBufInfo) {
     if (buildAsBufInfo.dataSize == 0) {
         return VK_SUCCESS;
@@ -757,6 +856,21 @@ VkResult generate_cmdbuildas_destroy_inputs(VkDevice device, BuildAsInfo& buildA
         } else {
             // a haked type to dump dst as to file
             assert(geoInfo.type == VK_GEOMETRY_TYPE_MAX_ENUM_KHR);
+        }
+    }
+    return result;
+}
+
+VkResult generate_cmdbuildmp_destroy_inputs(VkDevice device, BuildMpInfo& buildMpInfo) {
+    VkResult result = VK_SUCCESS;
+    for (auto& trangleInfo : buildMpInfo.triangleInfo) {
+        result = geneate_destroy_as_input(device, trangleInfo.data);
+        if (result != VK_SUCCESS) {
+            vktrace_LogError("generate_cmdbuildmp_destroy_inputs: destroy data device buffer fail!");
+        }
+        result = geneate_destroy_as_input(device, trangleInfo.triangleArray);
+        if (result != VK_SUCCESS) {
+            vktrace_LogError("generate_cmdbuildmp_destroy_inputs: destroy triangleArray device buffer fail!");
         }
     }
     return result;

@@ -19,3 +19,5 @@ APP_PLATFORM := android-29
 APP_STL := c++_static
 NDK_TOOLCHAIN_VERSION := clang
 NDK_MODULE_PATH := .
+APP_CFLAGS += -D_DEBUG -DVKTRACE_VERSION="\"4.3 dev unofficial\""
+APP_CPPFLAGS += -D_DEBUG -DVKTRACE_VERSION="\"4.3 dev unofficial\""

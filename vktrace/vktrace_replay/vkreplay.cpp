@@ -2,7 +2,7 @@
  *
  * Copyright 2014-2018 Valve Corporation, Inc.
  * Copyright (C) 2014-2018 LunarG, Inc.
- * Copyright (C) 2019 ARM Limited.
+ * Copyright (C) 2016-2024 ARM Limited
  * All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -59,7 +59,7 @@ static vkreplayer_settings s_defaultVkReplaySettings = {
                                                             .disableRQAndRTPCaptureReplay = 0,
                                                             .specialPatternConfig = 0,
                                                             .forceRayQuery = FALSE,
-                                                            .triggerScript = UINT_MAX,
+                                                            .triggerScript = NULL,
                                                             .pScriptPath = NULL,
                                                             .perfMeasuringMode = 0,
                                                             .printCurrentPacketIndex = 0,
@@ -79,6 +79,10 @@ static vkreplayer_settings s_defaultVkReplaySettings = {
                                                             .scCompressRate = 0,
                                                             .imgCompressFlag = UINT_MAX,
                                                             .imgCompressRate = 0,
+                                                            .convertAndroidFrameBoundary = FALSE,
+                                                            .fDevBuild2HostBuild = FALSE,
+                                                            .useTraceSurfaceTransformFlagBit = FALSE,
+                                                            .insertDeviceExtension = NULL,
 };
 
 vkReplay* g_pReplayer = NULL;

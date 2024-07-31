@@ -2,7 +2,7 @@
  *
  * Copyright 2015-2018 Valve Corporation
  * Copyright (C) 2015-2018 LunarG, Inc.
- * Copyright (C) 2019 ARM Limited.
+ * Copyright (C) 2016-2024 ARM Limited
  * All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -31,6 +31,7 @@
 #include <inttypes.h>
 #include <iostream>
 #include <fstream>
+#include <unordered_set>
 
 #if defined(ANDROID)
 #include <sstream>
@@ -281,11 +282,11 @@ vktrace_SettingInfo g_settings_info[] = {
      "Force to replay this trace file as a ray-query one."},
     {"tsf",
      "TriggerScriptOnFrame",
-     VKTRACE_SETTING_UINT,
+     VKTRACE_SETTING_STRING,
      {&replaySettings.triggerScript},
      {&replaySettings.triggerScript},
      TRUE,
-     "Trigger script on a specific frame."},
+     "Trigger script on the specific frame. Callset could be like \"*\", \"30-50\", \"1\", \"1,10,20,30-50,60-70\"."},
     {"tsp",
      "scriptPath",
      VKTRACE_SETTING_STRING,
@@ -428,6 +429,14 @@ vktrace_SettingInfo g_settings_info[] = {
      TRUE,
      "Convert Android frame boundary to vkQueuePresent"
     },
+    {"uefb",
+     "useEXTFrameBoundary",
+     VKTRACE_SETTING_BOOL,
+     {&replaySettings.useEXTFrameBoundary},
+     {&replaySettings.useEXTFrameBoundary},
+     TRUE,
+     "Convert Android frame boundary to `VK_EXT_frame_boundary` frame boundaries."
+    },
     {"fdb2hb",
      "forceDevBuild2HostBuild",
      VKTRACE_SETTING_BOOL,
@@ -443,7 +452,14 @@ vktrace_SettingInfo g_settings_info[] = {
      {&replaySettings.useTraceSurfaceTransformFlagBit},
      TRUE,
      "use the SurfaceTransformFlagBit recorded in the trace"
-    }
+    },
+    {"ide",
+     "insertDeviceExtension",
+     VKTRACE_SETTING_STRING,
+     {&replaySettings.insertDeviceExtension},
+     {&replaySettings.insertDeviceExtension},
+     TRUE,
+     "Insert device extension."}
 };
 
 vktrace_SettingGroup g_replaySettingGroup = {"vkreplay", sizeof(g_settings_info) / sizeof(g_settings_info[0]), &g_settings_info[0], nullptr};
@@ -469,6 +485,56 @@ void triggerScript() {
     #endif
     int result = system(command);
     vktrace_LogAlways("Script %s run result: %d", command, result);
+}
+
+// Function to split a string by delimiter
+std::vector<std::string> split(const std::string &s, char delimiter) {
+    std::vector<std::string> tokens;
+    std::string token;
+    std::istringstream tokenStream(s);
+    while (std::getline(tokenStream, token, delimiter)) {
+        tokens.push_back(token);
+    }
+    return tokens;
+}
+
+// Function to parse the range of numbers in a string
+void parseRange(const std::string &range, std::unordered_set<int> &frames) {
+    std::vector<std::string> parts = split(range, '-');
+    int start = std::stoi(parts[0]);
+    int end = std::stoi(parts[1]);
+    for (int i = start; i <= end; ++i) {
+        frames.insert(i);
+    }
+}
+
+// Function to check if a string represents a valid integer
+bool isValidInteger(const std::string &s) {
+    if (s.size() == 1 && s[0] == '*')
+        return true;
+    return !s.empty() && std::all_of(s.begin(), s.end(), ::isdigit);
+}
+
+// Function to check if a string represents a valid number range
+bool isValidRange(const std::string &range) {
+    std::vector<std::string> parts = split(range, '-');
+    if (parts.size() != 2) return false;
+    return isValidInteger(parts[0]) && isValidInteger(parts[1]) && std::stoi(parts[0]) <= std::stoi(parts[1]);
+}
+
+// Function to validate a line of input
+bool isValidRanges(const std::string &ranges) {
+    std::vector<std::string> tokens = split(ranges, ',');
+    for (const auto &token : tokens) {
+        if (token.find('-') != std::string::npos) {
+            // Range detected
+            if (!isValidRange(token)) return false;
+        } else {
+            // Single number
+            if (!isValidInteger(token)) return false;
+        }
+    }
+    return true;
 }
 
 unsigned int replay(vktrace_trace_packet_replay_library* replayer, vktrace_trace_packet_header* packet)
@@ -600,6 +666,27 @@ int main_loop(vktrace_replay::ReplayDisplay display, Sequencer& seq, vktrace_tra
         }
     }
 
+    bool trigger_script_all_frames = false;
+    std::unordered_set<int> frames;
+    if (g_pReplaySettings->triggerScript) {
+        std::string ranges(g_pReplaySettings->triggerScript);
+        ranges = ranges.substr(0, ranges.find("/frame"));
+        std::vector<std::string> splitRanges = split(ranges, ',');
+        for (const auto &range : splitRanges) {
+            if (range.size() == 1 && range[0] == '*') {
+                trigger_script_all_frames = true;
+                break;
+            }
+            else if (range.find('-') != std::string::npos) {
+                // Range detected
+                parseRange(range, frames);
+            } else {
+                // Single number
+                frames.insert(std::stoi(range));
+            }
+        }
+    }
+
     // record the location of looping start packet
     seq.record_bookmark();
     seq.get_bookmark(startingPacket);
@@ -624,15 +711,18 @@ int main_loop(vktrace_replay::ReplayDisplay display, Sequencer& seq, vktrace_tra
     uint64_t start_time_mono    = vktrace_get_time();
     uint64_t start_time_monoraw = vktrace_get_time();
     uint64_t start_time_boot    = vktrace_get_time();
+    uint64_t start_time_process = getTimeType(CLOCK_PROCESS_CPUTIME_ID);
     std::time_t start_timestamp = std::time(0);
 
     uint64_t end_time_mono      = vktrace_get_time();
     uint64_t end_time_monoraw   = vktrace_get_time();
     uint64_t end_time_boot      = vktrace_get_time();
+    uint64_t end_time_process   = vktrace_get_time();
     std::time_t end_timestamp   = std::time(0);
 
     const char* screenshot_list = replaySettings.screenshotList;
-    if (g_pReplaySettings->triggerScript == 0 && g_pReplaySettings->pScriptPath != NULL) {
+
+    if ((trigger_script_all_frames || (frames.find(0) != frames.end())) && g_pReplaySettings->pScriptPath != NULL) {
         triggerScript();
     }
 
@@ -655,7 +745,12 @@ int main_loop(vktrace_replay::ReplayDisplay display, Sequencer& seq, vktrace_tra
                                   vktrace_vk_packet_id_name((VKTRACE_TRACE_PACKET_ID_VK)packet->packet_id));
             }
 
+#if VK_ANDROID_frame_boundary
+            if ((packet->packet_id == VKTRACE_TPI_VK_vkQueuePresentKHR || packet->packet_id == VKTRACE_TPI_VK_vkFrameBoundaryANDROID) &&
+                g_replayer_interface != NULL) {
+#else
             if (packet->packet_id == VKTRACE_TPI_VK_vkQueuePresentKHR && g_replayer_interface != NULL) {
+#endif
                 uint32_t printFrameNumber = g_replayer_interface->GetFrameNumber();
                 if (printIndex == 1 || printIndex == 2 || (printIndex > 10 && printFrameNumber % printIndex == 0)) {
                     vktrace_LogAlways("Replaying at frame: %u", printFrameNumber);
@@ -687,6 +782,9 @@ int main_loop(vktrace_replay::ReplayDisplay display, Sequencer& seq, vktrace_tra
                 case VKTRACE_TPI_PORTABILITY_TABLE:
                 case VKTRACE_TPI_META_DATA:
                     break;
+#if VK_ANDROID_frame_boundary
+                case VKTRACE_TPI_VK_vkFrameBoundaryANDROID:
+#endif
                 case VKTRACE_TPI_VK_vkQueuePresentKHR: {
                     if (replay(g_replayer_interface, packet) != VKTRACE_REPLAY_SUCCESS) {
                         vktrace_LogError("Failed to replay QueuePresent().");
@@ -702,7 +800,7 @@ int main_loop(vktrace_replay::ReplayDisplay display, Sequencer& seq, vktrace_tra
                         usleep(replaySettings.instrumentationDelay);
                     }
 
-                    if (g_pReplaySettings->triggerScript != UINT_MAX && g_pReplaySettings->pScriptPath != NULL && (frameNumber + 1) == g_pReplaySettings->triggerScript) {
+                    if (g_pReplaySettings->pScriptPath != NULL && (trigger_script_all_frames || frames.find(frameNumber) != frames.end())) {
                         triggerScript();
                     }
 
@@ -736,6 +834,7 @@ int main_loop(vktrace_replay::ReplayDisplay display, Sequencer& seq, vktrace_tra
                         start_time_mono     = getTimeType(CLOCK_MONOTONIC);
                         start_time_monoraw  = getTimeType(CLOCK_MONOTONIC_RAW);
                         start_time_boot     = getTimeType(CLOCK_BOOTTIME);
+                        start_time_process  = getTimeType(CLOCK_PROCESS_CPUTIME_ID);
                         start_timestamp     = std::time(0);
                         vktrace_LogAlways("================== Start timer (Frame: %llu) ==================", start_frame);
                         g_replayer_interface->SetInFrameRange(true);
@@ -813,6 +912,7 @@ int main_loop(vktrace_replay::ReplayDisplay display, Sequencer& seq, vktrace_tra
     end_time_mono       = getTimeType(CLOCK_MONOTONIC);
     end_time_monoraw    = getTimeType(CLOCK_MONOTONIC_RAW);
     end_time_boot       = getTimeType(CLOCK_BOOTTIME);
+    end_time_process    = getTimeType(CLOCK_PROCESS_CPUTIME_ID);
     end_timestamp       = std::time(0);
 
     timer_started   = false;
@@ -853,10 +953,12 @@ int main_loop(vktrace_replay::ReplayDisplay display, Sequencer& seq, vktrace_tra
         resultJson["start_time_monotonic"]      = static_cast<double>(start_time_mono) / timeFrequency;
         resultJson["start_time_monotonic_raw"]  = static_cast<double>(start_time_monoraw) / timeFrequency;
         resultJson["start_time_boot"]           = static_cast<double>(start_time_boot) / timeFrequency;
+        resultJson["start_time_process"]        = static_cast<double>(start_time_process) / timeFrequency;;
 
         resultJson["end_time_monotonic"]      = static_cast<double>(end_time_mono) / timeFrequency;
         resultJson["end_time_monotonic_raw"]  = static_cast<double>(end_time_monoraw) / timeFrequency;
         resultJson["end_time_boot"]           = static_cast<double>(end_time_boot) / timeFrequency;
+        resultJson["end_time_process"]        = static_cast<double>(end_time_process) / timeFrequency;
 
         resultJson["frames"] = totalLoopFrames;
         resultJson["loops"] = totalLoops;
@@ -1083,10 +1185,12 @@ int vkreplay_main(int argc, char** argv, vktrace_replay::ReplayDisplayImp* pDisp
     uint64_t init_time_mono    = getTimeType(CLOCK_MONOTONIC);
     uint64_t init_time_monoraw = getTimeType(CLOCK_MONOTONIC_RAW);
     uint64_t init_time_boot    = getTimeType(CLOCK_BOOTTIME);
+    uint64_t init_time_process = getTimeType(CLOCK_PROCESS_CPUTIME_ID);
     resultJson["init_time"]         = static_cast<double>(init_time) / timeFrequency;
     resultJson["init_time_mono"]    = static_cast<double>(init_time_mono) / timeFrequency;
     resultJson["init_time_monoraw"] = static_cast<double>(init_time_monoraw) / timeFrequency;
     resultJson["init_time_boot"]    = static_cast<double>(init_time_boot) / timeFrequency;
+    resultJson["init_time_process"] = static_cast<double>(init_time_process) / timeFrequency;
 
     // Default verbosity level
     vktrace_LogSetCallback(loggingCallback);
@@ -1143,6 +1247,21 @@ int vkreplay_main(int argc, char** argv, vktrace_replay::ReplayDisplayImp* pDisp
             vktrace_SettingGroup_Delete_Loaded(&pAllSettings, &numAllSettings);
         }
         return -1;
+    }
+
+    // Check -tsf option
+    if (replaySettings.triggerScript != NULL) {
+        std::string ranges(replaySettings.triggerScript);
+        ranges = ranges.substr(0, ranges.find("/frame"));
+        if (!isValidRanges(ranges)) {
+            vktrace_SettingGroup_print(&g_replaySettingGroup);
+            // invalid options specified
+            if (pAllSettings != NULL) {
+                vktrace_SettingGroup_Delete_Loaded(&pAllSettings, &numAllSettings);
+            }
+            return -1;
+        }
+
     }
 
     // Set up environment for screenshot
@@ -1613,6 +1732,10 @@ int vkreplay_main(int argc, char** argv, vktrace_replay::ReplayDisplayImp* pDisp
     jsonFile << Json::writeString(writer, rootJson);
     jsonFile.close();
 
+    if (g_replay->isTraceFilePostProcessedByRqpp()) {
+        vktrace_LogAlways("This file is post-processed by our vktrace_rq_pp tool");
+    }
+
     for (int i = 0; i < VKTRACE_MAX_TRACER_ID_ARRAY_SIZE; i++) {
         if (replayer[i] != NULL) {
             replayer[i]->Deinitialize();
@@ -1714,6 +1837,23 @@ static void processCommand(struct android_app* app, int32_t cmd) {
     }
 }
 
+static void destroyActivity(struct android_app *app) {
+    ANativeActivity_finish(app->activity);
+
+    // Wait for APP_CMD_DESTROY
+    while (app->destroyRequested == 0) {
+        struct android_poll_source *source = nullptr;
+        int events = 0;
+        int result = ALooper_pollAll(-1, nullptr, &events, reinterpret_cast<void **>(&source));
+
+        if ((result >= 0) && (source)) {
+            source->process(app, source);
+        } else {
+            break;
+        }
+    }
+}
+
 // Start with carbon copy of main() and convert it to support Android, then diff them and move common code to helpers.
 void android_main(struct android_app* app) {
     const char* appTag = "vkreplay";
@@ -1768,14 +1908,11 @@ void android_main(struct android_app* app) {
             // Call into common code
             int err = vkreplay_main(argc, argv, pDisp);
             __android_log_print(ANDROID_LOG_DEBUG, appTag, "vkreplay_main returned %i", err);
-
-            ANativeActivity_finish(app->activity);
             free(argv);
 
-            // Kill the process
-            // This is not a necessarily good practice.  But it works to make sure the process is killed after replaying a trace
-            // file.  So user will not need to run "adb shell am force-stop come.example.vkreplay" afterwards.
-            exit(err);
+            destroyActivity(app);
+            raise(SIGTERM);
+            return;
         }
     }
 }

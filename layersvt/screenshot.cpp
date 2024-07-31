@@ -174,7 +174,7 @@ colorSpaceFormat userColorSpaceFormat = UNDEFINED;
 
 static int g_frameNumber = 0;
 static int g_ruiFrameNumber = 0;
-static uint32_t imageIndex = 0;
+static int g_renderpassIndexiInFrame = 0;
 static uint32_t renderPassNumber = 0;
 // Flag indicating we have to dump framebuffer by render pass
 static bool dumpFrameBufferByRenderPass = false;
@@ -187,8 +187,7 @@ static unordered_map<VkCommandBuffer, std::set<VkCommandBuffer>> commandBufferTo
 static unordered_map<VkFramebuffer, std::set<VkImage>> framebufferToImages;
 static unordered_map<VkImageView, VkImage> imageViewToImage;
 static unordered_map<VkRenderPass, uint32_t> renderPassToIndex;
-static unordered_map<VkCommandBuffer, VkRenderPass> commandBufferToRenderPass;
-
+static std::vector<uint32_t> curRenderpassIndex;
 
 // Track allocated resources in writePPM()
 // and clean them up when they go out of scope.
@@ -1767,14 +1766,15 @@ VKAPI_ATTR VkResult VKAPI_CALL QueuePresentKHR(VkQueue queue, const VkPresentInf
                 commandBufferToImages.clear();
                 commandBufferToCommandBuffers.clear();
                 framebufferToImages.clear();
-                commandBufferToRenderPass.clear();
                 renderPassToIndex.clear();
                 rp_frame_info.clear();
                 renderPassToImageInfos.clear();
+                curRenderpassIndex.clear();
             }
         }
     }
     g_frameNumber++;
+    g_renderpassIndexiInFrame = 0;
     loader_platform_thread_unlock_mutex(&globalLock);
     VkResult result = pDisp->QueuePresentKHR(queue, pPresentInfo);
     return result;
@@ -1911,6 +1911,8 @@ void OverrideCmdBeginRenderPass(VkCommandBuffer commandBuffer, const VkRenderPas
     if (renderPassToImageInfos.find(pRenderPassBegin->renderPass) != renderPassToImageInfos.end()) {
         renderPassToImageInfos.erase(pRenderPassBegin->renderPass);
     }
+    curRenderpassIndex.push_back(renderPassToIndex[pRenderPassBegin->renderPass]);
+    int imageIndex = 0;
     for (auto iter = framebufferToImages[pRenderPassBegin->framebuffer].begin();
          iter != framebufferToImages[pRenderPassBegin->framebuffer].end(); ++iter) {
         if (renderPassImages.find(*iter) == renderPassImages.end()) {
@@ -1922,13 +1924,14 @@ void OverrideCmdBeginRenderPass(VkCommandBuffer commandBuffer, const VkRenderPas
             // std::to_string is not supported currently on Android
             char buffer[128];
             memset(buffer, 0, 128);
-            snprintf(buffer, sizeof(buffer), "f%d_rpi_%u_img%u", g_frameNumber == 0 ? g_ruiFrameNumber: g_frameNumber, renderPassToIndex[pRenderPassBegin->renderPass], imageIndex);
+            snprintf(buffer, sizeof(buffer), "f%d_rpi_%u_img_%u_rpc_%u", g_frameNumber == 0 ? g_ruiFrameNumber: g_frameNumber, g_renderpassIndexiInFrame, imageIndex, renderPassToIndex[pRenderPassBegin->renderPass]);
             std::string base(buffer);
             fileName = screenshotPrefix + base + "_presubmit.ppm";
 
             dumpImageInfo dumpInfo;
             dumpInfo.renderpassImage = *iter;
             strncpy(dumpInfo.dumpFileName, buffer, sizeof(buffer));
+
             renderPassToImageInfos[pRenderPassBegin->renderPass].push_back(dumpInfo);
             //WritePPMCleanupData copyImageData;
             //bool ret = preparePPM(VK_NULL_HANDLE, *iter, copyImageData);
@@ -1942,11 +1945,9 @@ void OverrideCmdBeginRenderPass(VkCommandBuffer commandBuffer, const VkRenderPas
             }
             //copyImageData.CleanupData();
         }
-
         imageIndex++;
     }
-    commandBufferToRenderPass[commandBuffer] = pRenderPassBegin->renderPass;
-
+    g_renderpassIndexiInFrame++;
     loader_platform_thread_unlock_mutex(&globalLock);
 }
 
@@ -1994,15 +1995,16 @@ void OverrideCmdEndRenderPass(VkCommandBuffer commandBuffer) {
         loader_platform_thread_unlock_mutex(&globalLock);
         return;
     }
-
-    if (renderPassToImageInfos.find(commandBufferToRenderPass[commandBuffer]) == renderPassToImageInfos.end()) {
-        loader_platform_thread_unlock_mutex(&globalLock);
-        return;
-    }
-
-    if (renderPassToIndex[commandBufferToRenderPass[commandBuffer]] == dumpRenderPassIndex || dumpRenderPassIndex == UINT32_MAX) {
-
-        VkRenderPass renderPass = commandBufferToRenderPass[commandBuffer];
+    int passIndex = curRenderpassIndex[curRenderpassIndex.size() - 1];
+    curRenderpassIndex.pop_back();
+    if (passIndex == dumpRenderPassIndex || dumpRenderPassIndex == UINT32_MAX) {
+        VkRenderPass renderPass = VK_NULL_HANDLE;
+        for (auto& e : renderPassToIndex) {
+            if (e.second == passIndex) {
+                renderPass = e.first;
+                break;
+            }
+        }
         for (uint32_t i = 0; i < renderPassToImageInfos[renderPass].size(); i++) {
             VkImage image = renderPassToImageInfos[renderPass][i].renderpassImage;
             bool ret = preparePPM(commandBuffer, image, renderPassToImageInfos[renderPass][i].copyBufData);
@@ -2176,7 +2178,6 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateImageView(VkDevice device, const VkImageVie
     assert(devMap);
     VkLayerDispatchTable *pDisp = devMap->device_dispatch_table;
     VkResult result = pDisp->CreateImageView(device, pCreateInfo, pAllocator, pView);
-
     loader_platform_thread_lock_mutex(&globalLock);
     if (!dumpFrameBufferByRenderPass || (screenshotFramesReceived && screenshotFrames.empty() && !screenShotFrameRange.valid)) {
         // No screenshots in the list to take
@@ -2228,7 +2229,8 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateFramebuffer(VkDevice device, const VkFrameb
         framebufferToImages[*pFramebuffer].clear();
     }
     for (uint32_t i = 0; i < pCreateInfo->attachmentCount; i++) {
-        framebufferToImages[*pFramebuffer].insert(imageViewToImage[pCreateInfo->pAttachments[i]]);
+        VkImage image = imageViewToImage[pCreateInfo->pAttachments[i]];
+        framebufferToImages[*pFramebuffer].insert(image);
     }
     loader_platform_thread_unlock_mutex(&globalLock);
 
@@ -2248,18 +2250,6 @@ VKAPI_ATTR void VKAPI_CALL DestroyFramebuffer( VkDevice device, VkFramebuffer fr
     }
     auto imageset = framebufferToImages.find(framebuffer);
     if (imageset != framebufferToImages.end()) {
-        for (auto image = imageset->second.begin(); image != imageset->second.end(); image++) {
-            auto renderimage = renderPassImages.find(*image);
-            if (renderimage != renderPassImages.end()) {
-                renderPassImages.erase(renderimage);
-            }
-            for (auto imageview = imageViewToImage.begin(); imageview != imageViewToImage.end(); imageview++) {
-                if (imageview->second == *image) {
-                    imageViewToImage.erase(imageview);
-                    break;
-                }
-            }
-        }
         framebufferToImages.erase(framebuffer);
     }
     loader_platform_thread_unlock_mutex(&globalLock);
@@ -2313,6 +2303,12 @@ VkResult OverrideQueueSubmit(VkQueue queue, uint32_t submitCount, const VkSubmit
 #else
                                 printf("EndRenderPass Screen capture file is: %s \n", fileName.c_str());
 #endif
+                            } else {
+#ifdef ANDROID
+                                __android_log_print(ANDROID_LOG_ERROR, "screenshot", "EndRenderPass Screen capture file is: %s failed", fileName.c_str());
+#else
+                                printf("EndRenderPass Screen capture file is: %s failed.\n", fileName.c_str());
+#endif
                             }
                             commandBufferToImages[*cmdBufferIter][i].copyBufData.CleanupData();
                         }
@@ -2322,7 +2318,6 @@ VkResult OverrideQueueSubmit(VkQueue queue, uint32_t submitCount, const VkSubmit
             }
         }
     }
-    imageIndex = 0;
     loader_platform_thread_unlock_mutex(&globalLock);
 
     return result;

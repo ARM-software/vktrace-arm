@@ -98,6 +98,21 @@ void StateTracker::remove_CommandBuffer_calls(VkCommandBuffer commandBuffer) {
     }
 }
 
+void StateTracker::AddMemBufferBinding(VkDeviceMemory mem, VkBuffer buf) {
+    m_deviceMemToBuffersMap[mem].push_back(buf);
+}
+
+void StateTracker::RemoveMemBufferBinding(VkBuffer buf) {
+    trim::ObjectInfo* pInfo = get_Buffer_objectInfo(buf);
+    VkDeviceMemory mem = pInfo->ObjectInfo.Buffer.memory;
+    m_deviceMemToBuffersMap[mem].remove(buf);
+}
+
+void StateTracker::ClearMemBufferBinding(VkDeviceMemory mem) {
+    m_deviceMemToBuffersMap[mem].clear();
+    m_deviceMemToBuffersMap.erase(mem);
+}
+
 #if TRIM_USE_ORDERED_IMAGE_CREATION
 void StateTracker::add_Image_call(vktrace_trace_packet_header *pHeader) { m_image_calls.push_back(pHeader); }
 #endif  // TRIM_USE_ORDERED_IMAGE_CREATION
@@ -220,6 +235,40 @@ void StateTracker::clear() {
     while (createdAccelerationStructures.size() != 0) {
         remove_AccelerationStructure(createdAccelerationStructures.begin()->first);
     }
+
+    while (createdMicromaps.size() != 0) {
+        remove_Micromap(createdMicromaps.begin()->first);
+    }
+
+    for (auto& e : cmdBuildMicromaps) {
+        vktrace_delete_trace_packet(&e.pCmdBuildMicromap);
+    }
+    cmdBuildMicromaps.clear();
+
+    for (auto& e : BuildMicromaps) {
+        vktrace_delete_trace_packet(&e.pBuildMicromap);
+    }
+    BuildMicromaps.clear();
+
+    for (auto& e : cmdCopyMicromaps) {
+        vktrace_delete_trace_packet(&e.pCmdCopyMicromap);
+    }
+    cmdCopyMicromaps.clear();
+
+    for (auto& e : CopyMicromaps) {
+        vktrace_delete_trace_packet(&e.pCopyMicromap);
+    }
+    CopyMicromaps.clear();
+
+    for (auto& e : cmdWriteMicromapsProperties) {
+        vktrace_delete_trace_packet(&e.pCmdWriteMicromapsProperties);
+    }
+    cmdWriteMicromapsProperties.clear();
+
+    for (auto& e : WriteMicromapsProperties) {
+        vktrace_delete_trace_packet(&e.pWriteMicromapsProperties);
+    }
+    WriteMicromapsProperties.clear();
 
     for (auto iter = m_cmdBufferPackets.begin(); iter != m_cmdBufferPackets.end(); ++iter) {
         std::list<vktrace_trace_packet_header *> &packets = iter->second;
@@ -757,6 +806,61 @@ StateTracker &StateTracker::operator=(const StateTracker &other) {
         CopyAsInfo info;
         info.pCmdCopyAccelerationStructureKHR = copy_packet(it->pCmdCopyAccelerationStructureKHR);
         cmdCopyAccelerationStructure.push_back(info);
+    }
+
+    createdMicromaps = other.createdMicromaps;
+    for (auto obj = createdMicromaps.begin(); obj != createdMicromaps.end(); obj++) {
+        COPY_PACKET(obj->second.ObjectInfo.Micromap.pCreatePacket);
+    }
+
+    cmdBuildMicromaps.clear();
+    for (auto it = other.cmdBuildMicromaps.begin(); it != other.cmdBuildMicromaps.end(); it++) {
+        BuildMpInfo info;
+        info.pCmdBuildMicromap = copy_packet(it->pCmdBuildMicromap);
+        info.triangleInfo.clear();
+        for (auto& e : it->triangleInfo) {
+            info.triangleInfo.push_back(e);
+        }
+        cmdBuildMicromaps.push_back(info);
+    }
+
+    BuildMicromaps.clear();
+    for (auto it = other.BuildMicromaps.begin(); it != other.BuildMicromaps.end(); it++) {
+        BuildMpInfo info;
+        info.pBuildMicromap = copy_packet(it->pBuildMicromap);
+        info.triangleInfo.clear();
+        for (auto& e : it->triangleInfo) {
+            info.triangleInfo.push_back(e);
+        }
+        BuildMicromaps.push_back(info);
+    }
+
+    cmdCopyMicromaps.clear();
+    for (auto it = other.cmdCopyMicromaps.begin(); it != other.cmdCopyMicromaps.end(); it++) {
+        CopyMpInfo info;
+        info.pCmdCopyMicromap = copy_packet(it->pCmdCopyMicromap);
+        cmdCopyMicromaps.push_back(info);
+    }
+
+    CopyMicromaps.clear();
+    for (auto it = other.CopyMicromaps.begin(); it != other.CopyMicromaps.end(); it++) {
+        CopyMpInfo info;
+        info.pCopyMicromap = copy_packet(it->pCopyMicromap);
+        CopyMicromaps.push_back(info);
+    }
+
+    cmdWriteMicromapsProperties.clear();
+    for (auto it = other.cmdWriteMicromapsProperties.begin(); it != other.cmdWriteMicromapsProperties.end(); it++) {
+        WriteMpProperties info;
+        info.pCmdWriteMicromapsProperties = copy_packet(it->pCmdWriteMicromapsProperties);
+        cmdWriteMicromapsProperties.push_back(info);
+    }
+
+    WriteMicromapsProperties.clear();
+    for (auto it = other.WriteMicromapsProperties.begin(); it != other.WriteMicromapsProperties.end(); it++) {
+        WriteMpProperties info;
+        info.pWriteMicromapsProperties = copy_packet(it->pWriteMicromapsProperties);
+        WriteMicromapsProperties.push_back(info);
     }
 
     createdBufferViews = other.createdBufferViews;
@@ -1385,6 +1489,13 @@ ObjectInfo &StateTracker::add_AccelerationStructure(VkAccelerationStructureKHR v
     return info;
 }
 
+ObjectInfo &StateTracker::add_Micromap(VkMicromapEXT var) {
+    ObjectInfo &info = createdMicromaps[var];
+    memset(&info, 0, sizeof(ObjectInfo));
+    info.vkObject = (uint64_t)var;
+    return info;
+}
+
 BuildAsInfo& StateTracker::add_BuildAccelerationStructure(BuildAsInfo BuildAS) {
     BuildAccelerationStructures.push_back(BuildAS);
     return BuildAccelerationStructures.back();
@@ -1421,6 +1532,60 @@ std::vector<BuildAsInfo>& StateTracker::get_cmdBuildAccelerationStrucutres() {
 
 std::vector<CopyAsInfo>& StateTracker::get_cmdCopyAccelerationStructure() {
     return cmdCopyAccelerationStructure;
+}
+
+BuildMpInfo& StateTracker::add_cmdBuildMicromap(BuildMpInfo BuildMP) {
+    cmdBuildMicromaps.push_back(BuildMP);
+    return cmdBuildMicromaps.back();
+}
+
+std::vector<BuildMpInfo>& StateTracker::get_cmdBuildMicromaps() {
+    return cmdBuildMicromaps;
+}
+
+BuildMpInfo& StateTracker::add_BuildMicromap(BuildMpInfo BuildMP) {
+    BuildMicromaps.push_back(BuildMP);
+    return BuildMicromaps.back();
+}
+
+std::vector<BuildMpInfo>& StateTracker::get_BuildMicromaps() {
+    return BuildMicromaps;
+}
+
+CopyMpInfo& StateTracker::add_cmdCopyMicromap(CopyMpInfo CopyMP) {
+    cmdCopyMicromaps.push_back(CopyMP);
+    return cmdCopyMicromaps.back();
+}
+
+std::vector<CopyMpInfo>& StateTracker::get_cmdCopyMicromaps() {
+    return cmdCopyMicromaps;
+}
+
+CopyMpInfo& StateTracker::add_CopyMicromap(CopyMpInfo CopyMP) {
+    CopyMicromaps.push_back(CopyMP);
+    return CopyMicromaps.back();
+}
+
+std::vector<CopyMpInfo>& StateTracker::get_CopyMicromaps() {
+    return CopyMicromaps;
+}
+
+WriteMpProperties& StateTracker::add_cmdWriteMicromapsProperties(WriteMpProperties WriteMP) {
+    cmdWriteMicromapsProperties.push_back(WriteMP);
+    return cmdWriteMicromapsProperties.back();
+}
+
+std::vector<WriteMpProperties>& StateTracker::get_cmdWriteMicromapsProperties() {
+    return cmdWriteMicromapsProperties;
+}
+
+WriteMpProperties& StateTracker::add_WriteMicromapsProperties(WriteMpProperties WriteMP) {
+    WriteMicromapsProperties.push_back(WriteMP);
+    return WriteMicromapsProperties.back();
+}
+
+std::vector<WriteMpProperties>& StateTracker::get_WriteMicromapsProperties() {
+    return WriteMicromapsProperties;
 }
 
 //---------------------------------------------------------------------
@@ -1636,6 +1801,32 @@ std::set<VkCommandBuffer> *StateTracker::get_BoundCommandBuffers(VkPipeline var,
     return pResult;
 }
 
+std::set<VkCommandBuffer> *StateTracker::get_BeginRenderPassCommandBuffers(VkRenderPass var, bool createFlag) {
+    auto iter = m_beginRenderPassTocmdBuffersMap.find(var);
+    std::set<VkCommandBuffer> *pResult = NULL;
+    if (iter != m_beginRenderPassTocmdBuffersMap.end()) {
+        pResult = &(iter->second);
+    } else {
+        if (createFlag) {
+            pResult = &m_beginRenderPassTocmdBuffersMap[var];
+        }
+    }
+    return pResult;
+}
+
+std::set<VkCommandBuffer> *StateTracker::get_BeginFramebufferCommandBuffers(VkFramebuffer var, bool createFlag) {
+    auto iter = m_beginFramebufferTocmdBuffersMap.find(var);
+    std::set<VkCommandBuffer> *pResult = NULL;
+    if (iter != m_beginFramebufferTocmdBuffersMap.end()) {
+        pResult = &(iter->second);
+    } else {
+        if (createFlag) {
+            pResult = &m_beginFramebufferTocmdBuffersMap[var];
+        }
+    }
+    return pResult;
+}
+
 std::set<VkPipeline> *StateTracker::get_BindingPipelines(VkCommandBuffer var, bool createFlag) {
     auto iter = m_cmdBufferToBindingPipelinesMap.find(var);
     std::set<VkPipeline> *pResult = NULL;
@@ -1707,6 +1898,15 @@ ObjectInfo *StateTracker::get_AccelerationStructure(VkAccelerationStructureKHR v
     auto iter = createdAccelerationStructures.find(var);
     ObjectInfo *pResult = NULL;
     if (iter != createdAccelerationStructures.end()) {
+        pResult = &(iter->second);
+    }
+    return pResult;
+}
+
+ObjectInfo *StateTracker::get_Micromap(VkMicromapEXT var) {
+    auto iter = createdMicromaps.find(var);
+    ObjectInfo *pResult = NULL;
+    if (iter != createdMicromaps.end()) {
         pResult = &(iter->second);
     }
     return pResult;
@@ -2145,6 +2345,14 @@ void StateTracker::remove_AccelerationStructure(const VkAccelerationStructureKHR
     createdAccelerationStructures.erase(var);
 }
 
+void StateTracker::remove_Micromap(const VkMicromapEXT var) {
+    ObjectInfo *pInfo = get_Micromap(var);
+    if (pInfo != nullptr) {
+        vktrace_delete_trace_packet(&pInfo->ObjectInfo.Micromap.pCreatePacket);
+    }
+    createdMicromaps.erase(var);
+}
+
 void StateTracker::remove_BuildAccelerationStructure(BuildAsInfo& BuildAS) {
     if (BuildAS.pBuildAccelerationtStructure != NULL) {
         vktrace_delete_trace_packet(&BuildAS.pBuildAccelerationtStructure);
@@ -2163,9 +2371,46 @@ void StateTracker::remove_cmdBuildAccelerationStructure(BuildAsInfo& BuildAS) {
     }
 }
 
+void StateTracker::remove_cmdBuildMicromap(BuildMpInfo& BuildMP) {
+    if (BuildMP.pCmdBuildMicromap != NULL) {
+        vktrace_delete_trace_packet(&BuildMP.pCmdBuildMicromap);
+    }
+}
+
+void StateTracker::remove_BuildMicromap(BuildMpInfo& BuildMP) {
+    if (BuildMP.pBuildMicromap != NULL) {
+        vktrace_delete_trace_packet(&BuildMP.pBuildMicromap);
+    }
+}
+
 void StateTracker::remove_cmdCopyAccelerationStructure(CopyAsInfo copyAs) {
     if (copyAs.pCmdCopyAccelerationStructureKHR != NULL) {
         vktrace_delete_trace_packet(&copyAs.pCmdCopyAccelerationStructureKHR);
     }
 }
+
+void StateTracker::remove_cmdCopyMicromap(CopyMpInfo copyMp) {
+    if (copyMp.pCmdCopyMicromap != NULL) {
+        vktrace_delete_trace_packet(&copyMp.pCmdCopyMicromap);
+    }
+}
+
+void StateTracker::remove_CopyMicromap(CopyMpInfo copyMp) {
+    if (copyMp.pCopyMicromap != NULL) {
+        vktrace_delete_trace_packet(&copyMp.pCopyMicromap);
+    }
+}
+
+void StateTracker::remove_cmdWriteMpProperties(WriteMpProperties& writeMp) {
+    if (writeMp.pCmdWriteMicromapsProperties != NULL) {
+        vktrace_delete_trace_packet(&writeMp.pCmdWriteMicromapsProperties);
+    }
+}
+
+void StateTracker::remove_WriteMpProperties(WriteMpProperties& writeMp) {
+    if (writeMp.pWriteMicromapsProperties != NULL) {
+        vktrace_delete_trace_packet(&writeMp.pWriteMicromapsProperties);
+    }
+}
+
 }

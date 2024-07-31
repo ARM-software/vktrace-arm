@@ -240,6 +240,7 @@ if [ ${NEED_PACKAGE} == "true" ]; then
         fi
         mkdir -p ${TARGET}/bin
         cp -a vktrace/vktracedump${BINARY_SUFFIX} ${TARGET}/bin/vktracedump
+        cp -a vktrace/vktracerqpp${BINARY_SUFFIX} ${TARGET}/bin/vktracerqpp
         cp -a vktrace/vkreplay${BINARY_SUFFIX} ${TARGET}/bin/vkreplay
         if [ -e "vktrace/vktraceviewer${BINARY_SUFFIX}" ]; then
             cp -a vktrace/vktraceviewer${BINARY_SUFFIX} ${TARGET}/bin/vktraceviewer

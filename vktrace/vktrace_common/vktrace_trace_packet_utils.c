@@ -3,7 +3,7 @@
  * Copyright 2014-2016 Valve Corporation
  * Copyright (C) 2014-2016 LunarG, Inc.
  * Copyright (C) 2016 Advanced Micro Devices, Inc.
- * Copyright (C) 2019 ARM Limited
+ * Copyright (C) 2016-2024 ARM Limited
  * All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -470,15 +470,21 @@ void vktrace_add_pnext_structs_to_trace_packet(vktrace_trace_packet_header* pHea
                     VkAccelerationStructureTrianglesOpacityMicromapEXT* pInASTriangleOMM = (VkAccelerationStructureTrianglesOpacityMicromapEXT*)pInNext;
                     if (pInASTriangleOMM->pNext != NULL) {
                         VkApplicationInfo* pNext = (VkApplicationInfo*)(pInASTriangleOMM->pNext);
-                        if (pNext->sType == VK_STRUCTURE_TYPE_MAX_ENUM) {
+                        if (pNext->sType == VK_STRUCTURE_TYPE_APPLICATION_INFO) {
                             int triangleCount = 0;
                             for (int i = 0; i < pInASTriangleOMM->usageCountsCount; i++) {
                                 triangleCount += pInASTriangleOMM->pUsageCounts[i].count;
                             }
-                            int indexBufferSize = triangleCount * pInASTriangleOMM->indexStride;
+
+                            int indexBufferSize = triangleCount;
+                            if (pInASTriangleOMM->indexStride) {
+                                indexBufferSize *= pInASTriangleOMM->indexStride;
+                            } else {
+                                indexBufferSize *= getVertexIndexStride(pInASTriangleOMM->indexType);
+                            }
+
                             vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(((VkAccelerationStructureTrianglesOpacityMicromapEXT*)(*ppOutNext))->indexBuffer.hostAddress), indexBufferSize, (void*)(((VkAccelerationStructureTrianglesOpacityMicromapEXT*)pInNext)->indexBuffer.hostAddress));
                             vktrace_finalize_buffer_address(pHeader, (void**)(&((VkAccelerationStructureTrianglesOpacityMicromapEXT*)(*ppOutNext))->indexBuffer.hostAddress));
-                            pInASTriangleOMM->pNext = (void*)(pNext->pNext);
                         }
                     }
                     break;
@@ -563,6 +569,9 @@ void vktrace_add_pnext_structs_to_trace_packet(vktrace_trace_packet_header* pHea
                 case VK_STRUCTURE_TYPE_FRAGMENT_SHADING_RATE_ATTACHMENT_INFO_KHR:
                     AddPointerToTracebuffer(VkFragmentShadingRateAttachmentInfoKHR, VkAttachmentReference2, pFragmentShadingRateAttachment);
                     break;
+                case VK_STRUCTURE_TYPE_DRM_FORMAT_MODIFIER_PROPERTIES_LIST_EXT:
+                    AddPointerWithCountToTracebuffer(VkDrmFormatModifierPropertiesListEXT, VkDrmFormatModifierPropertiesEXT, pDrmFormatModifierProperties, drmFormatModifierCount);
+                    break;
 #if defined(WIN32)
                 case VK_STRUCTURE_TYPE_WIN32_KEYED_MUTEX_ACQUIRE_RELEASE_INFO_KHR:
                     AddPointerWithCountToTracebuffer(VkWin32KeyedMutexAcquireReleaseInfoKHR, VkDeviceMemory, pAcquireSyncs,
@@ -608,6 +617,13 @@ void vktrace_add_pnext_structs_to_trace_packet(vktrace_trace_packet_header* pHea
                     break;
                 case VK_STRUCTURE_TYPE_COMMAND_BUFFER_INHERITANCE_RENDERING_INFO:
                     AddPointerWithCountToTracebuffer(VkCommandBufferInheritanceRenderingInfo, VkFormat, pColorAttachmentFormats, colorAttachmentCount);
+                    break;
+                case VK_STRUCTURE_TYPE_PIPELINE_CREATION_FEEDBACK_CREATE_INFO:
+                    AddPointerToTracebuffer(VkPipelineCreationFeedbackCreateInfo, VkPipelineCreationFeedback, pPipelineCreationFeedback);
+                    AddPointerWithCountToTracebuffer(VkPipelineCreationFeedbackCreateInfo, VkPipelineCreationFeedback, pPipelineStageCreationFeedbacks, pipelineStageCreationFeedbackCount);
+                    break;
+                case VK_STRUCTURE_TYPE_PIPELINE_LIBRARY_CREATE_INFO_KHR:
+                    AddPointerWithCountToTracebuffer(VkPipelineLibraryCreateInfoKHR, VkPipeline,  pLibraries, libraryCount);
                     break;
                 default:
                     // The cases in this switch statement are only those pnext struct types that have
@@ -1119,13 +1135,14 @@ VkAccelerationStructureBuildGeometryInfoKHR* interpret_VkAccelerationStructureBu
         if (pVkASBuildGeometryInfoKHR->geometryCount > 0 && pVkASBuildGeometryInfoKHR->pGeometries) {
             for (i = 0; i < pVkASBuildGeometryInfoKHR->geometryCount; i++) {
                 VkAccelerationStructureGeometryKHR *pTmp = (VkAccelerationStructureGeometryKHR *)&pVkASBuildGeometryInfoKHR->pGeometries[i];
+                vkreplay_interpret_pnext_pointers(pHeader, (void*)(pTmp));
                 if (pTmp->geometryType == VK_GEOMETRY_TYPE_TRIANGLES_KHR) {
                     if (hostAddress) {
                         /*when replaying, we borrow the entrypoint_end_time variable to express whether those VkDeviceOrHostAddressConstKHR address
                         in the VkAccelerationStructureGeometryDataKHR structure is host address or device address,if set entrypoint_end_time to
-                        VK_STRUCTURE_TYPE_MAX_ENUM, then VkDeviceOrHostAddressConstKHR is a host address.
+                        VK_STRUCTURE_TYPE_APPLICATION_INFO, then VkDeviceOrHostAddressConstKHR is a host address.
                         */
-                        pHeader->entrypoint_end_time = (uint64_t)VK_STRUCTURE_TYPE_MAX_ENUM;
+                        pHeader->entrypoint_end_time = (uint64_t)VK_STRUCTURE_TYPE_APPLICATION_INFO;
                     }
                     vkreplay_interpret_pnext_pointers(pHeader, (void*)&(pTmp->geometry.triangles));
                 }
@@ -1183,6 +1200,14 @@ VkDebugUtilsMessengerCallbackDataEXT* interpret_VkDebugUtilsMessengerCallbackDat
         }
     }
     return pVkDebugUtilsMessengerCallbackDataEXT;
+}
+
+VkDebugMarkerObjectTagInfoEXT* interpret_VkDebugMarkerObjectTagInfoEXT(vktrace_trace_packet_header* pHeader, intptr_t ptr_variable) {
+    VkDebugMarkerObjectTagInfoEXT* pVkDebugMarkerObjectTagInfoEXT = (VkDebugMarkerObjectTagInfoEXT*)vktrace_trace_packet_interpret_buffer_pointer(pHeader, (intptr_t)ptr_variable);
+    if (pVkDebugMarkerObjectTagInfoEXT == NULL) return NULL;
+    void** ppTag = (void**)&(pVkDebugMarkerObjectTagInfoEXT->pTag);
+    *ppTag = vktrace_trace_packet_interpret_buffer_pointer(pHeader, (intptr_t)pVkDebugMarkerObjectTagInfoEXT->pTag);
+    return pVkDebugMarkerObjectTagInfoEXT;
 }
 
 VkDebugUtilsLabelEXT* interpret_VkDebugUtilsLabelEXT(vktrace_trace_packet_header* pHeader, intptr_t ptr_variable) {
@@ -1423,7 +1448,7 @@ void vkreplay_interpret_pnext_pointers(vktrace_trace_packet_header* pHeader, voi
             case VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_TRIANGLES_OPACITY_MICROMAP_EXT:
                 {
                     InterpretPointerInPNext(VkAccelerationStructureTrianglesOpacityMicromapEXT, VkMicromapUsageEXT, pUsageCounts);
-                    if (pHeader->entrypoint_end_time == (uint64_t)VK_STRUCTURE_TYPE_MAX_ENUM) {
+                    if (pHeader->entrypoint_end_time == (uint64_t)VK_STRUCTURE_TYPE_APPLICATION_INFO) {
                         VkAccelerationStructureTrianglesOpacityMicromapEXT* pASTriangleOMM = (VkAccelerationStructureTrianglesOpacityMicromapEXT*)(((VkApplicationInfo*)struct_ptr)->pNext);
                         pASTriangleOMM->indexBuffer.hostAddress = vktrace_trace_packet_interpret_buffer_pointer(pHeader, (intptr_t)pASTriangleOMM->indexBuffer.hostAddress);
                     }
@@ -1505,6 +1530,9 @@ void vkreplay_interpret_pnext_pointers(vktrace_trace_packet_header* pHeader, voi
             case VK_STRUCTURE_TYPE_FRAGMENT_SHADING_RATE_ATTACHMENT_INFO_KHR:
                 InterpretPointerInPNext(VkFragmentShadingRateAttachmentInfoKHR, VkAttachmentReference2, pFragmentShadingRateAttachment);
                 break;
+            case VK_STRUCTURE_TYPE_DRM_FORMAT_MODIFIER_PROPERTIES_LIST_EXT:
+                InterpretPointerInPNext(VkDrmFormatModifierPropertiesListEXT, VkDrmFormatModifierPropertiesEXT, pDrmFormatModifierProperties);
+                break;
 #if defined(WIN32)
             case VK_STRUCTURE_TYPE_WIN32_KEYED_MUTEX_ACQUIRE_RELEASE_INFO_KHR:
                 InterpretPointerInPNext(VkWin32KeyedMutexAcquireReleaseInfoKHR, VkDeviceMemory, pAcquireSyncs);
@@ -1543,6 +1571,13 @@ void vkreplay_interpret_pnext_pointers(vktrace_trace_packet_header* pHeader, voi
                 break;
             case VK_STRUCTURE_TYPE_COMMAND_BUFFER_INHERITANCE_RENDERING_INFO:
                 InterpretPointerInPNext(VkCommandBufferInheritanceRenderingInfo, VkFormat, pColorAttachmentFormats);
+                break;
+            case VK_STRUCTURE_TYPE_PIPELINE_CREATION_FEEDBACK_CREATE_INFO:
+                InterpretPointerInPNext(VkPipelineCreationFeedbackCreateInfo, VkPipelineCreationFeedback, pPipelineCreationFeedback);
+                InterpretPointerInPNext(VkPipelineCreationFeedbackCreateInfo, VkPipelineCreationFeedback, pPipelineStageCreationFeedbacks);
+                break;
+            case VK_STRUCTURE_TYPE_PIPELINE_LIBRARY_CREATE_INFO_KHR:
+                InterpretPointerInPNext(VkPipelineLibraryCreateInfoKHR, VkPipeline,  pLibraries);
                 break;
             default:
                 // The cases in this switch statement are only those pnext struct types that have

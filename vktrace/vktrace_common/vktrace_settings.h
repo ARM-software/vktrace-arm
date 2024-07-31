@@ -89,7 +89,7 @@ typedef struct vkreplayer_settings {
     unsigned int disableRQAndRTPCaptureReplay;
     unsigned int specialPatternConfig;
     BOOL forceRayQuery;
-    unsigned int triggerScript;
+    const char* triggerScript;
     char* pScriptPath;
     unsigned int perfMeasuringMode;
     unsigned int printCurrentPacketIndex;
@@ -110,8 +110,10 @@ typedef struct vkreplayer_settings {
     unsigned int imgCompressFlag;
     unsigned int imgCompressRate;
     BOOL convertAndroidFrameBoundary;
+    BOOL useEXTFrameBoundary;
     BOOL fDevBuild2HostBuild;
     BOOL useTraceSurfaceTransformFlagBit;
+    char* insertDeviceExtension;
 } vkreplayer_settings;
 
 int vktrace_SettingGroup_init(vktrace_SettingGroup* pSettingGroup, FILE* pSettingsFile, int argc, char* argv[],

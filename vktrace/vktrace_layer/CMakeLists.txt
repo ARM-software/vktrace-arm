@@ -35,6 +35,8 @@ set(SRC_LIST
     vktrace_lib_pageguardmappedmemory.cpp
     vktrace_lib_pageguardcapture.cpp
     vktrace_lib_pageguard.cpp
+    ${SRC_DIR}/../external/gfxreconstruct/util/page_guard_manager.cpp
+    ${SRC_DIR}/../external/gfxreconstruct/util/page_guard_manager_uffd.cpp
     vktrace_lib_trace.cpp
     vktrace_lib_trim.cpp
     vktrace_lib_trim_generate.cpp
@@ -73,6 +75,7 @@ endif()
 
 include_directories(
     ${SRC_DIR}/vktrace_common
+    ${SRC_DIR}/../external/gfxreconstruct
     ${SRC_DIR}/vktrace_trace
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${VKTRACE_VULKAN_INCLUDE_DIR}

@@ -242,7 +242,11 @@ static uint64_t load_packet(FileLike* file, void* load_addr, uint64_t packet_siz
         }
      }
 
+#if VK_ANDROID_frame_boundary
+    if (pHeader->packet_id == VKTRACE_TPI_VK_vkQueuePresentKHR || pHeader->packet_id == VKTRACE_TPI_VK_vkFrameBoundaryANDROID) {
+#else
     if (pHeader->packet_id == VKTRACE_TPI_VK_vkQueuePresentKHR) {
+#endif
         ++frame_counter;
         if (frame_counter + vktrace_replay::getStartFrame() >= vktrace_replay::getEndFrame() + 1) {
             g_preload_context.exceed_preloading_range = true;
@@ -275,6 +279,9 @@ static uint64_t load_packet(FileLike* file, void* load_addr, uint64_t packet_siz
         case VKTRACE_TPI_META_DATA:
         case VKTRACE_TPI_PORTABILITY_TABLE:
             break;
+#if VK_ANDROID_frame_boundary
+        case VKTRACE_TPI_VK_vkFrameBoundaryANDROID:
+#endif
         case VKTRACE_TPI_VK_vkQueuePresentKHR: {
             vktrace_trace_packet_header* res = replayer->Interpret(pHeader);
             if (res == NULL) {

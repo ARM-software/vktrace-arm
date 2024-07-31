@@ -2,7 +2,7 @@
  *
  * Copyright (C) 2015-2017 Valve Corporation
  * Copyright (C) 2015-2017 LunarG, Inc.
- * Copyright (C) 2019 ARM Limited.
+ * Copyright (C) 2016-2024 ARM Limited
  * All Rights Reserved
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -157,6 +157,12 @@ class vkReplay {
     VkLayerInstanceDispatchTable* get_VkLayerInstanceDispatchTable() { return &m_vkFuncs; };
     VkLayerDispatchTable* get_VkLayerDispatchTable() { return &m_vkDeviceFuncs; };
 
+    bool isTraceFilePostProcessedByRqpp() {
+        if (m_pFileHeader->bit_flags & VKTRACE_RQ_POSTPROCESSED_BIT)
+            return true;
+        return false;
+    }
+
    private:
     void init_funcs(void* handle);
     void* m_libHandle;
@@ -284,6 +290,8 @@ class vkReplay {
 #if VK_ANDROID_frame_boundary
     VkResult manually_replay_vkFrameBoundaryANDROID(packet_vkFrameBoundaryANDROID* pPacket);
 #endif
+    VkResult manually_replay_vkGetSemaphoreFdKHR(packet_vkGetSemaphoreFdKHR* pPacket);
+
     VkResult manually_replay_vkCreateInstance(packet_vkCreateInstance* pPacket);
     VkResult manually_replay_vkCreateDevice(packet_vkCreateDevice* pPacket);
     VkResult manually_replay_vkCreateBuffer(packet_vkCreateBuffer* pPacket);
@@ -388,6 +396,8 @@ class vkReplay {
     void manually_replay_vkSubmitDebugUtilsMessageEXT(packet_vkSubmitDebugUtilsMessageEXT *pPacket);
     VkResult manually_replay_vkSetDebugUtilsObjectNameEXT(packet_vkSetDebugUtilsObjectNameEXT *pPacket);
     VkResult manually_replay_vkSetDebugUtilsObjectTagEXT(packet_vkSetDebugUtilsObjectTagEXT *pPacket);
+    VkResult manually_replay_vkDebugMarkerSetObjectTagEXT(packet_vkDebugMarkerSetObjectTagEXT *pPacket);
+    VkResult manually_replay_vkDebugMarkerSetObjectNameEXT(packet_vkDebugMarkerSetObjectNameEXT *pPacket);
     uint64_t remapObjectHandleWithVkObjectType(uint64_t objectHandle, VkObjectType objectType);
     VkResult manually_replay_vkCreateDescriptorUpdateTemplate(packet_vkCreateDescriptorUpdateTemplate* pPacket);
     VkResult manually_replay_vkCreateDescriptorUpdateTemplateKHR(packet_vkCreateDescriptorUpdateTemplateKHR* pPacket);
@@ -436,6 +446,9 @@ class vkReplay {
     VkResult manually_replay_vkAcquireProfilingLockKHR(packet_vkAcquireProfilingLockKHR* pPacket);
     void manually_replay_vkCmdPipelineBarrier2KHR(packet_vkCmdPipelineBarrier2KHR *pPacket);
     void manually_replay_vkCmdPipelineBarrier2(packet_vkCmdPipelineBarrier2 *pPacket);
+    VkResult manually_replay_vkSignalSemaphore(packet_vkSignalSemaphore* pPacket);
+    VkResult manually_replay_vkSignalSemaphoreKHR(packet_vkSignalSemaphoreKHR* pPacket);
+    VkResult manually_replay_vkWaitSemaphores(packet_vkWaitSemaphores* pPacket);
     VkResult manually_replay_vkWaitSemaphoresKHR(packet_vkWaitSemaphoresKHR* pPacket);
     VkResult manually_replay_vkQueueSubmit2(packet_vkQueueSubmit2 *pPacket);
     void manually_replay_vkCmdBeginRendering(packet_vkCmdBeginRendering *pPacket);
@@ -555,6 +568,7 @@ class vkReplay {
     std::unordered_map<VkSwapchainKHR, SwapchainImageState> swapchainImageStates;
     std::unordered_map<VkSwapchainKHR, VkSwapchainCreateInfoKHR> traceSwapchainToCreateInfo;
     VkSwapchainKHR curSwapchainHandle;
+    VkImage curSwapchainImage;
 
     std::stack<SwapchainImageState> savedSwapchainImgStates;
     std::unordered_map< VkSwapchainKHR, std::vector<bool> > swapchainImageAcquireStatus;
@@ -568,7 +582,9 @@ class vkReplay {
     std::unordered_map<VkImage, VkMemoryRequirements> replayGetImageMemoryRequirements;
 
     // Map VkBuffer to VkMemoryRequirements
+    std::unordered_map<VkBuffer, VkMemoryRequirements> traceGetBufferMemoryRequirements;
     std::unordered_map<VkBuffer, VkMemoryRequirements> replayGetBufferMemoryRequirements;
+    std::unordered_map<VkDeviceMemory, VkDeviceSize> replayDeviceMemoryToSize;
     // Map device to extension property count, for device extension property queries
     std::unordered_map<VkPhysicalDevice, uint32_t> replayDeviceExtensionPropertyCount;
 
@@ -621,6 +637,7 @@ class vkReplay {
     std::unordered_map<VkBuffer, VkDeviceSize> traceBufferToASBuildSizes;
     std::unordered_map<VkBuffer, VkDeviceSize> replayBufferToASBuildSizes;
     std::unordered_map<VkAccelerationStructureKHR, VkAccelerationStructureBuildSizesInfoKHR> replayASToASBuildSizes;
+    std::unordered_map<VkAccelerationStructureKHR, VkAccelerationStructureCreateInfoKHR> traceASToASCreateInfo;
 #if defined(_DEBUG)
     std::unordered_map<VkAccelerationStructureKHR, VkAccelerationStructureCreateInfoKHR> replayASToASCreateInfo;
 #endif
@@ -646,6 +663,9 @@ class vkReplay {
     std::unordered_map<AHardwareBuffer*, int> traceAHardwareBufferToDmaBufferFd;
     std::unordered_set<int> openedDmaBufferFd;
 #endif
+
+    // for conversion: VK_ANDROID_frame_boundary VK_ANDROID_frame_boundary to VK_EXT_frame_boundary
+    std::unordered_set<VkSemaphore> frameboundarySemaphores;
 
     void remapInstanceBufferDeviceAddressInMapedMemory(VkDevice remappedDevice, VkDeviceMemory traceMemory, VkDeviceMemory remappedMemory, const void *pSrcData, VkDeviceSize size);
     void remapInstanceBufferDeviceAddressInFlushMemory(VkDevice remappedDevice, VkDeviceMemory traceMemory, VkDeviceMemory remappedMemory, const void *pSrcData, bool remapBufAddr);
@@ -683,6 +703,7 @@ class vkReplay {
 
 #if VK_ANDROID_frame_boundary
     VkResult copyImage(VkImage srcImage, VkImage dstImage, VkDevice device);
+    void createCommandPoolAndCommandBuffer(VkResult& replayResult);
 #endif
 
     vktrace_replay::PipelineCacheAccessor::Ptr    m_pipelinecache_accessor;
@@ -695,3 +716,37 @@ class vkReplay {
 
     void deviceBuildToHostBuild(packet_vkCmdBuildAccelerationStructuresKHR* pPacket);
 };
+
+#define VK_EXT_frame_boundary 1
+#define VK_EXT_FRAME_BOUNDARY_SPEC_VERSION 1
+#define VK_EXT_FRAME_BOUNDARY_EXTENSION_NAME "VK_EXT_frame_boundary"
+#define VK_STRUCTURE_TYPE_FRAME_BOUNDARY_EXT ((VkStructureType)1000375001)
+#define VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAME_BOUNDARY_FEATURES_EXT ((VkStructureType)1000375000)
+
+
+typedef enum VkFrameBoundaryFlagBitsEXT {
+    VK_FRAME_BOUNDARY_FRAME_END_BIT_EXT = 0x00000001,
+    VK_FRAME_BOUNDARY_FLAG_BITS_MAX_ENUM_EXT = 0x7FFFFFFF
+} VkFrameBoundaryFlagBitsEXT;
+
+typedef VkFlags VkFrameBoundaryFlagsEXT;
+
+typedef struct VkPhysicalDeviceFrameBoundaryFeaturesEXT {
+    VkStructureType    sType;
+    void*              pNext;
+    VkBool32           frameBoundary;
+} VkPhysicalDeviceFrameBoundaryFeaturesEXT;
+
+typedef struct VkFrameBoundaryEXT {
+    VkStructureType            sType;
+    const void*                pNext;
+    VkFrameBoundaryFlagsEXT    flags;
+    uint64_t                   frameID;
+    uint32_t                   imageCount;
+    const VkImage*             pImages;
+    uint32_t                   bufferCount;
+    const VkBuffer*            pBuffers;
+    uint64_t                   tagName;
+    size_t                     tagSize;
+    const void*                pTag;
+} VkFrameBoundaryEXT;

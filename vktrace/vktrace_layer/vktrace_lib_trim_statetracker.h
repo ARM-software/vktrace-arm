@@ -118,12 +118,39 @@ typedef struct _BuildAsInfo
     std::vector<vktrace_trace_packet_header*>   AssistCommand;
 }BuildAsInfo;
 
+typedef BuildAsBufferInfo BuildMpBufferInfo;
+typedef struct _BuildMpTriangleInfo
+{
+    BuildMpBufferInfo data;
+    BuildMpBufferInfo triangleArray;
+    uint32_t infoIndex;
+}BuildMpTriangleInfo;
+
+typedef struct _BuildMpInfo
+{
+    vktrace_trace_packet_header*                pCmdBuildMicromap;
+    vktrace_trace_packet_header*                pBuildMicromap;
+    std::vector<BuildMpTriangleInfo>            triangleInfo;
+    std::vector<vktrace_trace_packet_header*>   AssistCommand;
+}BuildMpInfo;
+
 typedef struct _CopyAsInfo
 {
     vktrace_trace_packet_header*                pCmdCopyAccelerationStructureKHR;
     vktrace_trace_packet_header*                pCopyAccelerationStructureKHR;
 }CopyAsInfo;
 
+typedef struct _CopyMpInfo
+{
+    vktrace_trace_packet_header*                pCmdCopyMicromap;
+    vktrace_trace_packet_header*                pCopyMicromap;
+}CopyMpInfo;
+
+typedef struct _WriteMpProperties
+{
+    vktrace_trace_packet_header*                pCmdWriteMicromapsProperties;
+    vktrace_trace_packet_header*                pWriteMicromapsProperties;
+}WriteMpProperties;
 //-------------------------------------------------------------------------
 // Some of the items in this struct are based on what is tracked in the
 // 'VkLayer_object_tracker' (struct _OBJTRACK_NODE).
@@ -199,6 +226,7 @@ typedef struct _Trim_ObjectInfo {
             uint32_t memoryTypeIndex;
             VkMemoryPropertyFlags propertyFlags;
             void *mappedAddress;
+            void *mappedShadowAddress;
             VkDeviceSize mappedOffset;
             VkDeviceSize mappedSize;
             vktrace_trace_packet_header *pMapMemoryPacket;
@@ -353,6 +381,11 @@ typedef struct _Trim_ObjectInfo {
             vktrace_trace_packet_header *pGetAccelerationStructureDeviceAddressPacket;
             VkBuffer buffer;
         } AccelerationStructure;
+        struct _Micromap {  // VkAccelerationStructureKHR
+            vktrace_trace_packet_header *pCreatePacket;
+            const VkAllocationCallbacks *pAllocator;
+            VkBuffer buffer;
+        } Micromap;
         struct _Semaphore {  // VkSemaphore
             vktrace_trace_packet_header *pCreatePacket;
             const VkAllocationCallbacks *pAllocator;
@@ -414,6 +447,8 @@ class StateTracker {
 
     std::unordered_map<VkCommandBuffer, std::set<VkPipeline>> m_cmdBufferToBindingPipelinesMap;
     std::unordered_map<VkPipeline, std::set<VkCommandBuffer>> m_BindingPipelineTocmdBuffersMap;
+    std::unordered_map<VkRenderPass, std::set<VkCommandBuffer>> m_beginRenderPassTocmdBuffersMap;
+    std::unordered_map<VkFramebuffer, std::set<VkCommandBuffer>> m_beginFramebufferTocmdBuffersMap;
 
     std::unordered_map<VkCommandBuffer, std::list<ImageTransition>> m_cmdBufferToImageTransitionsMap;
     void AddImageTransition(VkCommandBuffer commandBuffer, ImageTransition transition);
@@ -429,6 +464,11 @@ class StateTracker {
     void add_RenderPassCreateInfo(VkRenderPass renderPass, const VkApplicationInfo *pCreateInfo);
     VkApplicationInfo *get_RenderPassCreateInfo(VkRenderPass renderPass, uint32_t version);
     uint32_t get_RenderPassVersion(VkRenderPass renderPass);
+
+    std::unordered_map<VkDeviceMemory, std::list<VkBuffer>> m_deviceMemToBuffersMap;
+    void AddMemBufferBinding(VkDeviceMemory mem, VkBuffer buf);
+    void RemoveMemBufferBinding(VkBuffer buf);
+    void ClearMemBufferBinding(VkDeviceMemory mem);
 
 #if TRIM_USE_ORDERED_IMAGE_CREATION
     void add_Image_call(vktrace_trace_packet_header *pHeader);
@@ -467,6 +507,7 @@ class StateTracker {
     ObjectInfo &add_DescriptorSet(VkDescriptorSet var);
     ObjectInfo &add_DescriptorUpdateTemplate(VkDescriptorUpdateTemplate var);
     ObjectInfo &add_AccelerationStructure(VkAccelerationStructureKHR var);
+    ObjectInfo &add_Micromap(VkMicromapEXT var);
     BuildAsInfo& add_BuildAccelerationStructure(BuildAsInfo BuildAS);
     std::vector<BuildAsInfo>& get_BuildAccelerationStrucutres();
     BuildAsInfo& add_cmdBuildAccelerationStructure(BuildAsInfo BuildAS);
@@ -475,6 +516,19 @@ class StateTracker {
     std::vector<CopyAsInfo>& get_CopyAccelerationStructure();
     CopyAsInfo& add_cmdCopyAccelerationStructure(CopyAsInfo copyAs);
     std::vector<CopyAsInfo>& get_cmdCopyAccelerationStructure();
+
+    BuildMpInfo& add_cmdBuildMicromap(BuildMpInfo BuildMP);
+    std::vector<BuildMpInfo>& get_cmdBuildMicromaps();
+    BuildMpInfo& add_BuildMicromap(BuildMpInfo BuildMP);
+    std::vector<BuildMpInfo>& get_BuildMicromaps();
+    CopyMpInfo& add_cmdCopyMicromap(CopyMpInfo CopyMP);
+    std::vector<CopyMpInfo>& get_cmdCopyMicromaps();
+    CopyMpInfo& add_CopyMicromap(CopyMpInfo BuildMP);
+    std::vector<CopyMpInfo>& get_CopyMicromaps();
+    WriteMpProperties& add_cmdWriteMicromapsProperties(WriteMpProperties WriteMP);
+    std::vector<WriteMpProperties>& get_cmdWriteMicromapsProperties();
+    WriteMpProperties& add_WriteMicromapsProperties(WriteMpProperties WriteMP);
+    std::vector<WriteMpProperties>& get_WriteMicromapsProperties();
 
     ObjectInfo *get_Instance(VkInstance var);
     ObjectInfo *get_PhysicalDevice(VkPhysicalDevice var);
@@ -505,7 +559,10 @@ class StateTracker {
     ObjectInfo *get_DescriptorUpdateTemplate(VkDescriptorUpdateTemplate var);
     ObjectInfo *get_DescriptorSet(VkDescriptorSet var);
     ObjectInfo *get_AccelerationStructure(VkAccelerationStructureKHR var);
+    ObjectInfo *get_Micromap(VkMicromapEXT var);
     std::set<VkCommandBuffer> *get_BoundCommandBuffers(VkPipeline var, bool createFlag = true);
+    std::set<VkCommandBuffer> *get_BeginRenderPassCommandBuffers(VkRenderPass var, bool createFlag = true);
+    std::set<VkCommandBuffer> *get_BeginFramebufferCommandBuffers(VkFramebuffer var, bool createFlag = true);
     std::set<VkPipeline> *get_BindingPipelines(VkCommandBuffer var, bool createFlag = true);
 
     void remove_Instance(const VkInstance var);
@@ -538,10 +595,17 @@ class StateTracker {
     void remove_DescriptorUpdateTemplate(const VkDescriptorUpdateTemplate var);
     void remove_DescriptorSet(const VkDescriptorSet var);
     void remove_AccelerationStructure(const VkAccelerationStructureKHR var);
+    void remove_Micromap(const VkMicromapEXT var);
     void remove_BuildAccelerationStructure(BuildAsInfo& BuildAS);
     void remove_CopyAccelerationStructure(CopyAsInfo copyAs);
     void remove_cmdBuildAccelerationStructure(BuildAsInfo& BuildAS);
     void remove_cmdCopyAccelerationStructure(CopyAsInfo copyAs);
+    void remove_cmdBuildMicromap(BuildMpInfo& BuildMP);
+    void remove_BuildMicromap(BuildMpInfo& BuildMP);
+    void remove_cmdCopyMicromap(CopyMpInfo copyMp);
+    void remove_CopyMicromap(CopyMpInfo copyMp);
+    void remove_cmdWriteMpProperties(WriteMpProperties& writeMp);
+    void remove_WriteMpProperties(WriteMpProperties& writeMp);
 
     static void copy_VkRenderPassCreateInfo(VkApplicationInfo *pDst, VkApplicationInfo *psrc);
 
@@ -602,11 +666,17 @@ class StateTracker {
     std::unordered_map<VkDescriptorUpdateTemplate, ObjectInfo> createdDescriptorUpdateTemplates;
     std::unordered_map<VkDescriptorSet, ObjectInfo> createdDescriptorSets;
     std::unordered_map<VkAccelerationStructureKHR, ObjectInfo> createdAccelerationStructures;
+    std::unordered_map<VkMicromapEXT, ObjectInfo> createdMicromaps;
     std::vector<BuildAsInfo> BuildAccelerationStructures;
     std::vector<CopyAsInfo> CopyAccelerationStructure;
     std::vector<BuildAsInfo> cmdBuildAccelerationStructures;
     std::vector<CopyAsInfo> cmdCopyAccelerationStructure;
-
+    std::vector<BuildMpInfo> cmdBuildMicromaps;
+    std::vector<BuildMpInfo> BuildMicromaps;
+    std::vector<CopyMpInfo> cmdCopyMicromaps;
+    std::vector<CopyMpInfo> CopyMicromaps;
+    std::vector<WriteMpProperties> cmdWriteMicromapsProperties;
+    std::vector<WriteMpProperties> WriteMicromapsProperties;
     std::unordered_set<VkShaderModule> destroyedShaderModules;
     std::unordered_set<VkPipelineCache> destroyedPipelineCaches;
 };

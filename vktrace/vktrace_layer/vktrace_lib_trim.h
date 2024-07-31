@@ -28,6 +28,12 @@
 #include "vktrace_lib_trim_build_as.h"
 #include "vulkan/vulkan.h"
 
+#define USE_PAGEGUARD_MANAGER
+
+#if defined(USE_PAGEGUARD_MANAGER)
+#include "util/page_guard_manager.h"
+#endif
+
 #if defined(PLATFORM_LINUX)  // VK_USE_PLATFORM_XCB_KHR
 #if defined(ANDROID)
 // TODO
@@ -56,6 +62,7 @@ extern uint64_t g_trimEndFrame;
 extern bool g_trimAlreadyFinished;
 extern bool g_TraceLockEnabled;
 extern bool g_TraceEnableCopyAsBuf;
+extern bool g_TraceEnableGfxPageGurd;
 extern std::unordered_map<VkDevice, VkPhysicalDevice> g_deviceToPhysicalDevice;
 extern std::unordered_map<VkDevice, deviceFeatureSupport> g_deviceToFeatureSupport;
 
@@ -76,12 +83,14 @@ typedef struct _cmdBuildASPacketInfo {
     VkBuildAccelerationStructureModeKHR mode;
     vktrace_trace_packet_header* pHeader;
 } cmdBuildASPacketInfo;
-extern std::map<uint64_t, cmdBuildASPacketInfo> g_cmdBuildASPacket;
-extern std::vector<VkBuffer> g_bufferInCmdBuildAS;
-extern std::vector<VkBuffer> g_scratchBufferInCmdBuildAS;
+
 extern std::unordered_map<uint64_t, vktrace_trace_packet_header*> g_pGetAccelerationStructureBuildSizePackets;
 extern std::unordered_map<uint64_t, vktrace_trace_packet_header*> g_updateDescriptorSetsPackets;
 extern std::unordered_map<uint64_t, vktrace_trace_packet_header*> g_getPhysicalDevice2Packets;
+extern std::unordered_map<VkCommandBuffer, trim::ObjectInfo*> cb_delete_packet;
+extern std::unordered_map<VkSwapchainKHR, VkSwapchainCreateInfoKHR> g_swapchainToSwapchainCreateInfo;
+extern std::unordered_map<VkImage, VkSwapchainKHR> g_swapchainImageToSwapchain;
+extern std::unordered_map<uint64_t, vktrace_trace_packet_header*> g_pGetMicromapBuildSizePackets;
 
 // This mutex is used to protect API calls sequence
 // during trace
@@ -200,6 +209,11 @@ void add_Image_call(vktrace_trace_packet_header *pHeader);
 
 void add_InTrim_call(vktrace_trace_packet_header *pHeader);
 
+void AddMemBufferBinding(VkDeviceMemory mem, VkBuffer buf);
+void RemoveMemBufferBinding(VkBuffer buf);
+std::list<VkBuffer> *GetMemBoundBuffers(VkDeviceMemory mem);
+void ClearMemBufferBinding(VkDeviceMemory mem);
+
 void AddImageTransition(VkCommandBuffer commandBuffer, ImageTransition transition);
 std::list<ImageTransition> GetImageTransitions(VkCommandBuffer commandBuffer);
 void ClearImageTransitions(VkCommandBuffer commandBuffer);
@@ -243,6 +257,7 @@ void mark_Buffer_reference(VkBuffer var);
 void mark_BufferView_reference(VkBufferView var);
 void mark_Sampler_reference(VkSampler var);
 void mark_AccelerationStructure_reference(VkAccelerationStructureKHR var);
+void mark_Micromap_reference(VkMicromapEXT var);
 
 ObjectInfo &add_Instance_object(VkInstance var);
 ObjectInfo *get_Instance_objectInfo(VkInstance var);
@@ -305,6 +320,7 @@ ObjectInfo *get_BufferView_objectInfo(VkBufferView var);
 
 ObjectInfo &add_Framebuffer_object(VkFramebuffer var);
 ObjectInfo *get_Framebuffer_objectInfo(VkFramebuffer var);
+std::unordered_map<VkFramebuffer, ObjectInfo>& get_FramebufferObjectInfo();
 
 ObjectInfo &add_Event_object(VkEvent var);
 ObjectInfo *get_Event_objectInfo(VkEvent var);
@@ -333,6 +349,9 @@ ObjectInfo *get_DescriptorSet_objectInfo(VkDescriptorSet var);
 ObjectInfo &add_AccelerationStructure_object(VkAccelerationStructureKHR var);
 ObjectInfo *get_AccelerationStructure_objectInfo(VkAccelerationStructureKHR var);
 
+ObjectInfo &add_Micromap_object(VkMicromapEXT var);
+ObjectInfo *get_Micromap_objectInfo(VkMicromapEXT var);
+
 BuildAsInfo& add_BuildAccelerationStructure_object(BuildAsInfo var);
 std::vector<BuildAsInfo>& get_BuildAccelerationStrucutres_object();
 CopyAsInfo& add_CopyAccelerationStructure_object(CopyAsInfo var);
@@ -342,6 +361,20 @@ BuildAsInfo& add_cmdBuildAccelerationStructure_object(BuildAsInfo var);
 std::vector<BuildAsInfo>& get_cmdBuildAccelerationStrucutres_object();
 CopyAsInfo& add_cmdCopyAccelerationStructure_object(CopyAsInfo var);
 std::vector<CopyAsInfo>& get_cmdCopyAccelerationStructure_object();
+
+BuildMpInfo& add_cmdBuildMicromap_object(BuildMpInfo var);
+std::vector<BuildMpInfo>& get_cmdBuildMicromaps_object();
+BuildMpInfo& add_BuildMicromap_object(BuildMpInfo var);
+std::vector<BuildMpInfo>& get_BuildMicromaps_object();
+CopyMpInfo& add_cmdCopyMicromap_object(CopyMpInfo var);
+std::vector<CopyMpInfo>& get_cmdCopyMicromap_object();
+CopyMpInfo& add_CopyMicromap_object(CopyMpInfo var);
+std::vector<CopyMpInfo>& get_CopyMicromap_object();
+WriteMpProperties& add_cmdWriteMicromapsProperties_object(WriteMpProperties var);
+std::vector<WriteMpProperties>& get_cmdWriteMicromapsProperties_object();
+WriteMpProperties& add_WriteMicromapsProperties_object(WriteMpProperties var);
+std::vector<WriteMpProperties>& get_WriteMicromapsProperties_object();
+
 
 void remove_Instance_object(const VkInstance var);
 void remove_PhysicalDevice_object(const VkPhysicalDevice var);
@@ -372,10 +405,17 @@ void remove_DescriptorSetLayout_object(const VkDescriptorSetLayout var);
 void remove_DescriptorUpdateTemplate_object(VkDescriptorUpdateTemplate var);
 void remove_DescriptorSet_object(const VkDescriptorSet var);
 void remove_AccelerationStructure_object(const VkAccelerationStructureKHR var);
+void remove_Micromap_object(const VkMicromapEXT var);
 void remove_BuildAccelerationStructure_object(BuildAsInfo& var);
 void remove_CopyAccelerationStructure_object(CopyAsInfo& var);
 void remove_cmdBuildAccelerationStructure_object(BuildAsInfo& var);
 void remove_cmdCopyAccelerationStructure_object(CopyAsInfo& var);
+void remove_cmdBuildMicromap_object(BuildMpInfo& var);
+void remove_BuildMicromap_object(BuildMpInfo& var);
+void remove_cmdCopyMicromap_object(CopyMpInfo& var);
+void remove_CopyMicromap_object(CopyMpInfo& var);
+void remove_cmdWriteMicromapProperties_object(WriteMpProperties& var);
+void remove_WriteMicromapProperties_object(WriteMpProperties& var);
 
 void reset_CommandPool_object(VkCommandPool var);
 
@@ -383,7 +423,10 @@ void add_binding_Pipeline_to_CommandBuffer(VkCommandBuffer commandBuffer, VkPipe
 void clear_binding_Pipelines_from_CommandBuffer(VkCommandBuffer commandBuffer);
 void add_CommandBuffer_to_binding_Pipeline(VkCommandBuffer commandBuffer, VkPipeline pipeLine);
 void clear_CommandBuffer_calls_by_binding_Pipeline(VkPipeline pipeLine);
-void cancel_ASPacketCreate(vktrace_trace_packet_header* pCreateASPacket);
+void add_CommandBuffer_to_begin_renderpass(VkCommandBuffer commandBuffer, VkRenderPass renderpass);
+void clear_CommandBuffer_calls_by_begin_renderpass(VkRenderPass renderpass);
+void add_CommandBuffer_to_begin_framebuffer(VkCommandBuffer commandBuffer, VkFramebuffer framebuffer);
+void clear_CommandBuffer_calls_by_begin_framebuffer(VkFramebuffer framebuffer);
 
 bool UpdateInvalidDescriptors(const VkWriteDescriptorSet *pDescriptorWrites);
 void remove_PipelineCache_object_later(const VkPipelineCache var);

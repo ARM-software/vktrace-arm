@@ -1,6 +1,6 @@
 /*
  *
- * Copyright (C) 2019 ARM Limited
+ * Copyright (C) 2016-2024 ARM Limited
  * All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -34,44 +34,6 @@
 
 using namespace std;
 namespace trim {
-
-VkResult create_staging_buffer_on_memory(VkDevice device, VkBuffer* buffer, VkDeviceMemory memory,
-                                         VkDeviceSize offset, VkDeviceSize size) {
-    VkResult result = VK_SUCCESS;
-
-    VkBufferCreateInfo bufCreateInfo;
-    bufCreateInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    bufCreateInfo.pNext = NULL;
-    bufCreateInfo.flags = 0;
-    bufCreateInfo.size = size;
-    bufCreateInfo.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
-    bufCreateInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    bufCreateInfo.queueFamilyIndexCount = 0;
-    bufCreateInfo.pQueueFamilyIndices = NULL;
-
-    result = mdd(device)->devTable.CreateBuffer(device, &bufCreateInfo, NULL, buffer);
-    if (result != VK_SUCCESS) {
-        vktrace_LogError(
-            "vkBuildAccelerationStructuresKHR: Failed to create staging buffer to dump build AS input buffers when trim!");
-        return result;
-    }
-
-    VkMemoryRequirements mem_reqs;
-    mdd(device)->devTable.GetBufferMemoryRequirements(device, *buffer, &mem_reqs);
-
-    if (mem_reqs.memoryTypeBits == 0) {
-        mdd(device)->devTable.DestroyBuffer(device, *buffer, NULL);
-        vktrace_LogError("vkBuildAccelerationStructuresKHR: Failed to get staging buffer memory type!");
-        return result;
-    }
-
-    result = mdd(device)->devTable.BindBufferMemory(device, *buffer, memory, offset);
-    if (result != VK_SUCCESS) {
-        vktrace_LogError("vkBuildAccelerationStructuresKHR: Failed to bind new staging buffer to exiting memory");
-        return result;
-    }
-    return result;
-}
 
 VkResult dump_build_AS_buffer_data(VkDevice device, BuildAsBufferInfo& info, const void* pData) {
     VkBufferCreateInfo bufCreateInfo;
@@ -144,6 +106,10 @@ VkResult dump_build_AS_buffer_data(VkDevice device, BuildAsBufferInfo& info, con
     return VK_SUCCESS;
 }
 
+VkResult dump_build_MP_buffer_data(VkDevice device, trim::BuildMpBufferInfo& info, const void* pData) {
+    return dump_build_AS_buffer_data(device, info, pData);
+}
+
 VkResult remove_build_by_as(VkDevice device, VkAccelerationStructureKHR as) {
     VkResult result = VK_SUCCESS;
     std::vector<BuildAsInfo>& buildAsInfo = get_BuildAccelerationStrucutres_object();
@@ -180,6 +146,32 @@ VkResult remove_build_by_as(VkDevice device, VkAccelerationStructureKHR as) {
     return result;
 }
 
+VkResult remove_build_by_mp(VkDevice device, VkMicromapEXT mp) {
+    VkResult result = VK_SUCCESS;
+    std::vector<BuildMpInfo>& buildMpInfo = get_BuildMicromaps_object();
+    auto it_info = buildMpInfo.begin();
+    bool foundMp = false;
+    while (it_info != buildMpInfo.end()) {
+        foundMp = false;
+        vktrace_trace_packet_header* pHeader = copy_packet(it_info->pBuildMicromap);
+        packet_vkBuildMicromapsEXT* pPacket = interpret_body_as_vkBuildMicromapsEXT(pHeader);
+        for (uint32_t i = 0; i < pPacket->infoCount; ++i) {
+            if (pPacket->pInfos[i].dstMicromap == mp) {
+                foundMp = true;
+                break;
+            }
+        }
+        if (foundMp) {
+            it_info = buildMpInfo.erase(it_info);
+        } else {
+            it_info++;
+        }
+        vktrace_delete_trace_packet_no_lock(&pHeader);
+    }
+
+    return result;
+}
+
 VkResult remove_CopyAs_by_as(VkAccelerationStructureKHR as) {
     VkResult result = VK_SUCCESS;
     std::vector<CopyAsInfo>& CopyAsInfo = get_CopyAccelerationStructure_object();
@@ -210,7 +202,48 @@ VkResult remove_CopyAs_by_as(VkAccelerationStructureKHR as) {
     return result;
 }
 
-VkResult generate_shader_device_buffer(bool makeCall, VkDevice device, VkDeviceSize size, uint32_t queueFamilyIndex,
+VkResult remove_CopyMp_by_mp(VkMicromapEXT mp) {
+    VkResult result = VK_SUCCESS;
+    std::vector<CopyMpInfo>& CopyMpInfo = get_CopyMicromap_object();
+    auto it_info = CopyMpInfo.begin();
+    while (it_info != CopyMpInfo.end()) {
+        vktrace_trace_packet_header* pHeader = copy_packet(it_info->pCopyMicromap);
+        packet_vkCopyMicromapEXT* pPacket = interpret_body_as_vkCopyMicromapEXT(pHeader);
+        if (pPacket->pInfo->dst == mp || pPacket->pInfo->src == mp) {
+            it_info = CopyMpInfo.erase(it_info);
+        } else {
+            it_info++;
+        }
+        vktrace_delete_trace_packet_no_lock(&pHeader);
+    }
+    return result;
+}
+
+VkResult remove_WriteMp_by_mp(VkMicromapEXT mp) {
+    VkResult result = VK_SUCCESS;
+    std::vector<WriteMpProperties>& WriteMpsProperties  = get_WriteMicromapsProperties_object();
+    auto it_info = WriteMpsProperties.begin();
+    while (it_info != WriteMpsProperties.end()) {
+        bool bFind = false;
+        vktrace_trace_packet_header* pHeader = copy_packet(it_info->pWriteMicromapsProperties);
+        packet_vkWriteMicromapsPropertiesEXT* pPacket = interpret_body_as_vkWriteMicromapsPropertiesEXT(pHeader);
+        for (int i = 0; i < pPacket->micromapCount; i++) {
+            if (pPacket->pMicromaps[i] == mp) {
+                bFind = true;
+                break;
+            }
+        }
+        if (bFind) {
+            it_info = WriteMpsProperties.erase(it_info);
+        } else {
+            it_info++;
+        }
+        vktrace_delete_trace_packet_no_lock(&pHeader);
+    }
+    return result;
+}
+
+VkResult generate_shader_host_buffer(bool makeCall, VkDevice device, VkDeviceSize size, uint32_t queueFamilyIndex,
                                        VkBufferUsageFlags usage, _shader_host_buffer& devBuffer) {
     // create build scratch buffer
     VkBufferCreateInfo bufCreateInfo;
@@ -229,7 +262,7 @@ VkResult generate_shader_device_buffer(bool makeCall, VkDevice device, VkDeviceS
     assert(pCreateBuf->result == VK_SUCCESS);
     if (pCreateBuf->result != VK_SUCCESS) {
         vktrace_delete_trace_packet(&pheadCreateBuf);
-        vktrace_LogError("generate_shader_device_buffer: create shader device buffer fail!");
+        vktrace_LogError("generate_shader_host_buffer: create shader device buffer fail!");
         assert(0);
         return pCreateBuf->result;
     }
@@ -260,7 +293,7 @@ VkResult generate_shader_device_buffer(bool makeCall, VkDevice device, VkDeviceS
         vktrace_delete_trace_packet(&pheadCreateBuf);
         vktrace_delete_trace_packet(&pheadGetBufMemReq);
         vktrace_delete_trace_packet(&pheadAlloMem);
-        vktrace_LogError("generate_shader_device_buffer: allocate memory fail!");
+        vktrace_LogError("generate_shader_host_buffer: allocate memory fail!");
         assert(0);
         return pAllocMem->result;
     }
@@ -274,7 +307,7 @@ VkResult generate_shader_device_buffer(bool makeCall, VkDevice device, VkDeviceS
         vktrace_delete_trace_packet(&pheadGetBufMemReq);
         vktrace_delete_trace_packet(&pheadAlloMem);
         vktrace_delete_trace_packet(&pheadBindBufMem);
-        vktrace_LogError("generate_shader_device_buffer: BindBufferMemory fail!");
+        vktrace_LogError("generate_shader_host_buffer: BindBufferMemory fail!");
         return pBindBufMem->result;
     }
 
@@ -301,7 +334,7 @@ VkResult generate_shader_device_buffer(bool makeCall, VkDevice device, VkDeviceS
     return VK_SUCCESS;
 }
 
-void generate_destroy_shader_device_buffer(VkDevice device, _shader_host_buffer& devBuffer) {
+void generate_destroy_shader_host_buffer(VkDevice device, _shader_host_buffer& devBuffer) {
     vktrace_trace_packet_header* pHeader;
     pHeader = generate::vkDestroyBuffer(true, device, devBuffer.buffer, NULL);
     vktrace_write_trace_packet(pHeader, vktrace_trace_get_trace_file());
@@ -318,7 +351,7 @@ static VkResult geneate_create_as_input(VkDevice device, uint32_t queueFamilyInd
     }
     _shader_host_buffer devBuf = {
         .buffer = buildAsBufInfo.stagingBuf, .memory = buildAsBufInfo.stagingMem, .hostAddress = buildAsBufInfo.hostAddress};
-    VkResult result = generate_shader_device_buffer(false, device, buildAsBufInfo.dataSize, queueFamilyIndex,
+    VkResult result = generate_shader_host_buffer(false, device, buildAsBufInfo.dataSize, queueFamilyIndex,
                                                     VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR, devBuf);
     if (result != VK_SUCCESS) {
         vktrace_LogError("geneate_create_as_input: create shader device buffer fail!");
@@ -442,7 +475,7 @@ static VkResult geneate_destroy_as_input(VkDevice device, BuildAsBufferInfo& bui
     }
     _shader_host_buffer devBuf = {
         .buffer = buildAsBufInfo.stagingBuf, .memory = buildAsBufInfo.stagingMem, .hostAddress = buildAsBufInfo.hostAddress};
-    generate_destroy_shader_device_buffer(device, devBuf);
+    generate_destroy_shader_host_buffer(device, devBuf);
     return VK_SUCCESS;
 }
 
@@ -548,4 +581,69 @@ VkResult only_buildas_destroy_inputs(VkDevice device, BuildAsInfo& buildAsInfo) 
 
     return result;
 }
+
+
+VkResult generate_buildmp_create_inputs(VkDevice device, uint32_t queueFamilyIndex, BuildMpInfo& buildMpInfo) {
+    VkResult result = VK_SUCCESS;
+    packet_vkBuildMicromapsEXT* pPacket = (packet_vkBuildMicromapsEXT*)buildMpInfo.pBuildMicromap->pBody;
+    vktrace_trace_packet_header* pBuildHeader = copy_packet(buildMpInfo.pBuildMicromap);
+    packet_vkBuildMicromapsEXT* pBuildPacket = interpret_body_as_vkBuildMicromapsEXT(pBuildHeader);
+    for (auto& trangleInfo : buildMpInfo.triangleInfo) {
+        uint64_t offset = 0;
+        VkDeviceAddress* pAddr = nullptr;
+        result = geneate_create_as_input(device, 0, trangleInfo.data);
+        if (result != VK_SUCCESS) {
+            vktrace_LogError("generate_buildas_create_inputs: create data host buffer fail!");
+            assert(0);
+        } else if (trangleInfo.data.dataSize > 0) {
+            offset = (uint64_t)(&pBuildPacket->pInfos[trangleInfo.infoIndex].data.hostAddress) - (uint64_t)pBuildPacket;
+            pAddr = (VkDeviceAddress*)((uint64_t)pPacket + offset);
+            *pAddr = trangleInfo.data.stagingAddr;
+        }
+        result = geneate_create_as_input(device, 0, trangleInfo.triangleArray);
+        if (result != VK_SUCCESS) {
+            vktrace_LogError("generate_buildas_create_inputs: create triangleArray host buffer fail!");
+            assert(0);
+        } else if (trangleInfo.triangleArray.dataSize > 0) {
+            offset = (uint64_t)(&pBuildPacket->pInfos[trangleInfo.infoIndex].triangleArray.hostAddress) - (uint64_t)pBuildPacket;
+            pAddr = (VkDeviceAddress*)((uint64_t)pPacket + offset);
+            *pAddr = trangleInfo.triangleArray.stagingAddr;
+        }
+    }
+    vktrace_delete_trace_packet(&pBuildHeader);
+    return result;
+}
+
+VkResult generate_buildmp_destroy_inputs(VkDevice device, BuildMpInfo& buildMpInfo) {
+    VkResult result = VK_SUCCESS;
+    for (auto& trangleInfo : buildMpInfo.triangleInfo) {
+        result = geneate_destroy_as_input(device, trangleInfo.data);
+        if (result != VK_SUCCESS) {
+            vktrace_LogError("generate_buildmp_destroy_inputs: destroy data device buffer fail!");
+        }
+        result = geneate_destroy_as_input(device, trangleInfo.triangleArray);
+        if (result != VK_SUCCESS) {
+            vktrace_LogError("generate_buildmp_destroy_inputs: destroy triangleArray device buffer fail!");
+        }
+    }
+    return result;
+}
+
+VkResult only_buildmp_destroy_inputs(VkDevice device, BuildMpInfo& buildMpInfo) {
+    VkResult result = VK_SUCCESS;
+    for (auto& trangleInfo : buildMpInfo.triangleInfo) {
+        result = only_destroy_as_input(device, trangleInfo.data);
+        if (result != VK_SUCCESS) {
+            vktrace_LogError("only_buildmp_destroy_inputs: destroy data device buffer fail!");
+        }
+        result = only_destroy_as_input(device, trangleInfo.triangleArray);
+        if (result != VK_SUCCESS) {
+            vktrace_LogError("only_buildmp_destroy_inputs: destroy triangleArray device buffer fail!");
+        }
+    }
+    vktrace_trace_packet_header* pHeader = buildMpInfo.pBuildMicromap;
+    vktrace_delete_trace_packet_no_lock(&pHeader);
+    return result;
+}
+
 }  // namespace trim

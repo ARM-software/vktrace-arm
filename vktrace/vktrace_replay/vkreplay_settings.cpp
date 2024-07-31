@@ -2,7 +2,7 @@
  *
  * Copyright 2014-2018 Valve Corporation, Inc.
  * Copyright (C) 2014-2018 LunarG, Inc.
- * Copyright (C) 2019 ARM Limited.
+ * Copyright (C) 2016-2024 ARM Limited
  * All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -55,7 +55,7 @@ static vkreplayer_settings s_defaultVkReplaySettings = {
                                                             .disableRQAndRTPCaptureReplay = 0,
                                                             .specialPatternConfig = 0,
                                                             .forceRayQuery = FALSE,
-                                                            .triggerScript = UINT_MAX,
+                                                            .triggerScript = NULL,
                                                             .pScriptPath = NULL,
                                                             .perfMeasuringMode = 0,
                                                             .printCurrentPacketIndex = 0,
@@ -76,8 +76,10 @@ static vkreplayer_settings s_defaultVkReplaySettings = {
                                                             .imgCompressFlag = UINT_MAX,
                                                             .imgCompressRate = 0,
                                                             .convertAndroidFrameBoundary = FALSE,
+                                                            .useEXTFrameBoundary = FALSE,
                                                             .fDevBuild2HostBuild = FALSE,
                                                             .useTraceSurfaceTransformFlagBit = FALSE,
+                                                            .insertDeviceExtension = NULL,
                                                        };
 
 vktrace_SettingInfo g_vk_settings_info[] = {
@@ -407,6 +409,14 @@ vktrace_SettingInfo g_vk_settings_info[] = {
      TRUE,
      "Use ANDROID_frame_boundary extension."
     },
+    {"uefb",
+     "useEXTFrameBoundary",
+     VKTRACE_SETTING_BOOL,
+     {&g_vkReplaySettings.useEXTFrameBoundary},
+     {&s_defaultVkReplaySettings.useEXTFrameBoundary},
+     TRUE,
+     "Convert Android frame boundary to `VK_EXT_frame_boundary` frame boundaries."
+    },
     {"fdb2hb",
      "forceDevBuild2HostBuild",
      VKTRACE_SETTING_BOOL,
@@ -422,7 +432,14 @@ vktrace_SettingInfo g_vk_settings_info[] = {
      {&s_defaultVkReplaySettings.useTraceSurfaceTransformFlagBit},
      TRUE,
      "use the SurfaceTransformFlagBit recorded in the trace"
-    }
+    },
+    {"ide",
+     "insertDeviceExtension",
+     VKTRACE_SETTING_STRING,
+     {&g_vkReplaySettings.insertDeviceExtension},
+     {&s_defaultVkReplaySettings.insertDeviceExtension},
+     TRUE,
+     "Insert device extension."}
 };
 
 vktrace_SettingGroup g_vkReplaySettingGroup = { "vkreplay_vk", sizeof(g_vk_settings_info) / sizeof(g_vk_settings_info[0]), &g_vk_settings_info[0], nullptr };

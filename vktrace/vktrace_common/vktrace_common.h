@@ -2,7 +2,7 @@
  *
  * Copyright 2014-2016 Valve Corporation
  * Copyright (C) 2014-2016 LunarG, Inc.
- * Copyright (C) 2019 ARM Limited
+ * Copyright (C) 2016-2024 ARM Limited
  * All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -307,11 +307,6 @@ static uint32_t getAHardwareBufBPP(uint32_t fmt) {
 // VkPhysicalDeviceRayTracingPipelineFeaturesKHR when tracing.
 // Its default value is 0. Set it to non-zero values to disable this feature.
 #define VKTRACE_DISABLE_CAPTUREREPLAY_FEATURE_ENV "VKTRACE_DISABLE_CAPTUREREPLAY_FEATURE"
-
-// VKTRACE_ENABLE_COPY_AS_BUFFER env var is an option used to control capture ray query trace
-// to copy and restore buffer before every CmdBuildAccelerationStructuresKHR.
-// Its default value is 1. Set it to non-zero values to enable it.
-#define VKTRACE_ENABLE_COPY_AS_BUFFER_ENV "VKTRACE_ENABLE_COPY_AS_BUFFER"
 
 // VKTRACE_ENABLE_REBINDMEMORY_ALIGNEDSIZE env var is an option used to control as buffer/image
 // to bind separate memory and set memoffset to 0, and aligned size of get*MemoryRequirements.

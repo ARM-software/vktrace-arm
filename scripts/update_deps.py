@@ -467,6 +467,10 @@ class GoodRepo(object):
                 if "Vulkan-Tools" in self.build_dir:
                     cmake_cmd.append("-DBUILD_CUBE=OFF")
                     cmake_cmd.append("-DBUILD_VULKANINFO=OFF")
+            elif self._args.arch == 'x86':
+                if "Vulkan-ValidationLayers" in self.build_dir:
+                    cmake_cmd.append("-DBUILD_WSI_XCB_SUPPORT=OFF")
+                    cmake_cmd.append("-DBUILD_WSI_XLIB_SUPPORT=OFF")
             # Check if it is EUHPC
             if ("el6.x86_64" in platform.uname()[2] or "el7.x86_64" in platform.uname()[2]) and "Vulkan-" in self.build_dir and "Headers" not in self.build_dir:
                 print("Building on EUHPC")
