@@ -2470,27 +2470,6 @@ VkResult vkReplay::manually_replay_vkCreateBuffer(packet_vkCreateBuffer *pPacket
             getReplayQueueFamilyIdx(pPacket->device, remappedDevice, (uint32_t *)&pPacket->pCreateInfo->pQueueFamilyIndices[i]);
         }
     }
-    if (pPacket->pCreateInfo->usage & VK_BUFFER_USAGE_MICROMAP_STORAGE_BIT_EXT || pPacket->pCreateInfo->usage & VK_BUFFER_USAGE_MICROMAP_BUILD_INPUT_READ_ONLY_BIT_EXT) {
-        for (int i = 0; i < micromapBuildSizesInfoVec.size(); i++) {
-            if (micromapBuildSizesInfoVec[i].device == remappedDevice) {
-                VkMicromapBuildSizesInfoEXT sizeInfo = *micromapBuildSizesInfoVec[i].pSizeInfo;
-                if (micromapBuildSizesInfoVec[i].pSizeInfo->micromapSize == pPacket->pCreateInfo->size) {
-                    m_vkDeviceFuncs.GetMicromapBuildSizesEXT(remappedDevice, micromapBuildSizesInfoVec[i].buildType, micromapBuildSizesInfoVec[i].pBuildInfo, &sizeInfo);
-                    const_cast<VkBufferCreateInfo*>(pPacket->pCreateInfo)->size = max(pPacket->pCreateInfo->size, sizeInfo.micromapSize);
-                    break;
-                }
-                else if (micromapBuildSizesInfoVec[i].pSizeInfo->buildScratchSize == pPacket->pCreateInfo->size) {
-                    m_vkDeviceFuncs.GetMicromapBuildSizesEXT(remappedDevice, micromapBuildSizesInfoVec[i].buildType, micromapBuildSizesInfoVec[i].pBuildInfo, &sizeInfo);
-                    const_cast<VkBufferCreateInfo*>(pPacket->pCreateInfo)->size = max(pPacket->pCreateInfo->size, sizeInfo.buildScratchSize);
-                    break;
-                } else {
-                    const_cast<VkBufferCreateInfo*>(pPacket->pCreateInfo)->size = pPacket->pCreateInfo->size * 2; //Forced multiplication by 2, no reason!
-                    break;
-                }
-
-            }
-        }
-    }
 
     if (pPacket->pCreateInfo->usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT) {
         VkBufferUsageFlags extraUsageFlags = 0;
