@@ -355,6 +355,60 @@ int getSwapChainMinImageCount() {
     return swapChainMinImageCount;
 }
 
+void endFrame()
+{
+    g_trimFrameCounter++;
+    if (g_trimEnabled) {
+        if (trim::is_trim_trigger_enabled(trim::enum_trim_trigger::hotKey)) {
+            if (!g_trimAlreadyFinished)
+            {
+                if (trim::is_hotkey_trim_triggered()) {
+                    if (g_trimIsInTrim) {
+                        vktrace_LogAlways("Trim stopping now at frame: %" PRIu64, g_trimFrameCounter - 1);
+                        trim::stop();
+                    }
+                    else {
+                        g_trimStartFrame = g_trimFrameCounter;
+                        if (g_trimEndFrame < UINT64_MAX)
+                        {
+                            g_trimEndFrame += g_trimStartFrame;
+                        }
+                        vktrace_LogAlways("Trim starting now at frame: %" PRIu64, g_trimStartFrame);
+                        trim::start();
+                    }
+                }
+                else
+                {
+                    // when hotkey start the trim capture, now we have two ways to
+                    // stop it: press hotkey or captured frames reach user specified
+                    // frame count. Here is the process of the latter one.
+
+                    if (g_trimIsInTrim && (g_trimEndFrame < UINT64_MAX))
+                    {
+                        if (g_trimFrameCounter == g_trimEndFrame)
+                        {
+                            vktrace_LogAlways("Trim stopping now at frame: %" PRIu64, g_trimEndFrame);
+                            trim::stop();
+                        }
+                    }
+                }
+            }
+        } else if (trim::is_trim_trigger_enabled(trim::enum_trim_trigger::frameCounter)) {
+            if (g_trimFrameCounter == g_trimStartFrame) {
+                vktrace_LogAlways("Trim starting now at frame: %" PRIu64, g_trimStartFrame);
+                trim::start();
+            }
+            if (g_trimEndFrame < UINT64_MAX && g_trimFrameCounter == g_trimEndFrame + 1) {
+                vktrace_LogAlways("Trim stopping now at frame: %" PRIu64, g_trimEndFrame);
+                trim::stop();
+            }
+        }
+    }
+    if (g_trimFrameCounter > getCheckHandlerFrames()) {
+        disableHandlerCheck();
+    }
+}
+
 /*
  * This function will return the pNext pointer of any
  * CreateInfo extensions that are not loader extensions.
@@ -1037,6 +1091,12 @@ VKTRACER_EXPORT VKAPI_ATTR void VKAPI_CALL __HOOKED_vkGetMicromapBuildSizesEXT(
     pPacket = interpret_body_as_vkGetMicromapBuildSizesEXT(pHeader);
     pPacket->device = device;
     pPacket->buildType = buildType;
+
+    VkMicromapEXT dstMicromap = pBuildInfo->dstMicromap;
+    if (g_trimEnabled && g_trimIsPreTrim) {
+        const_cast<VkMicromapBuildInfoEXT*>(pBuildInfo)->dstMicromap = 0;
+    }
+
     vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pBuildInfo), sizeof(VkMicromapBuildInfoEXT), pBuildInfo);
     if (pBuildInfo != nullptr) vktrace_add_pnext_structs_to_trace_packet(pHeader, (void*)pPacket->pBuildInfo, pBuildInfo);
     if (pBuildInfo->usageCountsCount && pBuildInfo->pUsageCounts != nullptr) {
@@ -1047,6 +1107,11 @@ VKTRACER_EXPORT VKAPI_ATTR void VKAPI_CALL __HOOKED_vkGetMicromapBuildSizesEXT(
         vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pBuildInfo->ppUsageCounts), pBuildInfo->usageCountsCount * sizeof(VkMicromapUsageEXT*), pBuildInfo->ppUsageCounts);
         vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pBuildInfo->ppUsageCounts));
     }
+
+    if (g_trimEnabled && g_trimIsPreTrim) {
+        const_cast<VkMicromapBuildInfoEXT*>(pBuildInfo)->dstMicromap = dstMicromap;
+    }
+
     vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pSizeInfo), sizeof(VkMicromapBuildSizesInfoEXT), pSizeInfo);
     if (pSizeInfo != nullptr) vktrace_add_pnext_structs_to_trace_packet(pHeader, (void*)pPacket->pSizeInfo, pSizeInfo);
     vktrace_finalize_buffer_address(pHeader, (void**)&(pPacket->pBuildInfo));
@@ -5532,6 +5597,12 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkEnumerateDeviceExtensi
     uint64_t endTime;
     uint64_t vktraceStartTime = vktrace_get_time();
     startTime = vktrace_get_time();
+
+    VkExtensionProperties pProperties_vkDebugMarker = {};
+#if VK_ANDROID_frame_boundary
+    VkExtensionProperties pProperties_vkFrameBoundaryANDROID = {};
+#endif
+
     // Only call down chain if querying ICD rather than layer device extensions
     if (pLayerName == NULL) {
         result = mid(physicalDevice)->instTable.EnumerateDeviceExtensionProperties(physicalDevice, NULL, pPropertyCount, pProperties);
@@ -5539,15 +5610,30 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkEnumerateDeviceExtensi
 #if VK_ANDROID_frame_boundary
         VkPhysicalDeviceProperties deviceProperties = {0};
         mid(physicalDevice)->instTable.GetPhysicalDeviceProperties(physicalDevice, &deviceProperties);
-        if (strstr(deviceProperties.deviceName, "mali") != nullptr) {
+        if (strstr(deviceProperties.deviceName, "Mali") != nullptr) {
             addFeature = 1;
         }
 #endif
+        bool foundDebugMarkerExt = false;
+        for (uint32_t i = 0; i < *pPropertyCount; i++) {
+            if (pProperties != nullptr && strcmp(pProperties[i].extensionName, VK_EXT_DEBUG_MARKER_EXTENSION_NAME) == 0) {
+                foundDebugMarkerExt = true;
+                break;
+            }
+        }
+        if (!foundDebugMarkerExt) {
+            (*pPropertyCount) += 1;
+            if(pProperties != nullptr)  {
+                strcpy(pProperties_vkDebugMarker.extensionName, VK_EXT_DEBUG_MARKER_EXTENSION_NAME);
+                pProperties_vkDebugMarker.specVersion = 1;
+                pProperties[*pPropertyCount-1] = pProperties_vkDebugMarker;
+            }
+        }
+
         if (addFeature) {
 #if VK_ANDROID_frame_boundary
             (*pPropertyCount) += 1;
             if(pProperties != nullptr)  {
-                VkExtensionProperties pProperties_vkFrameBoundaryANDROID = {};
                 strcpy(pProperties_vkFrameBoundaryANDROID.extensionName, "VK_ANDROID_frame_boundary");
                 pProperties_vkFrameBoundaryANDROID.specVersion = 1;
                 pProperties[*pPropertyCount-1] = pProperties_vkFrameBoundaryANDROID;
@@ -6737,6 +6823,21 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkQueueSubmit(VkQueue qu
     }
 #endif
 
+    bool foundFrameBoundary = false;
+    for (uint32_t i = 0; i < submitCount; i++) {
+        if (pSubmits[i].pNext) {
+            VkFrameBoundaryEXT* pFrameBoundaryExt = (VkFrameBoundaryEXT*)pSubmits[i].pNext;
+            if (pFrameBoundaryExt->sType == VK_STRUCTURE_TYPE_FRAME_BOUNDARY_EXT) {
+                foundFrameBoundary = true;
+                break;
+            }
+        }
+    }
+
+    if (foundFrameBoundary) {
+        endFrame();
+    }
+
     return result;
 }
 
@@ -6938,6 +7039,22 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkQueueSubmit2(
         pageguardExit();
     }
 #endif
+
+    bool foundFrameBoundary = false;
+    for (uint32_t i = 0; i < submitCount; i++) {
+        if (pSubmits[i].pNext) {
+            VkFrameBoundaryEXT* pFrameBoundaryExt = (VkFrameBoundaryEXT*)pSubmits[i].pNext;
+            if (pFrameBoundaryExt->sType == VK_STRUCTURE_TYPE_FRAME_BOUNDARY_EXT) {
+                foundFrameBoundary = true;
+                break;
+            }
+        }
+    }
+
+    if (foundFrameBoundary) {
+        endFrame();
+    }
+
     return result;
 }
 
@@ -7187,7 +7304,7 @@ VKTRACER_EXPORT VKAPI_ATTR void VKAPI_CALL __HOOKED_vkCmdPipelineBarrier(
     for (uint32_t i = 0; i < bufferMemoryBarrierCount; i++)
         vktrace_add_pnext_structs_to_trace_packet(pHeader, (void*)(pPacket->pBufferMemoryBarriers + i), pBufferMemoryBarriers + i);
 
-    VkImageMemoryBarrier imageMemoryBarrier[imageMemoryBarrierCount];
+    std::vector<VkImageMemoryBarrier> imageMemoryBarrier(imageMemoryBarrierCount);
     for (uint32_t i = 0; i < imageMemoryBarrierCount; i++) {
         imageMemoryBarrier[i] = pImageMemoryBarriers[i];
         auto it = g_YuvImage2RgbaImage.find(imageMemoryBarrier[i].image);
@@ -7196,7 +7313,7 @@ VKTRACER_EXPORT VKAPI_ATTR void VKAPI_CALL __HOOKED_vkCmdPipelineBarrier(
         }
     }
     vktrace_add_buffer_to_trace_packet(pHeader, (void**)&(pPacket->pImageMemoryBarriers),
-                                       imageMemoryBarrierCount * sizeof(VkImageMemoryBarrier), imageMemoryBarrier);
+                                       imageMemoryBarrierCount * sizeof(VkImageMemoryBarrier), imageMemoryBarrier.data());
     for (uint32_t i = 0; i < imageMemoryBarrierCount; i++)
         vktrace_add_pnext_structs_to_trace_packet(pHeader, (void*)(pPacket->pImageMemoryBarriers + i), pImageMemoryBarriers + i);
 
@@ -7269,7 +7386,7 @@ VKTRACER_EXPORT VKAPI_ATTR void VKAPI_CALL __HOOKED_vkCmdPipelineBarrier2KHR(
     pPacket = interpret_body_as_vkCmdPipelineBarrier2KHR(pHeader);
     pPacket->commandBuffer = commandBuffer;
 
-    VkImageMemoryBarrier2 imageMemoryBarrier2[pDependencyInfo->imageMemoryBarrierCount];
+    std::vector<VkImageMemoryBarrier2> imageMemoryBarrier2(pDependencyInfo->imageMemoryBarrierCount);
     for (uint32_t i = 0; i < pDependencyInfo->imageMemoryBarrierCount; i++) {
         imageMemoryBarrier2[i] = pDependencyInfo->pImageMemoryBarriers[i];
         auto it = g_YuvImage2RgbaImage.find(imageMemoryBarrier2[i].image);
@@ -7277,7 +7394,7 @@ VKTRACER_EXPORT VKAPI_ATTR void VKAPI_CALL __HOOKED_vkCmdPipelineBarrier2KHR(
             imageMemoryBarrier2[i].image = it->second;
         }
     }
-    const_cast<VkDependencyInfo*>(pDependencyInfo)->pImageMemoryBarriers = imageMemoryBarrier2;
+    const_cast<VkDependencyInfo*>(pDependencyInfo)->pImageMemoryBarriers = imageMemoryBarrier2.data();
     add_VkDependencyInfo_to_packet(pHeader, const_cast<VkDependencyInfo**>(&(pPacket->pDependencyInfo)), const_cast<VkDependencyInfo*>(pDependencyInfo));
     if (!g_trimEnabled) {
         FINISH_TRACE_PACKET();
@@ -7313,7 +7430,7 @@ VKTRACER_EXPORT VKAPI_ATTR void VKAPI_CALL __HOOKED_vkCmdPipelineBarrier2(
     pPacket = interpret_body_as_vkCmdPipelineBarrier2(pHeader);
     pPacket->commandBuffer = commandBuffer;
 
-    VkImageMemoryBarrier2 imageMemoryBarrier2[pDependencyInfo->imageMemoryBarrierCount];
+    std::vector<VkImageMemoryBarrier2> imageMemoryBarrier2(pDependencyInfo->imageMemoryBarrierCount);
     for (uint32_t i = 0; i < pDependencyInfo->imageMemoryBarrierCount; i++) {
         imageMemoryBarrier2[i] = pDependencyInfo->pImageMemoryBarriers[i];
         auto it = g_YuvImage2RgbaImage.find(imageMemoryBarrier2[i].image);
@@ -7321,7 +7438,7 @@ VKTRACER_EXPORT VKAPI_ATTR void VKAPI_CALL __HOOKED_vkCmdPipelineBarrier2(
             imageMemoryBarrier2[i].image = it->second;
         }
     }
-    const_cast<VkDependencyInfo*>(pDependencyInfo)->pImageMemoryBarriers = imageMemoryBarrier2;
+    const_cast<VkDependencyInfo*>(pDependencyInfo)->pImageMemoryBarriers = imageMemoryBarrier2.data();
     add_VkDependencyInfo_to_packet(pHeader, const_cast<VkDependencyInfo**>(&(pPacket->pDependencyInfo)), const_cast<VkDependencyInfo*>(pDependencyInfo));
     if (!g_trimEnabled) {
         FINISH_TRACE_PACKET();
@@ -9509,56 +9626,7 @@ VKTRACER_EXPORT VKAPI_ATTR VkResult VKAPI_CALL __HOOKED_vkQueuePresentKHR(VkQueu
         }
     }
 
-    g_trimFrameCounter++;
-    if (g_trimEnabled) {
-        if (trim::is_trim_trigger_enabled(trim::enum_trim_trigger::hotKey)) {
-            if (!g_trimAlreadyFinished)
-            {
-                if (trim::is_hotkey_trim_triggered()) {
-                    if (g_trimIsInTrim) {
-                        vktrace_LogAlways("Trim stopping now at frame: %" PRIu64, g_trimFrameCounter - 1);
-                        trim::stop();
-                    }
-                    else {
-                        g_trimStartFrame = g_trimFrameCounter;
-                        if (g_trimEndFrame < UINT64_MAX)
-                        {
-                            g_trimEndFrame += g_trimStartFrame;
-                        }
-                        vktrace_LogAlways("Trim starting now at frame: %" PRIu64, g_trimStartFrame);
-                        trim::start();
-                    }
-                }
-                else
-                {
-                    // when hotkey start the trim capture, now we have two ways to
-                    // stop it: press hotkey or captured frames reach user specified
-                    // frame count. Here is the process of the latter one.
-
-                    if (g_trimIsInTrim && (g_trimEndFrame < UINT64_MAX))
-                    {
-                        if (g_trimFrameCounter == g_trimEndFrame)
-                        {
-                            vktrace_LogAlways("Trim stopping now at frame: %" PRIu64, g_trimEndFrame);
-                            trim::stop();
-                        }
-                    }
-                }
-            }
-        } else if (trim::is_trim_trigger_enabled(trim::enum_trim_trigger::frameCounter)) {
-            if (g_trimFrameCounter == g_trimStartFrame) {
-                vktrace_LogAlways("Trim starting now at frame: %" PRIu64, g_trimStartFrame);
-                trim::start();
-            }
-            if (g_trimEndFrame < UINT64_MAX && g_trimFrameCounter == g_trimEndFrame + 1) {
-                vktrace_LogAlways("Trim stopping now at frame: %" PRIu64, g_trimEndFrame);
-                trim::stop();
-            }
-        }
-    }
-    if (g_trimFrameCounter > getCheckHandlerFrames()) {
-        disableHandlerCheck();
-    }
+    endFrame();
     return result;
 }
 

@@ -240,6 +240,40 @@ typedef VkResult(VKAPI_PTR* PFN_vkGetDeviceGroupSurfacePresentModes2EXT)(VkDevic
 
 #endif
 
+#define VK_EXT_frame_boundary 1
+#define VK_EXT_FRAME_BOUNDARY_SPEC_VERSION 1
+#define VK_EXT_FRAME_BOUNDARY_EXTENSION_NAME "VK_EXT_frame_boundary"
+#define VK_STRUCTURE_TYPE_FRAME_BOUNDARY_EXT ((VkStructureType)1000375001)
+#define VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAME_BOUNDARY_FEATURES_EXT ((VkStructureType)1000375000)
+
+
+typedef enum VkFrameBoundaryFlagBitsEXT {
+    VK_FRAME_BOUNDARY_FRAME_END_BIT_EXT = 0x00000001,
+    VK_FRAME_BOUNDARY_FLAG_BITS_MAX_ENUM_EXT = 0x7FFFFFFF
+} VkFrameBoundaryFlagBitsEXT;
+
+typedef VkFlags VkFrameBoundaryFlagsEXT;
+
+typedef struct VkPhysicalDeviceFrameBoundaryFeaturesEXT {
+    VkStructureType    sType;
+    void*              pNext;
+    VkBool32           frameBoundary;
+} VkPhysicalDeviceFrameBoundaryFeaturesEXT;
+
+typedef struct VkFrameBoundaryEXT {
+    VkStructureType            sType;
+    const void*                pNext;
+    VkFrameBoundaryFlagsEXT    flags;
+    uint64_t                   frameID;
+    uint32_t                   imageCount;
+    const VkImage*             pImages;
+    uint32_t                   bufferCount;
+    const VkBuffer*            pBuffers;
+    uint64_t                   tagName;
+    size_t                     tagSize;
+    const void*                pTag;
+} VkFrameBoundaryEXT;
+
 #if defined(__cplusplus)
 }
 #endif

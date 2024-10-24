@@ -66,7 +66,7 @@ do
     cp $LAYER_BUILD_DIR/libs/${abi}/libVkLayer_api_dump.so $LAYER_BUILD_DIR/vkreplay/bin/libs/lib/${abi}/libVkLayer_api_dump.so
     cp $LAYER_BUILD_DIR/libs/${abi}/libVkLayer_systrace.so $LAYER_BUILD_DIR/vkreplay/bin/libs/lib/${abi}/libVkLayer_systrace.so
     cp $LAYER_BUILD_DIR/libs/${abi}/libVkLayer_emptydriver.so $LAYER_BUILD_DIR/vkreplay/bin/libs/lib/${abi}/libVkLayer_emptydriver.so
-    cp $LIBCOLLECTOR_LAYER_DIR/android/gradle/layer_android/build/intermediates/transforms/stripDebugSymbol/release/0/lib/${abi}/libVkLayer_libcollector.so \
+    cp $LIBCOLLECTOR_LAYER_DIR/android/gradle/layer_android/build/intermediates/stripped_native_libs/release/out/lib/${abi}/libVkLayer_libcollector.so \
             $LAYER_BUILD_DIR/vkreplay/bin/libs/lib/${abi}/libVkLayer_libcollector.so
 done
 create_APK vkreplay
@@ -92,7 +92,7 @@ cp $LAYER_BUILD_DIR/libs/${abi}/libVkLayer_api_dump.so $LAYER_BUILD_DIR/vkreplay
 cp $LAYER_BUILD_DIR/libs/${abi}/libVkLayer_api_dump.so $LAYER_BUILD_DIR/vkreplay/bin/libs/lib/${abi}/libVkLayer_api_dump.so
 cp $LAYER_BUILD_DIR/libs/${abi}/libVkLayer_systrace.so $LAYER_BUILD_DIR/vkreplay/bin/libs/lib/${abi}/libVkLayer_systrace.so
 cp $LAYER_BUILD_DIR/libs/${abi}/libVkLayer_emptydriver.so $LAYER_BUILD_DIR/vkreplay/bin/libs/lib/${abi}/libVkLayer_emptydriver.so
-cp $LIBCOLLECTOR_LAYER_DIR/android/gradle/layer_android/build/intermediates/transforms/stripDebugSymbol/release/0/lib/${abi}/libVkLayer_libcollector.so \
+cp $LIBCOLLECTOR_LAYER_DIR/android/gradle/layer_android/build/intermediates/stripped_native_libs/release/out/lib/${abi}/libVkLayer_libcollector.so \
         $LAYER_BUILD_DIR/vkreplay/bin/libs/lib/${abi}/libVkLayer_libcollector.so
 sed -i 's/com.example.vkreplay/com.example.vkreplay32/' AndroidManifest.xml
 create_APK vkreplay32
