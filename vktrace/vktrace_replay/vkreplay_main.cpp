@@ -1911,7 +1911,6 @@ void android_main(struct android_app* app) {
             free(argv);
 
             destroyActivity(app);
-            raise(SIGTERM);
             return;
         }
     }

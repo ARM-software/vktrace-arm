@@ -113,9 +113,9 @@ After building, the binaries and libraries will be in `dbuild_<target>/<target>/
 ### Android Development Requirements
 - The [Android Platform tools](https://developer.android.com/studio/releases/platform-tools) for your specific platform
 - [Android SDK](https://guides.codepath.com/android/installing-android-sdk-tools) 29 (10 Quince Tart) or newer
-- [Android NDK](https://developer.android.com/ndk/guides/)  20~21 (21.4.7075529 is recommended)
+- [Android NDK](https://developer.android.com/ndk/guides/) 26 (26.3.11579264 is recommended)
 - CMake 3.10.2.4988404
-- Java JDK 1.8.0
+- Java JDK 11.0
 
 These can be configured using [Android Studio](https://developer.android.com/studio)
 
@@ -137,7 +137,7 @@ Note: when using sdkmanager, please switch to Java 17 and set `--sdk_root=<SDK_R
 sdkmanager --sdk_root=$ANDROID_SDK_HOME "platform-tools" "platforms;android-29" \
               "build-tools;30.0.3" "cmake;3.10.2.4988404"
 # Install NDK:
-sdkmanager --sdk_root=$ANDROID_SDK_HOME --install "ndk;21.4.7075529"
+sdkmanager --sdk_root=$ANDROID_SDK_HOME --install "ndk;26.3.11579264"
 ```
 
 
@@ -147,7 +147,7 @@ Environment variables `ANDROID_SDK_HOME` and `ANDROID_NDK_HOME` are needed
 ```
 # For example:
 export ANDROID_SDK_HOME=$HOME/Android/Sdk
-export ANDROID_NDK_HOME=${ANDROID_SDK_HOME}/ndk/21.4.7075529
+export ANDROID_NDK_HOME=${ANDROID_SDK_HOME}/ndk/26.3.11579264
 
 export PATH=$PATH:$ANDROID_NDK_HOME
 export PATH=$PATH:${ANDROID_SDK_HOME}/platform-tools

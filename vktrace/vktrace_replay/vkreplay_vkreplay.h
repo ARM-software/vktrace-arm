@@ -166,6 +166,8 @@ class vkReplay {
    private:
     void init_funcs(void* handle);
     void* m_libHandle;
+    std::unordered_set<std::string> m_instanceExtensions;
+    std::unordered_set<std::string> m_deviceExtensions;
     VkLayerInstanceDispatchTable m_vkFuncs;
 #if !defined(ANDROID) && defined(PLATFORM_LINUX)
     PFN_vkCreateHeadlessSurfaceARM
@@ -527,7 +529,6 @@ class vkReplay {
     std::unordered_map<VkMicromapEXT, VkDevice> replayMicromapEXTToDevice;
     std::unordered_map<VkMicromapEXT, VkMicromapBuildSizesInfoEXT> replayMicromapToMicromapBuildSizes;
     std::unordered_map<VkDeviceSize, VkMicromapBuildSizesInfoEXT> traceMicromapSizeToReplayMicromapBuildSizes;
-    std::unordered_map<VkDeviceSize, VkMicromapBuildSizesInfoEXT> traceBuildSizeToReplayMicromapBuildSizes;
     std::unordered_map<VkQueryPool, std::unordered_set<int> > replayQueryPoolMicromapCompactSize;
     // Map VkSwapchainKHR to vector of VkImage, so we can unmap swapchain images at vkDestroySwapchainKHR
     std::unordered_map<VkSwapchainKHR, std::vector<VkImage>> traceSwapchainToImages;
@@ -616,6 +617,13 @@ class vkReplay {
         uint64_t traceObjHandle = 0;
     }objDeviceAddr;
 
+    typedef struct _fixASbufMem{
+        VkBuffer buf;
+        VkDeviceMemory mem;
+        VkDeviceAddress deviceAddress;
+        VkDeviceSize size;
+    }fixASbufMem;
+
     typedef struct _virtualFence{
         VkDevice device;
         VkFence fence;
@@ -638,19 +646,20 @@ class vkReplay {
     std::unordered_map<VkBuffer, VkDeviceSize> replayBufferToASBuildSizes;
     std::unordered_map<VkAccelerationStructureKHR, VkAccelerationStructureBuildSizesInfoKHR> replayASToASBuildSizes;
     std::unordered_map<VkAccelerationStructureKHR, VkAccelerationStructureCreateInfoKHR> traceASToASCreateInfo;
-#if defined(_DEBUG)
-    std::unordered_map<VkAccelerationStructureKHR, VkAccelerationStructureCreateInfoKHR> replayASToASCreateInfo;
-#endif
+    std::unordered_map<VkAccelerationStructureKHR, fixASbufMem> traceASToNewbufMem;
+    std::unordered_map<VkMicromapEXT, fixASbufMem> traceMicromapToNewbufMem;
+    std::unordered_map<VkDeviceAddress, std::unordered_map<VkBuffer, fixASbufMem>> traceDeviceAddrToNewbufMem;
     std::unordered_map<VkDeviceSize, VkAccelerationStructureBuildSizesInfoKHR> traceASSizeToReplayASBuildSizes;
-    std::unordered_map<VkDeviceSize, VkAccelerationStructureBuildSizesInfoKHR> traceUpdateSizeToReplayASBuildSizes;
-    std::unordered_map<VkDeviceSize, VkAccelerationStructureBuildSizesInfoKHR> traceBuildSizeToReplayASBuildSizes;
     std::unordered_map<VkDeviceSize, VkDeviceSize> traceASCompactSizeToReplayASCompactSize;
+    std::unordered_map<VkDeviceSize, VkDeviceSize> traceMMCompactSizeToReplayMMCompactSize;
     std::unordered_map<VkDeviceMemory, void*> replayMemoryToMapAddress;
     std::unordered_map<VkDevice, deviceFeatureSupport> replayDeviceToFeatureSupport;
     std::unordered_map<VkCommandBuffer, VkDevice> replayCommandBufferToReplayDevice;
     std::unordered_map<VkBuffer, VkDeviceMemory> replayBufferToReplayDeviceMemory;
     std::unordered_map<VkBuffer, VkDeviceSize> replayBufferToReplayDeviceMemoryOffset;
     std::unordered_map<VkDeviceAddress, objDeviceAddr>::iterator findClosestAddress(VkDeviceAddress addr);
+    void remapBufferDeviceAddress(VkDeviceAddress& deviceAddress);
+    VkBuffer findDeviceAddressToBuffer(VkDeviceAddress deviceAddress);
     std::unordered_map<VkImage, virtualFence> virtualImageToDeviceFence;
 #if defined(ANDROID)
     std::unordered_set<VkDeviceMemory> exportedReplayDeviceMemory;
@@ -666,16 +675,16 @@ class vkReplay {
 
     // for conversion: VK_ANDROID_frame_boundary VK_ANDROID_frame_boundary to VK_EXT_frame_boundary
     std::unordered_set<VkSemaphore> frameboundarySemaphores;
-
+    void createNewDeviceAddressBuffer(VkDevice traceDevice, VkDeviceSize size, VkBufferUsageFlags usage, fixASbufMem& newASbufMem);
     void remapInstanceBufferDeviceAddressInMapedMemory(VkDevice remappedDevice, VkDeviceMemory traceMemory, VkDeviceMemory remappedMemory, const void *pSrcData, VkDeviceSize size);
     void remapInstanceBufferDeviceAddressInFlushMemory(VkDevice remappedDevice, VkDeviceMemory traceMemory, VkDeviceMemory remappedMemory, const void *pSrcData, bool remapBufAddr);
     bool remapReplayPatternDeviceAddresssInMapedMemory(VkDevice remappedDevice, const void* pData, uint64_t size);
     bool remapReplayPatternDeviceAddresssInFlushMemory(VkDevice remappedDevice, const void* pSrcData);
     void remapReplayInstanceBufferDeviceAddresss(VkDevice remappedDevice, VkDeviceMemory dataMemory, VkDeviceSize size, uint64_t offset);
     void remapInstanceBufferDeviceAddressInCopyBuffer(VkBuffer traceSrcBuffer, VkBuffer traceDstBuffer, VkDeviceSize srcOffset, VkDeviceSize copySize);
-#if defined(_DEBUG)
-    void checkAccelerationStructureSizes(VkAccelerationStructureKHR replayDstAS, const VkAccelerationStructureBuildGeometryInfoKHR* pInfos, const VkAccelerationStructureBuildRangeInfoKHR* pBuildRangeInfos, std::unordered_map<VkDeviceAddress, vkReplay::objDeviceAddr>::iterator it, VkDeviceSize scratchBufferOffset);
-#endif
+    void remapScratchBufferDeviceAddressAndCheckMicromapSize(VkMicromapBuildInfoEXT* pInfo);
+    void remapScratchBufferDeviceAddressAndCheckASSize(VkAccelerationStructureBuildGeometryInfoKHR* pInfo, const VkAccelerationStructureBuildRangeInfoKHR* pBuildRangeInfo);
+
     uint32_t swapchainRefCount = 0;
     uint32_t surfRefCount = 0;
     uint32_t m_instCount = 0;
@@ -702,8 +711,9 @@ class vkReplay {
     bool checkFVRSParam();
 
 #if VK_ANDROID_frame_boundary
-    VkResult copyImage(VkImage srcImage, VkImage dstImage, VkDevice device);
+    VkResult copyImage(VkImage srcImage, VkImage dstImage, uint32_t width, uint32_t height, VkDevice device);
     void createCommandPoolAndCommandBuffer(VkResult& replayResult);
+    void destroyResources();
 #endif
 
     vktrace_replay::PipelineCacheAccessor::Ptr    m_pipelinecache_accessor;
@@ -716,37 +726,3 @@ class vkReplay {
 
     void deviceBuildToHostBuild(packet_vkCmdBuildAccelerationStructuresKHR* pPacket);
 };
-
-#define VK_EXT_frame_boundary 1
-#define VK_EXT_FRAME_BOUNDARY_SPEC_VERSION 1
-#define VK_EXT_FRAME_BOUNDARY_EXTENSION_NAME "VK_EXT_frame_boundary"
-#define VK_STRUCTURE_TYPE_FRAME_BOUNDARY_EXT ((VkStructureType)1000375001)
-#define VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAME_BOUNDARY_FEATURES_EXT ((VkStructureType)1000375000)
-
-
-typedef enum VkFrameBoundaryFlagBitsEXT {
-    VK_FRAME_BOUNDARY_FRAME_END_BIT_EXT = 0x00000001,
-    VK_FRAME_BOUNDARY_FLAG_BITS_MAX_ENUM_EXT = 0x7FFFFFFF
-} VkFrameBoundaryFlagBitsEXT;
-
-typedef VkFlags VkFrameBoundaryFlagsEXT;
-
-typedef struct VkPhysicalDeviceFrameBoundaryFeaturesEXT {
-    VkStructureType    sType;
-    void*              pNext;
-    VkBool32           frameBoundary;
-} VkPhysicalDeviceFrameBoundaryFeaturesEXT;
-
-typedef struct VkFrameBoundaryEXT {
-    VkStructureType            sType;
-    const void*                pNext;
-    VkFrameBoundaryFlagsEXT    flags;
-    uint64_t                   frameID;
-    uint32_t                   imageCount;
-    const VkImage*             pImages;
-    uint32_t                   bufferCount;
-    const VkBuffer*            pBuffers;
-    uint64_t                   tagName;
-    size_t                     tagSize;
-    const void*                pTag;
-} VkFrameBoundaryEXT;

@@ -1809,7 +1809,12 @@ void snapshot_state_tracker() {
                     swapchainCreateInfo.queueFamilyIndexCount != 0)
                         ? swapchainCreateInfo.pQueueFamilyIndices[0]
                         : 0;
-                imageIter->second.ObjectInfo.Image.mipLevels = 1;
+
+                imageIter->second.ObjectInfo.Image.mipLevels        = 1;
+                imageIter->second.ObjectInfo.Image.imageType        = VK_IMAGE_TYPE_2D;
+                imageIter->second.ObjectInfo.Image.tiling           = VK_IMAGE_TILING_OPTIMAL;
+                imageIter->second.ObjectInfo.Image.initialLayout    = VK_IMAGE_LAYOUT_UNDEFINED;
+                imageIter->second.ObjectInfo.Image.mostRecentLayout = VK_IMAGE_LAYOUT_GENERAL;
             }
 
             if ((imageIter->second.ObjectInfo.Image.memorySize != 0) && (device != VK_NULL_HANDLE)) {
@@ -1961,7 +1966,11 @@ void snapshot_state_tracker() {
                         for (uint32_t i = 0; i < imageIter->second.ObjectInfo.Image.mipLevels; i++) {
                             VkSubresourceLayout lay;
                             sub.mipLevel = i;
-                            if (callGetImageSubresourceLayoutApi) {
+                            if (imageIter->second.ObjectInfo.Image.bIsSwapchainImage)
+                            {
+                                lay.offset = 0;
+                            }
+                            else if (callGetImageSubresourceLayoutApi) {
                                 mdd(device)->devTable.GetImageSubresourceLayout(device, image, &sub, &lay);
                             } else {
                                 lay.offset = getImageSubResourceOffset(image, i);
@@ -1994,15 +2003,6 @@ void snapshot_state_tracker() {
                             copyRegion.imageSubresource.layerCount = imageIter->second.ObjectInfo.Image.arrayLayers;
                             copyRegion.imageSubresource.mipLevel = i;
 
-                            stagingInfo.imageCopyRegions.push_back(copyRegion);
-                        }
-                        if (imageIter->second.ObjectInfo.Image.bIsSwapchainImage) {
-                            VkBufferImageCopy copyRegion = {};
-                            copyRegion.imageSubresource.aspectMask = aspectMask;
-                            copyRegion.imageSubresource.layerCount = 1;
-                            copyRegion.imageExtent.width = std::max(imageIter->second.ObjectInfo.Image.extent.width, static_cast<uint32_t>(1));
-                            copyRegion.imageExtent.height = std::max(imageIter->second.ObjectInfo.Image.extent.height, static_cast<uint32_t>(1));
-                            copyRegion.imageExtent.depth = std::max(imageIter->second.ObjectInfo.Image.extent.depth, static_cast<uint32_t>(1));
                             stagingInfo.imageCopyRegions.push_back(copyRegion);
                         }
                     }
