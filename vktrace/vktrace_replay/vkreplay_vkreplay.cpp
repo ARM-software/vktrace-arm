@@ -5605,6 +5605,9 @@ void vkReplay::manually_replay_vkFreeMemory(packet_vkFreeMemory *pPacket) {
     if (replayDeviceMemoryToSize.find(local_mem.replayDeviceMemory) != replayDeviceMemoryToSize.end())
         replayDeviceMemoryToSize.erase(local_mem.replayDeviceMemory);
 
+    if (replayMemoryToMapAddress.find(local_mem.replayDeviceMemory) != replayMemoryToMapAddress.end())
+        replayMemoryToMapAddress.erase(local_mem.replayDeviceMemory);
+
     if (g_pReplaySettings->compatibilityMode && m_pFileHeader->portability_table_valid && !platformMatch() &&
         traceDeviceMemoryToMemoryTypeIndex.find(pPacket->memory) != traceDeviceMemoryToMemoryTypeIndex.end()) {
         traceDeviceMemoryToMemoryTypeIndex.erase(pPacket->memory);
